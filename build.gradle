@@ -1,18 +1,17 @@
-buildscript {
-    repositories {
-        mavenCentral()
-    }
-    dependencies {
-        classpath("org.springframework.boot:spring-boot-gradle-plugin:1.5.4.RELEASE")
-        classpath("org.owasp:dependency-check-gradle:2.1.0")
-    }
+plugins {
+    id "java"
+    id "eclipse"
+    id "idea"
+    id "org.springframework.boot" version "1.5.4.RELEASE"
+    id "org.owasp.dependencycheck" version "2.1.0"
+    id "jp.classmethod.aws" version "0.35"
+    id "jp.classmethod.aws.beanstalk" version "0.35"
 }
 
-apply plugin: 'java'
-apply plugin: 'eclipse'
-apply plugin: 'idea'
-apply plugin: 'org.springframework.boot'
-apply plugin: 'org.owasp.dependencycheck'
+aws {
+    profileName = 'credentials-profile-name-in-your-profile-configuration-file (~/.aws/credentials)'
+    region = 'eu-west-1'
+}
 
 jar {
     baseName = 'es.tracklin.backend'
