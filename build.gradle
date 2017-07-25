@@ -1,13 +1,41 @@
+/**
+    Plugins
+*/
 plugins {
     id "java"
     id "eclipse"
     id "idea"
+    id "war"
     id "org.springframework.boot" version "1.5.4.RELEASE"
     id "org.owasp.dependencycheck" version "2.1.0"
     id "jp.classmethod.aws" version "0.35"
     id "jp.classmethod.aws.beanstalk" version "0.35"
 }
 
+/**
+ Depdendencies
+*/
+dependencies {
+    compile("org.springframework.boot:spring-boot-starter-web")
+    compile("org.springframework.boot:spring-boot-starter-actuator")
+
+    testCompile("org.springframework.boot:spring-boot-starter-test")
+    testCompile("junit:junit")
+}
+
+/**
+    Project Settings
+*/
+group = 'es.tracklin'
+version = '0.1.0'
+ext.artifactId = 'backend'
+
+sourceCompatibility = 1.8
+targetCompatibility = 1.8
+
+/**
+    Task Settings
+*/
 aws {
     profileName = 'credentials-profile-name-in-your-profile-configuration-file (~/.aws/credentials)'
     region = 'eu-west-1'
@@ -18,21 +46,43 @@ jar {
     version = '0.1.0'
 }
 
-sourceCompatibility = 1.8
-targetCompatibility = 1.8
-
-repositories {
-    mavenCentral()
+war {
+    baseName = 'es.tracklines.backend'
+    version = '0.1.0'
 }
-
-dependencies {
-    compile("org.springframework.boot:spring-boot-starter-web")
-    compile("org.springframework.boot:spring-boot-starter-actuator")
-
-    testCompile("org.springframework.boot:spring-boot-starter-test")
-    testCompile("junit:junit")
-}
-
 springBoot {
     mainClass = "es.tracklin.Backend"
+}
+
+beanstalk {
+    String extension = project.war.archiveName.tokenize('.').last()
+    String timestamp = new Date().format("yyyyMMdd'_'HHmmss", TimeZone.default)
+
+    appName 'BackEnd'
+    appDesc "Tracklines BackEnd"
+
+    version {
+        label = "backend-${project.war.version}-${timestamp}"
+        description = "${artifactId} v${version}"
+        bucket = "tracklines-builds"
+        key = "/backend-${project.war.version}-${timestamp}.${extension}"
+    }
+
+    configurationTemplates {
+        production {
+            optionSettings = file('src/main/config/production.json')
+            solutionStackName = '64bit Amazon Linux 2017.03 v.2.5.2 running  Java 8'
+        }
+        development {
+            optionSettings = file('src/main/config/development.json')
+            solutionStackName = '64bit Amazon Linux 2017.03 v.2.5.2 running  Java 8'
+        }
+    }
+
+    environment {
+        envName = 'backend'
+        envDesc = 'TrackLines BackEnd Development'
+        templateName = 'development'
+        versionLabel = 'backend-${project.war.version}-${timestamp}'
+    }
 }
