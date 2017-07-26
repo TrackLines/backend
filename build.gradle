@@ -13,14 +13,21 @@ plugins {
 }
 
 /**
+    Repositories
+*/
+repositories {
+    mavenCentral()
+}
+
+/**
  Depdendencies
 */
 dependencies {
-    compile("org.springframework.boot:spring-boot-starter-web")
-    compile("org.springframework.boot:spring-boot-starter-actuator")
+    compile "org.springframework.boot:spring-boot-starter-web"
+    compile "org.springframework.boot:spring-boot-starter-actuator"
 
-    testCompile("org.springframework.boot:spring-boot-starter-test")
-    testCompile("junit:junit")
+    testCompile "org.springframework.boot:spring-boot-starter-test"
+    testCompile "junit:junit"
 }
 
 /**
@@ -28,16 +35,25 @@ dependencies {
 */
 group = 'es.tracklin'
 version = '0.1.0'
-ext.artifactId = 'backend'
 
-sourceCompatibility = 1.8
-targetCompatibility = 1.8
+ext {
+    artifactId = "backend"
+    timestamp = new Date().format("yyyyMMdd'_'HHmmss", TimeZone.default)
+    versionDesc = "${version}-${timestamp}"
+    defaultEncoding = "UTF-8"
+}
+
+sourceCompatibility = targetCompatibility = 1.8
 
 /**
     Task Settings
 */
+tasks.withType(AbstractCompile) each {
+    it.options.encoding = ext.defaultEncoding
+}
+
 aws {
-    profileName = 'credentials-profile-name-in-your-profile-configuration-file (~/.aws/credentials)'
+    profileName = 'default'
     region = 'eu-west-1'
 }
 
