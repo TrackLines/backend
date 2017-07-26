@@ -1,3 +1,12 @@
+/*buildscript {
+    repositories {
+        mavenCentral()
+    }
+    dependencies {
+        classpath "org.springframework.boot:spring-boot-gradle-plugin:1.5.4.RELEASE"
+    }
+}*/
+
 /**
     Plugins
 */
@@ -28,6 +37,8 @@ dependencies {
 
     testCompile "org.springframework.boot:spring-boot-starter-test"
     testCompile "junit:junit"
+
+    providedRuntime("org.springframework.boot:spring-boot-starter-tomcat")
 }
 
 /**
@@ -58,16 +69,30 @@ aws {
 }
 
 jar {
-    baseName = 'es.tracklin.backend'
-    version = '0.1.0'
+    baseName = "${artifactId}"
+    version = "${version}"
+    destinationDir =  file("$rootDir/build/bundle")
+    manifest {
+        attributes (
+            'Class-Path': configurations.compile.collect { it.getName() }.join(' '),
+            'Main-Class': 'es.tracklin.Backend'
+        )
+    }
 }
 
 war {
-    baseName = 'es.tracklines.backend'
-    version = '0.1.0'
+    baseName = artifactId
+    version = null
+    destinationDir =  file("$rootDir/build/bundle")
 }
+
 springBoot {
     mainClass = "es.tracklin.Backend"
+}
+
+bootRepackage {
+    mainClass = "es.tracklin.Backend"
+    executable = true
 }
 
 beanstalk {
@@ -102,3 +127,36 @@ beanstalk {
         versionLabel = 'backend-${project.war.version}-${timestamp}'
     }
 }
+
+/**
+    Named Tasks
+*/
+task createDockerfile(type: Copy, dependsOn: build) {
+    from "src/main/bundle/Dockerfile"
+    into "build/bundle"
+    expand(jarFilename: 'backend.jar', artifactId: project.artifactId)
+}
+
+task createBundleResources(type: Copy) {
+	from "src/main/bundle"
+	into "build/bundle"
+	exclude "src/main/bundle/Dockerfile"
+}
+
+task createBundle(type: Zip, dependsOn: [createDockerfile, createBundleResources, bootRepackage]) {
+	archiveName = jar.archiveName.substring(0, jar.archiveName.length() - 4) + ".zip"
+	from "build/bundle"
+	from jar.archivePath
+}
+
+task uploadBundle(type: jp.classmethod.aws.gradle.s3.AmazonS3FileUploadTask, dependsOn: createBundle) {
+	group "AWS"
+	description "Upload ${artifactId} application bundle file to S3."
+
+	bucketName "elasticbeanstalk-${aws.region}-${aws.accountId}"
+	key "eb-apps/${artifactId}/${artifactId}-${versionDesc}.zip"
+	file project.createBundle.archivePath
+	overwrite project.version.endsWith("-SNAPSHOT")
+}
+
+awsEbCreateApplicationVersion.dependsOn uploadBundle
