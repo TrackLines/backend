@@ -4,9 +4,13 @@
 buildscript {
     repositories {
         mavenCentral()
+        maven {
+            url "http://repo.spring.io/plugins-release"
+        }
     }
     dependencies {
         classpath "org.springframework.boot:spring-boot-gradle-plugin:1.5.4.RELEASE"
+        classpath "io.spring.gradle:propdeps-plugin:0.0.9.RELEASE"
     }
 }
 
@@ -24,6 +28,13 @@ plugins {
     id "jp.classmethod.aws.beanstalk" version "0.35"
 }
 
+configure(allprojects) {
+    apply plugin: 'propdeps'
+    apply plugin: 'propdeps-maven'
+    apply plugin: 'propdeps-idea'
+    apply plugin: 'propdeps-eclipse'
+}
+
 /**
     Repositories
 */
@@ -38,9 +49,17 @@ dependencies {
     compile "org.springframework.boot:spring-boot-starter-web"
     compile "org.springframework.boot:spring-boot-starter-actuator"
 
+    compile group: "org.hibernate", name: "hibernate-validator", version: "5.4.1.Final"
+    compile group: "org.springframework.vault", name: "spring-vault-core", version: "1.0.2.RELEASE"
+    compile group: "org.elasticsearch", name: "elasticsearch", version: "5.5.0"
+
     testCompile "org.springframework.boot:spring-boot-starter-test"
     testCompile "junit:junit"
+
+    optional "org.springframework.boot:spring-boot-configuration-processor"
 }
+
+compileJava.dependsOn(processResources)
 
 /**
     Project Settings
@@ -73,6 +92,14 @@ jar {
     baseName = "${artifactId}"
     version = "${version}"
     destinationDir =  file("$rootDir/build/bundle")
+}
+
+sourceSets {
+    main {
+        resources {
+            srcDirs "src/main/resources", "src/main/config"
+        }
+    }
 }
 
 war {

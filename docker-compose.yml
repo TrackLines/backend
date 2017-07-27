@@ -1,0 +1,22 @@
+version: '3'
+services:
+    vault:
+        image: vault:latest
+        environment:
+            VAULT_DEV_ROOT_TOKEN_ID: 'backend'
+            VAULT_SKIP_VERIFY: 'true'
+            SKIP_SETCAP: '1'
+        ports:
+            - 8200:8200
+
+#    backend:
+#        build:
+#            context: ./build/bundle
+#        ports:
+#            - 8080:8080
+
+    elastic:
+        image: docker.elastic.co/elasticsearch/elasticsearch:5.5.1
+        ports:
+          - 9200:9200
+          - 9300:9300
