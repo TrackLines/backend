@@ -4,47 +4,67 @@
 buildscript {
     repositories {
         mavenCentral()
+        maven {
+            url "http://repo.spring.io/plugins-release"
+        }
     }
     dependencies {
         classpath "org.springframework.boot:spring-boot-gradle-plugin:1.5.4.RELEASE"
+        classpath "io.spring.gradle:propdeps-plugin:0.0.9.RELEASE"
     }
 }
 
 /**
-    Plugins
-*/
+ *  Plugins
+ */
 plugins {
     id "java"
     id "eclipse"
     id "idea"
     id "war"
+
     id "org.springframework.boot" version "1.5.4.RELEASE"
     id "org.owasp.dependencycheck" version "2.1.0"
+
     id "jp.classmethod.aws" version "0.35"
     id "jp.classmethod.aws.beanstalk" version "0.35"
 }
 
+configure(allprojects) {
+    apply plugin: 'propdeps'
+    apply plugin: 'propdeps-maven'
+    apply plugin: 'propdeps-idea'
+    apply plugin: 'propdeps-eclipse'
+}
+
 /**
-    Repositories
-*/
+ * Repositories
+ */
 repositories {
     mavenCentral()
 }
 
 /**
- Depdendencies
-*/
+ * Depdendencies
+ */
 dependencies {
     compile "org.springframework.boot:spring-boot-starter-web"
     compile "org.springframework.boot:spring-boot-starter-actuator"
 
+    compile group: "org.hibernate", name: "hibernate-validator", version: "5.4.1.Final"
+    compile group: "org.elasticsearch", name: "elasticsearch", version: "5.5.0"
+
     testCompile "org.springframework.boot:spring-boot-starter-test"
     testCompile "junit:junit"
+
+    optional "org.springframework.boot:spring-boot-configuration-processor"
 }
 
+compileJava.dependsOn(processResources)
+
 /**
-    Project Settings
-*/
+ *   Project Settings
+ */
 group = 'es.tracklin'
 version = '0.1.0'
 
@@ -58,8 +78,8 @@ ext {
 sourceCompatibility = targetCompatibility = 1.8
 
 /**
-    Task Settings
-*/
+ *   Task Settings
+ */
 tasks.withType(AbstractCompile) each {
     it.options.encoding = ext.defaultEncoding
 }
@@ -87,6 +107,19 @@ springBoot {
 
 bootRepackage {
     mainClass = "es.tracklin.Backend"
+    executable = true
+}
+
+sourceSets {
+    main {
+        resources {
+            srcDirs "src/main/resources", "src/main/config"
+        }
+    }
+}
+
+bootRepackage {
+    mainClass = "es.trackln.Backend"
     executable = true
 }
 
@@ -124,8 +157,8 @@ beanstalk {
 }
 
 /**
-    Named Tasks
-*/
+ *   Named Tasks
+ */
 task createDockerfile(type: Copy, dependsOn: build) {
     from "src/main/bundle/Dockerfile"
     into "build/bundle"
