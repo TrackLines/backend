@@ -1,7 +1,5 @@
 package es.tracklin.Tracks;
 
-import es.tracklin.DataConnections.Mongo;
-
 public class Track {
     private final long id;
     private final String content;
@@ -16,10 +14,6 @@ public class Track {
     }
 
     public String getContent() {
-        Mongo mongo = new Mongo();
-
-        String tester = mongo.connectMongo();
-
         return content;
     }
 }

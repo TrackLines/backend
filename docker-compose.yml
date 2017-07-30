@@ -1,13 +1,18 @@
 version: '3'
 services:
-    elastic:
-        image: docker.elastic.co/elasticsearch/elasticsearch:5.5.1
-        ports:
-            - 9200:9200
-            - 9300:9300
+  elastic:
+    image: docker.elastic.co/elasticsearch/elasticsearch:5.5.1
+    ports:
+      - 9200:9200
+      - 9300:9300
 
-    mongo:
-        image: mongo:latest
-        ports:
-            - 27017
+  mongo:
+    image: mongo:latest
+    ports:
+      - 27017:27017
 
+  backend:
+    build:
+      context: ./build/bundle
+    ports:
+      - 8080:8080

@@ -1,16 +1,26 @@
 package es.tracklin.DataConnections;
 
+import com.mongodb.MongoClient;
+import com.mongodb.client.MongoDatabase;
 import es.tracklin.Configuration.MongoConfiguration;
-import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Configuration;
 
+//import static java.util.concurrent.TimeUnit.SECONDS;
+
+@Configuration
 public class Mongo {
-    @Autowired
-    MongoConfiguration mongoConfiguration;
+    private MongoConfiguration mongoConfiguration;
 
-    public String connectMongo() {
+    public Mongo() {
+        this.mongoConfiguration = new MongoConfiguration();
+    }
+
+    public MongoDatabase connectMongo() {
         String address = mongoConfiguration.getAddress();
         int port = mongoConfiguration.getPort();
 
-        return address;
+        MongoClient mongoClient = new MongoClient(mongoConfiguration.getAddress(), mongoConfiguration.getPort());
+
+        return mongoClient.getDatabase(mongoConfiguration.getDatabase());
     }
 }

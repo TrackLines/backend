@@ -3,10 +3,9 @@ package es.tracklin.Configuration;
 import org.hibernate.validator.constraints.Length;
 import org.hibernate.validator.constraints.NotBlank;
 import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.context.annotation.ComponentScan;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.PropertySource;
-import org.springframework.stereotype.Component;
-import org.springframework.validation.annotation.Validated;
 
 import javax.validation.constraints.Max;
 import javax.validation.constraints.Min;
@@ -15,15 +14,14 @@ import javax.validation.constraints.Min;
 @PropertySource("classpath:mongo.properties")
 @PropertySource(value = "classpath:local.properties", ignoreResourceNotFound = true)
 @ConfigurationProperties(prefix = "mongo")
-@Validated
+@ComponentScan("es.tracklin.Client")
 public class MongoConfiguration {
-    @Validated
     public static class Credentials {
         @Length(max = 40, min = 4)
-        private String username;
+        private String username = "";
 
         @Length(max = 40, min = 8)
-        private String password;
+        private String password = "";
 
         public String getUsername() {
             return username;
@@ -45,11 +43,14 @@ public class MongoConfiguration {
     private Credentials credentials;
 
     @NotBlank
-    private String address;
+    private String address = "";
+
+    @NotBlank
+    private String database = "";
 
     @Min(27000)
     @Max(28000)
-    private int port;
+    private int port = 0;
 
     public Credentials getCredentials() {
         return credentials;
@@ -73,5 +74,13 @@ public class MongoConfiguration {
 
     public void setPort(int port) {
         this.port = port;
+    }
+
+    public String getDatabase() {
+        return database;
+    }
+
+    public void setDatabase(String database) {
+        this.database = database;
     }
 }

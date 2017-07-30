@@ -51,6 +51,7 @@ dependencies {
     compile "org.springframework.boot:spring-boot-starter-web"
     compile "org.springframework.boot:spring-boot-starter-actuator"
 
+    compile group: "org.mongodb", name: "mongodb-driver", version: "3.4.2"
     compile group: "org.hibernate", name: "hibernate-validator", version: "5.4.1.Final"
     compile group: "org.elasticsearch", name: "elasticsearch", version: "5.5.0"
 
