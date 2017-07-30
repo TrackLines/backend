@@ -31,7 +31,7 @@ public class ClientTests {
                 "http://localhost:" + this.port + "/v1/client",
                 Map.class
         );
-        then(entity.getStatusCode()).isEqualTo(HttpStatus.OK);
+        then(entity.getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED);
     }
 
     @Test
