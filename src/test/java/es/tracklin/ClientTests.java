@@ -59,7 +59,7 @@ public class ClientTests {
         registerModel.setContactEmail("bob@test.com");
 
         this.testRestTemplate.put(
-                "http://localhost:" + this.port + "/v1/client/put",
+                "http://localhost:" + this.port + "/v1/client",
                 registerModel
         );
 

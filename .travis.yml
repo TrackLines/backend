@@ -1,0 +1,8 @@
+language: java
+jdk:
+  - openjdk8
+#services:
+#  - mongodb
+#  - elasticsearch
+install: true
+script: ./gradlew test
