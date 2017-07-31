@@ -178,14 +178,14 @@ task createBundle(type: Zip, dependsOn: [createDockerfile, createBundleResources
 	from jar.archivePath
 }
 
-task uploadBundle(type: jp.classmethod.aws.gradle.s3.AmazonS3FileUploadTask, dependsOn: createBundle) {
-	group "AWS"
-	description "Upload ${artifactId} application bundle file to S3."
-
-	bucketName "elasticbeanstalk-${aws.region}-${aws.accountId}"
-	key "eb-apps/${artifactId}/${artifactId}-${versionDesc}.zip"
-	file project.createBundle.archivePath
-	overwrite project.version.endsWith("-SNAPSHOT")
-}
-
-awsEbCreateApplicationVersion.dependsOn uploadBundle
+//task uploadBundle(type: jp.classmethod.aws.gradle.s3.AmazonS3FileUploadTask, dependsOn: createBundle) {
+//	group "AWS"
+//	description "Upload ${artifactId} application bundle file to S3."
+//
+//	bucketName "elasticbeanstalk-${aws.region}-${aws.accountId}"
+//	key "eb-apps/${artifactId}/${artifactId}-${versionDesc}.zip"
+//	file project.createBundle.archivePath
+//	overwrite project.version.endsWith("-SNAPSHOT")
+//}
+//
+//awsEbCreateApplicationVersion.dependsOn uploadBundle
