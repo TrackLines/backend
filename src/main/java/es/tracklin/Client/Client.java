@@ -9,10 +9,12 @@ import org.springframework.stereotype.Component;
 public class Client {
     private final MongoConfiguration mongoConfiguration;
     private final long clientId;
+    private final String token;
 
     public Client(MongoConfiguration mongoConfiguration) {
         this.mongoConfiguration = mongoConfiguration;
         this.clientId = 0;
+        this.token = "";
     }
 
     public int login(LoginModel loginModel) {
@@ -21,5 +23,13 @@ public class Client {
 
     public long getClientId() {
         return clientId;
+    }
+
+    public MongoConfiguration getMongoConfiguration() {
+        return mongoConfiguration;
+    }
+
+    public String getToken() {
+        return token;
     }
 }

@@ -1,6 +1,7 @@
 package es.tracklin;
 
 import es.tracklin.Client.LoginModel;
+import es.tracklin.Client.RegisterModel;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -25,7 +26,7 @@ public class ClientTests {
     private TestRestTemplate testRestTemplate;
 
     @Test
-    public void shouldReturn200WhenSendingRequestToClientController() throws Exception {
+    public void shouldReturn401WhenSendingRequestToClientController() throws Exception {
         @SuppressWarnings("rawtypes")
         ResponseEntity<Map> entity = this.testRestTemplate.getForEntity(
                 "http://localhost:" + this.port + "/v1/client",
@@ -35,10 +36,36 @@ public class ClientTests {
     }
 
     @Test
-    public void shouldReturn200WhenSendingRequestToLogin() throws Exception {
+    public void shouldReturn401WhenSendingWrongLoginRequest() throws Exception {
         LoginModel loginModel = new LoginModel();
         loginModel.setUsername("bob");
-        loginModel.setPassword("bob");
+        loginModel.setPassword("bill");
+
+        @SuppressWarnings("rawtypes")
+        ResponseEntity<Map> entity = this.testRestTemplate.postForEntity(
+                "http://localhost:" + this.port + "/v1/client",
+                loginModel,
+                Map.class
+        );
+        then(entity.getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED);
+    }
+
+    @Test
+    public void shouldReturn200WhenSendingRequestToRegisterAndThenLogin() throws Exception {
+        RegisterModel registerModel = new RegisterModel();
+        registerModel.setUsername("bobby");
+        registerModel.setPassword("bobster");
+        registerModel.setCompanyName("test");
+        registerModel.setContactEmail("bob@test.com");
+
+        this.testRestTemplate.put(
+                "http://localhost:" + this.port + "/v1/client/put",
+                registerModel
+        );
+
+        LoginModel loginModel = new LoginModel();
+        loginModel.setUsername("bobby");
+        loginModel.setPassword("bobster");
 
         @SuppressWarnings("rawtypes")
         ResponseEntity<Map> entity = this.testRestTemplate.postForEntity(
@@ -47,5 +74,10 @@ public class ClientTests {
                 Map.class
         );
         then(entity.getStatusCode()).isEqualTo(HttpStatus.OK);
+    }
+
+    @Test
+    public void shouldReturn401WhenSendingRequestToDeleteAccount() throws Exception {
+
     }
 }
