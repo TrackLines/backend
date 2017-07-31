@@ -25,10 +25,6 @@ public class Client {
         return clientId;
     }
 
-    public MongoConfiguration getMongoConfiguration() {
-        return mongoConfiguration;
-    }
-
     public String getToken() {
         return token;
     }
