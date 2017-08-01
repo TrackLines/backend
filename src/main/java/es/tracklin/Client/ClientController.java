@@ -32,7 +32,7 @@ public class ClientController {
             return new ResponseEntity<Client>(client, HttpStatus.OK);
         }
 
-        return new ResponseEntity<Unauthorized>(unauthorized, HttpStatus.UNAUTHORIZED);
+        return new ResponseEntity<Unauthorized>(unauthorized, HttpStatus.FORBIDDEN);
     }
 
     @RequestMapping(method = RequestMethod.GET)

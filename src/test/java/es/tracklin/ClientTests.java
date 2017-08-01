@@ -6,8 +6,6 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.context.embedded.LocalServerPort;
-import org.springframework.boot.test.autoconfigure.web.client.AutoConfigureWebClient;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.http.HttpStatus;
@@ -38,7 +36,7 @@ public class ClientTests {
     }
 
     @Test
-    public void shouldReturn401WhenSendingWrongLoginRequest() throws Exception {
+    public void shouldReturn403WhenSendingWrongLoginRequest() throws Exception {
         LoginModel loginModel = new LoginModel();
         loginModel.setUsername("bob");
         loginModel.setPassword("bill");
@@ -49,7 +47,7 @@ public class ClientTests {
                 loginModel,
                 Map.class
         );
-        then(entity.getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED);
+        then(entity.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
     }
 
     @Test
