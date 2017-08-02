@@ -31,11 +31,15 @@ import java.util.concurrent.atomic.AtomicLong;
 @RestController
 @RequestMapping("/v1/track")
 public class TrackController {
-    private static final String template = "Hello %s";
-    private final AtomicLong counter = new AtomicLong();
-
     @RequestMapping(method = RequestMethod.GET)
-    public Track sayHello(@RequestParam(value = "name", required = false, defaultValue = "Test") String name) {
-        return new Track(counter.incrementAndGet(), String.format(template, name));
+    public @ResponseBody Track getTrack(@RequestParam(value = "trackId", required = false, defaultValue = "Test") String trackId) {
+        Track track = new Track();
+
+        return track.getTrack(Integer.parseInt(trackId));
+    }
+
+    @RequestMapping(method = RequestMethod.PUT)
+    public void addTrack(TrackObj trackObj) {
+        Track track = new Track();
     }
 }

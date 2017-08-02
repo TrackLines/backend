@@ -26,11 +26,19 @@ package es.tracklin.Tracks;
 
 
 public class TrackObj {
-    private final String trackName;
-    private final String trackURL;
+    private String trackName;
+    private String trackURL;
 
     public String getTrackName() {
         return trackName;
+    }
+
+    public void setTrackName(String trackName) {
+        this.trackName = trackName;
+    }
+
+    public void setTrackURL(String trackURL) {
+        this.trackURL = trackURL;
     }
 
     public String getTrackURL() {

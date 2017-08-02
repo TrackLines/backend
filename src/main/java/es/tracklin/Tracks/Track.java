@@ -25,19 +25,23 @@
 package es.tracklin.Tracks;
 
 public class Track {
-    private final long id;
-    private final String content;
+    private Integer trackId;
 
-    public Track(long id, String content) {
-        this.id = id;
-        this.content = content;
+    public Integer getTrackId() {
+        return trackId;
     }
 
-    public long getId() {
-        return id;
+    public void setTrackId(Integer trackId) {
+        this.trackId = trackId;
     }
 
-    public String getContent() {
-        return content;
+    public Track getTrack(Integer trackId) {
+        this.trackId = trackId;
+
+        return this;
+    }
+
+    public void addTrack(TrackObj trackObj) {
+
     }
 }

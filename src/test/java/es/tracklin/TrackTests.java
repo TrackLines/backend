@@ -25,6 +25,8 @@
 package es.tracklin;
 
 import java.util.Map;
+
+import es.tracklin.Tracks.TrackObj;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -58,10 +60,21 @@ public class TrackTests {
 
     @Test
     public void shouldReturn200WhenAddingTrack() throws Exception {
-        @SuppressWarnings("rawtypes")
-        ResponseEntity<Map> entity = this.testRestTemplate.put(
-                "http://localhost:" + this.port + "/v1/track",
+        TrackObj trackObj = new TrackObj();
+        trackObj.setTrackName("Tester");
+        trackObj.setTrackURL("cheese");
 
+        // Add the track
+        this.testRestTemplate.put(
+                "http://localhost:" + this.port + "/v1/track",
+                trackObj
         );
+
+        @SuppressWarnings("rawtypes")
+        ResponseEntity<Map> entity = this.testRestTemplate.getForEntity(
+                "http://localhost:" + this.port + "/v1/track",
+                Map.class
+        );
+        then(entity.getStatusCode()).isEqualTo(HttpStatus.OK);
     }
 }
