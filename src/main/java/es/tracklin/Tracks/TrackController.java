@@ -24,15 +24,14 @@
 
 package es.tracklin.Tracks;
 
+import org.springframework.stereotype.Controller;
 import org.springframework.web.bind.annotation.*;
 
-import java.util.concurrent.atomic.AtomicLong;
-
-@RestController
+@Controller
 @RequestMapping("/v1/track")
 public class TrackController {
     @RequestMapping(method = RequestMethod.GET)
-    public @ResponseBody Track getTrack(@RequestParam(value = "trackId", required = false, defaultValue = "Test") String trackId) {
+    public @ResponseBody Track getTrack(@RequestParam(value = "trackId", required = false, defaultValue = "1") String trackId) {
         Track track = new Track();
 
         return track.getTrack(Integer.parseInt(trackId));

@@ -1,6 +1,7 @@
 package es.tracklin.Client;
 
 import es.tracklin.Configuration.MongoConfiguration;
+import es.tracklin.Error.Error;
 import es.tracklin.Error.Unauthorized;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
