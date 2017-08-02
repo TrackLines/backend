@@ -22,16 +22,18 @@
  * SOFTWARE.
  */
 
-package es.tracklin.Error;
+package es.tracklin.Tracks;
 
-public class Unauthorized {
-    private final String message;
 
-    public Unauthorized() {
-        message = "Unauthorized";
+public class TrackObj {
+    private final String trackName;
+    private final String trackURL;
+
+    public String getTrackName() {
+        return trackName;
     }
 
-    public String getMessage() {
-        return message;
+    public String getTrackURL() {
+        return trackURL;
     }
 }
