@@ -1,5 +1,6 @@
-package es.tracklin;
+package es.tracklin.Mongo;
 
+import es.tracklin.Backend;
 import es.tracklin.Configuration.MongoConfiguration;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -37,10 +38,5 @@ public class ConfigurationTests {
         MongoConfiguration.Credentials credentials = mongoConfiguration.getCredentials();
 
         assertNotEquals("", credentials.getPassword());
-    }
-
-    @Test
-    public void shouldReturnDatabase() throws Exception {
-        assertNotEquals("", mongoConfiguration.getDatabase());
     }
 }

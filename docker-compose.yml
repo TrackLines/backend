@@ -11,8 +11,13 @@ services:
     ports:
       - 27017:27017
 
-  backend:
-    build:
-      context: ./build/bundle
+  mongoweb:
+    image: mongo-express:latest
     ports:
-      - 8080:8080
+      - 9000:8081
+
+#  backend:
+#    build:
+#      context: ./build/bundle
+#    ports:
+#      - 8080:8080

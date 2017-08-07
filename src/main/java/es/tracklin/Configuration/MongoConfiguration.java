@@ -14,7 +14,6 @@ import javax.validation.constraints.Min;
 @PropertySource("classpath:mongo.properties")
 @PropertySource(value = "classpath:local.properties", ignoreResourceNotFound = true)
 @ConfigurationProperties(prefix = "mongo")
-@ComponentScan("es.tracklin.Client")
 public class MongoConfiguration {
     public static class Credentials {
         @Length(max = 40, min = 4)
@@ -45,9 +44,6 @@ public class MongoConfiguration {
     @NotBlank
     private String address = "";
 
-    @NotBlank
-    private String database = "";
-
     @Min(27000)
     @Max(28000)
     private int port = 0;
@@ -74,13 +70,5 @@ public class MongoConfiguration {
 
     public void setPort(int port) {
         this.port = port;
-    }
-
-    public String getDatabase() {
-        return database;
-    }
-
-    public void setDatabase(String database) {
-        this.database = database;
     }
 }
