@@ -64,6 +64,8 @@ public class DataTests {
         tokens.setAPI("bob");
         tokens.setInterface("bob");
         insertData.setTokens(tokens);
+
+        // Get the insert id
         String userId = mongo.addUser(insertData);
 
         // Retrieve data

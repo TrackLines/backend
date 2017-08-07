@@ -43,25 +43,33 @@ public class Mongo {
         doc.put("tokenAPI", clientData.getTokens().getAPI());
         doc.put("createdDate", new Date());
 
-        mongoDatabase.insertOne(doc);
+        String returnId = "";
 
-        Object clientObj = doc.get("_id");
+        ClientData client = getUser(clientData.getName(), clientData.getPassword());
+        if (client.getId().equals("")) {
+            mongoDatabase.insertOne(doc);
+            returnId = doc.get("_id").toString();
+        } else {
+            Document updateDoc = getUserDoc(client.getName(), client.getPassword());
+            if (updateDoc.size() == 0) {
+                mongoDatabase.insertOne(doc);
+                returnId = doc.get("_id").toString();
+            } else {
+                mongoDatabase.updateOne(updateDoc, doc);
+                returnId = updateDoc.get("_id").toString();
+            }
+        }
 
-        return clientObj.toString();
+        return returnId;
     }
 
     public ClientData getUser(String username, String password) {
-        Document findDocument = new Document();
-        findDocument.put("name", username);
-        findDocument.put("password", password);
-
         ClientData returnData = new ClientData();
         ClientData.Tokens tokens = returnData.new Tokens();
         ClientData.ContactDetails contactDetails = returnData.new ContactDetails();
 
-        MongoCollection<Document> mongoDatabase = connectMongo("user");
-        FindIterable<Document> returnDocuments = mongoDatabase.find(findDocument);
-        for (Document eachDoc : returnDocuments) {
+        Document eachDoc = getUserDoc(username, password);
+        if (eachDoc.size() != 0) {
             returnData.setId(eachDoc.get("_id").toString());
             returnData.setName(eachDoc.get("name").toString());
 
@@ -76,5 +84,20 @@ public class Mongo {
         }
 
         return returnData;
+    }
+
+    private Document getUserDoc(String username, String password) {
+        Document findDocument = new Document();
+        findDocument.put("name", username);
+        findDocument.put("password", password);
+
+        Document returnDoc = new Document();
+        MongoCollection<Document> mongoDatabase = connectMongo("user");
+        FindIterable<Document> returnDocuments = mongoDatabase.find(findDocument);
+        for (Document eachDoc : returnDocuments) {
+            returnDoc = eachDoc;
+        }
+
+        return returnDoc;
     }
 }
