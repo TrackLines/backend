@@ -10,6 +10,9 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.junit4.SpringRunner;
 
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotEquals;
+
 @RunWith(SpringRunner.class)
 @SpringBootTest(classes = Backend.class)
 public class DataTests {
@@ -18,7 +21,8 @@ public class DataTests {
 
     @Test
     public void shouldInsertData() throws Exception {
-        Mongo mongo = new Mongo();
+        Mongo mongo = new Mongo(mongoConfiguration);
+
         ClientData clientData = new ClientData();
         ClientData.Tokens tokens = clientData.new Tokens();
         ClientData.ContactDetails contactDetails = clientData.new ContactDetails();
@@ -34,7 +38,36 @@ public class DataTests {
         tokens.setAPI("bob");
         tokens.setInterface("bob");
         clientData.setTokens(tokens);
+        assertNotEquals("", mongo.addUser(clientData));
+    }
 
-        String returnData = mongo.addUser(clientData);
+    @Test
+    public void shouldGetData() throws Exception {
+        Mongo mongo = new Mongo(mongoConfiguration);
+
+        // Insert the data to be returned
+        ClientData insertData = new ClientData();
+        ClientData.Tokens tokens = insertData.new Tokens();
+        ClientData.ContactDetails contactDetails = insertData.new ContactDetails();
+
+        String username = "bob";
+        String password = "bob";
+
+        insertData.setName(username);
+        insertData.setPassword(password);
+
+        contactDetails.setEmail("bob@bob.bob");
+        contactDetails.setName("bobster");
+        contactDetails.setNumber("00");
+        insertData.setContactDetails(contactDetails);
+
+        tokens.setAPI("bob");
+        tokens.setInterface("bob");
+        insertData.setTokens(tokens);
+        String userId = mongo.addUser(insertData);
+
+        // Retrieve data
+        ClientData returnData = mongo.getUser(username, password);
+        assertEquals(returnData.getId(), userId);
     }
 }

@@ -30,6 +30,7 @@ public class ConfigurationTests {
     public void shouldReturnUsername() throws Exception {
         MongoConfiguration.Credentials credentials = mongoConfiguration.getCredentials();
 
+        //System.out.print("----" + credentials.getUsername() + "----");
         assertNotEquals("", credentials.getUsername());
     }
 
