@@ -34,7 +34,7 @@ public class Mongo {
         MongoCollection<Document> mongoDatabase = connectMongo("user");
 
         Document doc = new Document();
-        doc.put("name", clientData.getName());
+        doc.put("username", clientData.getName());
         doc.put("password", clientData.getPassword());
         doc.put("email", clientData.getContactDetails().getEmail());
         doc.put("contactName", clientData.getContactDetails().getName());
@@ -51,13 +51,8 @@ public class Mongo {
             returnId = doc.get("_id").toString();
         } else {
             Document updateDoc = getUserDoc(client.getName(), client.getPassword());
-            if (updateDoc.size() == 0) {
-                mongoDatabase.insertOne(doc);
-                returnId = doc.get("_id").toString();
-            } else {
-                mongoDatabase.updateOne(updateDoc, doc);
-                returnId = updateDoc.get("_id").toString();
-            }
+            mongoDatabase.updateOne(updateDoc, doc);
+            returnId = updateDoc.get("_id").toString();
         }
 
         return returnId;
@@ -71,7 +66,8 @@ public class Mongo {
         Document eachDoc = getUserDoc(username, password);
         if (eachDoc.size() != 0) {
             returnData.setId(eachDoc.get("_id").toString());
-            returnData.setName(eachDoc.get("name").toString());
+            returnData.setName(eachDoc.get("username").toString());
+            returnData.setPassword(eachDoc.get("password").toString());
 
             tokens.setInterface(eachDoc.get("tokenInterface").toString());
             tokens.setAPI(eachDoc.get("tokenAPI").toString());
@@ -99,5 +95,12 @@ public class Mongo {
         }
 
         return returnDoc;
+    }
+
+    public void deleteUser(String username, String password) {
+        MongoCollection<Document> mongoDatabase = connectMongo("user");
+
+        Document findDoc = getUserDoc(username, password);
+        mongoDatabase.deleteOne(findDoc);
     }
 }

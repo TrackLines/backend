@@ -70,6 +70,21 @@ public class DataTests {
 
         // Retrieve data
         ClientData returnData = mongo.getUser(username, password);
-        assertEquals(returnData.getId(), userId);
+        assertEquals(userId, returnData.getId());
+    }
+
+    @Test
+    public void shouldDeleteUser() throws Exception {
+        Mongo mongo = new Mongo(mongoConfiguration);
+
+        String username = "bob";
+        String password = "bob";
+
+        // Delete the user
+        mongo.deleteUser(username, password);
+
+        // Should return non user
+        ClientData returnData = mongo.getUser(username, password);
+        assertEquals("", returnData.getId());
     }
 }
