@@ -23,5 +23,5 @@ public class Creation {
         return tokens.generateToken(username, "api");
     }
 
-    
+
 }
