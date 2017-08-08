@@ -3,9 +3,7 @@ package es.tracklin.Configuration;
 import org.hibernate.validator.constraints.Length;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.stereotype.Component;
 
-//@Component("HibernateConfiguration")
 @Configuration
 @ConfigurationProperties(prefix = "hibernate")
 public class Hibernate {

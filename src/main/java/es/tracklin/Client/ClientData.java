@@ -52,12 +52,32 @@ public class ClientData {
         }
     }
 
+    public class Credentials {
+        private String username;
+        private String password;
+
+        public String getUsername() {
+            return username;
+        }
+
+        public void setUsername(String username) {
+            this.username = username;
+        }
+
+        public String getPassword() {
+            return password;
+        }
+
+        public void setPassword(String password) {
+            this.password = password;
+        }
+    }
+
     private String id = "";
-    private String name;
-    private String password;
 
     private Tokens tokens;
     private ContactDetails contactDetails;
+    private Credentials credentials;
 
     public String getId() {
         return id;
@@ -65,22 +85,6 @@ public class ClientData {
 
     public void setId(String id) {
         this.id = id;
-    }
-
-    public String getName() {
-        return name;
-    }
-
-    public void setName(String name) {
-        this.name = name;
-    }
-
-    public String getPassword() {
-        return password;
-    }
-
-    public void setPassword(String password) {
-        this.password = password;
     }
 
     public Tokens getTokens() {
@@ -97,5 +101,13 @@ public class ClientData {
 
     public void setContactDetails(ContactDetails contactDetails) {
         this.contactDetails = contactDetails;
+    }
+
+    public Credentials getCredentials() {
+        return credentials;
+    }
+
+    public void setCredentials(Credentials credentials) {
+        this.credentials = credentials;
     }
 }
