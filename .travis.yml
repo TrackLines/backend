@@ -6,3 +6,7 @@ services:
   - elasticsearch
 install: true
 script: ./gradlew test
+branches:
+  only:
+    - master
+
