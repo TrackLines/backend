@@ -9,4 +9,5 @@ script: ./gradlew test
 branches:
   only:
     - master
-
+before_install:
+  - mysql -e 'CREATE DATABASE tracklines;'

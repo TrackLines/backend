@@ -1,7 +1,9 @@
-package es.tracklin;
+package es.tracklin.Client;
 
+import es.tracklin.Backend;
 import es.tracklin.Client.LoginModel;
 import es.tracklin.Client.RegisterModel;
+import org.junit.Ignore;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.springframework.beans.factory.annotation.Autowired;

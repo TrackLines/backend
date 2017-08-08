@@ -1,26 +1,23 @@
 package es.tracklin.Configuration;
 
 import org.hibernate.validator.constraints.Length;
-import org.hibernate.validator.constraints.NotBlank;
 import org.springframework.boot.context.properties.ConfigurationProperties;
-import org.springframework.context.annotation.ComponentScan;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.context.annotation.PropertySource;
+import org.springframework.stereotype.Component;
 
-import javax.validation.constraints.Max;
-import javax.validation.constraints.Min;
-
+//@Component("HibernateConfiguration")
 @Configuration
-@PropertySource("classpath:mongo.properties")
-@PropertySource(value = "classpath:local.properties", ignoreResourceNotFound = true)
-@ConfigurationProperties(prefix = "mongo")
-public class MongoConfiguration {
+@ConfigurationProperties(prefix = "hibernate")
+public class Hibernate {
     public static class Credentials {
-        @Length(max = 40, min = 4)
+        @Length(max = 40, min = 10)
         private String username = "";
 
-        @Length(max = 40, min = 8)
+        @Length(max = 40, min = 10)
         private String password = "";
+
+        @Length(max = 40, min = 10)
+        private String database = "";
 
         public String getUsername() {
             return username;
@@ -37,15 +34,21 @@ public class MongoConfiguration {
         public void setPassword(String password) {
             this.password = password;
         }
+
+        public String getDatabase() {
+            return database;
+        }
+
+        public void setDatabase(String database) {
+            this.database = database;
+        }
     }
 
     private Credentials credentials;
 
-    @NotBlank
+    @Length(max = 100, min = 10)
     private String address = "";
 
-    @Min(27000)
-    @Max(28000)
     private int port = 0;
 
     public Credentials getCredentials() {

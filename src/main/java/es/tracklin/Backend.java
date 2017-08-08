@@ -1,12 +1,13 @@
 package es.tracklin;
 
-import es.tracklin.Configuration.MongoConfiguration;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
-import org.springframework.boot.context.properties.EnableConfigurationProperties;
+import org.springframework.context.annotation.PropertySource;
 
 @SpringBootApplication
-@EnableConfigurationProperties(MongoConfiguration.class)
+@PropertySource("classpath:hibernate.properties")
+@PropertySource("classpath:elasticsearch.properties")
+@PropertySource(value = "classpath:local.properties", ignoreResourceNotFound = true)
 public class Backend {
     public static void main(String[] args) {
         SpringApplication.run(Backend.class, args);
