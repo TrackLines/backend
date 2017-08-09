@@ -5,7 +5,7 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.context.annotation.PropertySource;
 
 @SpringBootApplication
-@PropertySource("classpath:hibernate.properties")
+@PropertySource("classpath:database.properties")
 @PropertySource("classpath:elasticsearch.properties")
 @PropertySource("classpath:tokens.properties")
 @PropertySource(value = "classpath:local.properties", ignoreResourceNotFound = true)

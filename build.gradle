@@ -42,6 +42,7 @@ configure(allprojects) {
  */
 repositories {
     mavenCentral()
+    jcenter()
 }
 
 /**
@@ -52,12 +53,11 @@ dependencies {
     compile group: "org.springframework.boot", name: "spring-boot-starter-actuator"
     compile group: "org.hibernate", name: "hibernate-validator"
     compile group: "org.elasticsearch", name: "elasticsearch"
-    compile group: "mysql", name: "mysql-connector-java"
-    compile group: "org.hibernate", name: "hibernate-core"
     compile group: "org.apache.tomcat", name: "tomcat-dbcp", version: "7.0.55"
 
     testCompile group: "org.springframework.boot", name: "spring-boot-starter-test"
     testCompile group: "junit", name: "junit"
+    testCompile group: "org.mockito", name: "mockito-core"
 
     optional group: "org.springframework.boot", name: "spring-boot-configuration-processor"
 }

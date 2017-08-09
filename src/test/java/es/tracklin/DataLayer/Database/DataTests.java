@@ -38,9 +38,9 @@ public class DataTests {
         clientData.setCredentials(credentials);
 
         AccountCreation creation = new AccountCreation();
-        creation.setTokens(tokensConfiguration);
-        String web = creation.web(username);
-        String api = creation.api(username);
+//        creation.setTokens(tokensConfiguration);
+//        String web = creation.web(username);
+//        String api = creation.api(username);
     }
 
     @Test
