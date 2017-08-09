@@ -5,8 +5,8 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.context.annotation.Configuration;
 
 @Configuration
-@ConfigurationProperties(prefix = "hibernate")
-public class Hibernate {
+@ConfigurationProperties(prefix = "database")
+public class Database {
     public static class Credentials {
         @Length(max = 40, min = 10)
         private String username = "";

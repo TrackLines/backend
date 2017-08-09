@@ -1,9 +1,9 @@
-package es.tracklin.DataLayer.Hibernate;
+package es.tracklin.DataLayer.Database;
 
 import es.tracklin.Backend;
 import es.tracklin.Client.ClientData;
-import es.tracklin.Client.Creation;
-import es.tracklin.DataConnections.Hibernate;
+import es.tracklin.Client.AccountCreation;
+import es.tracklin.DataConnections.Database;
 
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -15,7 +15,7 @@ import org.springframework.test.context.junit4.SpringRunner;
 @SpringBootTest(classes = Backend.class)
 public class DataTests {
     @Autowired
-    es.tracklin.Configuration.Hibernate hibernateConfiguration;
+    es.tracklin.Configuration.Database databaseConfiguration;
 
     @Autowired
     es.tracklin.Configuration.Tokens tokensConfiguration;
@@ -26,8 +26,8 @@ public class DataTests {
 
     @Test
     public void shouldAddUser() throws Exception {
-        Hibernate hibernate = new Hibernate();
-        hibernate.setHibernateConfiguration(hibernateConfiguration);
+        Database database = new Database();
+        database.setDatabaseConfiguration(databaseConfiguration);
 
         ClientData clientData = new ClientData();
         ClientData.Credentials credentials = clientData.new Credentials();
@@ -37,12 +37,10 @@ public class DataTests {
         credentials.setUsername(username);
         clientData.setCredentials(credentials);
 
-        Creation creation = new Creation();
+        AccountCreation creation = new AccountCreation();
         creation.setTokens(tokensConfiguration);
         String web = creation.web(username);
         String api = creation.api(username);
-
-        //hibernate.addUser(clientData);
     }
 
     @Test

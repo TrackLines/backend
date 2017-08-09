@@ -48,17 +48,18 @@ repositories {
  * Depdendencies
  */
 dependencies {
-    compile "org.springframework.boot:spring-boot-starter-web"
-    compile "org.springframework.boot:spring-boot-starter-actuator"
+    compile group: "org.springframework.boot", name: "spring-boot-starter-web"
+    compile group: "org.springframework.boot", name: "spring-boot-starter-actuator"
+    compile group: "org.hibernate", name: "hibernate-validator"
+    compile group: "org.elasticsearch", name: "elasticsearch"
+    compile group: "mysql", name: "mysql-connector-java"
+    compile group: "org.hibernate", name: "hibernate-core"
+    compile group: "org.apache.tomcat", name: "tomcat-dbcp", version: "7.0.55"
 
-    compile group: "org.mongodb", name: "mongodb-driver", version: "3.4.2"
-    compile group: "org.hibernate", name: "hibernate-validator", version: "5.4.1.Final"
-    compile group: "org.elasticsearch", name: "elasticsearch", version: "5.5.0"
+    testCompile group: "org.springframework.boot", name: "spring-boot-starter-test"
+    testCompile group: "junit", name: "junit"
 
-    testCompile "org.springframework.boot:spring-boot-starter-test"
-    testCompile "junit:junit"
-
-    optional "org.springframework.boot:spring-boot-configuration-processor"
+    optional group: "org.springframework.boot", name: "spring-boot-configuration-processor"
 }
 
 compileJava.dependsOn(processResources)
@@ -128,8 +129,8 @@ beanstalk {
     String extension = project.war.archiveName.tokenize('.').last()
     String timestamp = new Date().format("yyyyMMdd'_'HHmmss", TimeZone.default)
 
-    appName 'BackEnd'
-    appDesc "Tracklines BackEnd"
+    appName = 'BackEnd'
+    appDesc = "Tracklines BackEnd"
 
     version {
         label = "backend-${project.war.version}-${timestamp}"

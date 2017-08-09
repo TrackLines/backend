@@ -1,4 +1,4 @@
-package es.tracklin.DataLayer.Hibernate;
+package es.tracklin.DataLayer.Database;
 
 import es.tracklin.Backend;
 import org.junit.Test;
@@ -13,29 +13,29 @@ import static org.junit.Assert.assertNotEquals;
 @SpringBootTest(classes = Backend.class)
 public class ConfigurationTests {
     @Autowired
-    es.tracklin.Configuration.Hibernate hibernateConfiguration;
+    es.tracklin.Configuration.Database databaseConfiguration;
 
     @Test
     public void shouldGetAddress() throws Exception {
-        assertNotEquals("", hibernateConfiguration.getAddress());
+        assertNotEquals("", databaseConfiguration.getAddress());
     }
 
     @Test
     public void shouldGetPort() throws Exception {
-        assertNotEquals(0, hibernateConfiguration.getPort());
+        assertNotEquals(0, databaseConfiguration.getPort());
     }
 
     @Test
     public void shouldGetUsername() throws Exception {
-        assertNotEquals("", hibernateConfiguration.getCredentials().getUsername());
+        assertNotEquals("", databaseConfiguration.getCredentials().getUsername());
     }
     @Test
     public void shouldGetPassword() throws Exception {
-        assertNotEquals("", hibernateConfiguration.getCredentials().getPassword());
+        assertNotEquals("", databaseConfiguration.getCredentials().getPassword());
     }
 
     @Test
     public void shouldGetDatabase() throws Exception {
-        assertNotEquals("", hibernateConfiguration.getCredentials().getDatabase());
+        assertNotEquals("", databaseConfiguration.getCredentials().getDatabase());
     }
 }
