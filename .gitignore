@@ -1,0 +1,10 @@
+.env
+.env.*
+bin/
+*.test
+*.out
+coverage.*
+.idea/
+.vscode/
+*.swp
+.DS_Store
