@@ -30,6 +30,7 @@ type Item struct {
 
 type Roadmap struct {
 	ID           string `json:"id"`
+	ProjectID    string `json:"project_id"`
 	OwnerClerkID string `json:"-"` // never exposed: public roadmaps would leak Clerk ids
 	Title        string `json:"title"`
 	Description  string `json:"description"`
@@ -41,13 +42,13 @@ type Roadmap struct {
 
 type Store struct{ DB *pgxpool.Pool }
 
-const cols = `id, owner_clerk_id, title, description, visibility::text,
+const cols = `id, project_id, owner_clerk_id, title, description, visibility::text,
 	to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
 	to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')`
 
 func scan(row pgx.Row) (Roadmap, error) {
 	var r Roadmap
-	err := row.Scan(&r.ID, &r.OwnerClerkID, &r.Title, &r.Description, &r.Visibility, &r.CreatedAt, &r.UpdatedAt)
+	err := row.Scan(&r.ID, &r.ProjectID, &r.OwnerClerkID, &r.Title, &r.Description, &r.Visibility, &r.CreatedAt, &r.UpdatedAt)
 	return r, notFound(err)
 }
 
@@ -100,12 +101,19 @@ func (s Store) ListByOwner(ctx context.Context, owner string) ([]Roadmap, error)
 	return s.list(ctx, `owner_clerk_id = $1`, owner)
 }
 
-func (s Store) Create(ctx context.Context, owner, title, desc, visibility string) (*Roadmap, error) {
+// ListByProject lists a project's roadmaps (without items); callers check ownership.
+func (s Store) ListByProject(ctx context.Context, projectID string) ([]Roadmap, error) {
+	return s.list(ctx, `project_id = $1`, projectID)
+}
+
+// Create adds a roadmap to the owner's project; ErrNotFound when the project isn't theirs.
+func (s Store) Create(ctx context.Context, owner, projectID, title, desc, visibility string) (*Roadmap, error) {
 	if !validVisibility(visibility) {
 		return nil, ErrInvalidVisibility
 	}
-	r, err := scan(s.DB.QueryRow(ctx, `INSERT INTO roadmaps (owner_clerk_id, title, description, visibility)
-		VALUES ($1, $2, $3, $4) RETURNING `+cols, owner, title, desc, visibility))
+	r, err := scan(s.DB.QueryRow(ctx, `INSERT INTO roadmaps (project_id, owner_clerk_id, title, description, visibility)
+		SELECT id, owner_clerk_id, $3, $4, $5 FROM projects WHERE id = $1 AND owner_clerk_id = $2
+		RETURNING `+cols, projectID, owner, title, desc, visibility))
 	if err != nil {
 		return nil, err
 	}

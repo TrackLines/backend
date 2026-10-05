@@ -34,12 +34,22 @@ func TestStore(t *testing.T) {
 	if _, err := db.Exec(ctx, `INSERT INTO users (clerk_id, email) VALUES ('u1', 'a@b.c'), ('u2', 'd@e.f') ON CONFLICT DO NOTHING`); err != nil {
 		t.Fatal(err)
 	}
+	var pid, otherPID string
+	if err := db.QueryRow(ctx, `INSERT INTO projects (owner_clerk_id, name) VALUES ('u1', 'p') RETURNING id`).Scan(&pid); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(ctx, `INSERT INTO projects (owner_clerk_id, name) VALUES ('u2', 'p') RETURNING id`).Scan(&otherPID); err != nil {
+		t.Fatal(err)
+	}
 	s := Store{DB: db}
 
-	if _, err := s.Create(ctx, "u1", "x", "", "bogus"); !errors.Is(err, ErrInvalidVisibility) {
+	if _, err := s.Create(ctx, "u1", otherPID, "x", "", Public); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("roadmap in someone else's project: %v", err)
+	}
+	if _, err := s.Create(ctx, "u1", pid, "x", "", "bogus"); !errors.Is(err, ErrInvalidVisibility) {
 		t.Fatalf("bad visibility: %v", err)
 	}
-	r, err := s.Create(ctx, "u1", "Q4", "plan", Public)
+	r, err := s.Create(ctx, "u1", pid, "Q4", "plan", Public)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,6 +69,9 @@ func TestStore(t *testing.T) {
 	}
 	if err := s.Update(ctx, r.ID, "u1", "Q4", "plan", LoginOnly); err != nil {
 		t.Fatal(err)
+	}
+	if inProject, _ := s.ListByProject(ctx, pid); len(inProject) != 1 || inProject[0].ProjectID != pid {
+		t.Fatalf("project list: %+v", inProject)
 	}
 	if mine, _ := s.ListByOwner(ctx, "u1"); len(mine) != 1 {
 		t.Fatalf("owner list: %+v", mine)

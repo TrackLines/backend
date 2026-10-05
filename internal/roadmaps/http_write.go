@@ -26,13 +26,14 @@ func (in *roadmapInput) valid(w http.ResponseWriter) bool {
 	return true
 }
 
+// Create adds a roadmap to project {id}.
 func (h System) Create(w http.ResponseWriter, r *http.Request) {
 	var in roadmapInput
 	if !httpx.Decode(w, r, &in) || !in.valid(w) {
 		return
 	}
 	user, _ := auth.UserID(r.Context())
-	rm, err := h.store.Create(r.Context(), user, in.Title, in.Description, in.Visibility)
+	rm, err := h.store.Create(r.Context(), user, r.PathValue("id"), in.Title, in.Description, in.Visibility)
 	if err != nil {
 		writeErr(w, err)
 		return

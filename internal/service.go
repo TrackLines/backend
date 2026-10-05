@@ -17,6 +17,7 @@ import (
 	"github.com/tracklines/backend/internal/boards"
 	"github.com/tracklines/backend/internal/columns"
 	"github.com/tracklines/backend/internal/middleware"
+	"github.com/tracklines/backend/internal/projects"
 	"github.com/tracklines/backend/internal/roadmaps"
 	"github.com/tracklines/backend/internal/tickets"
 	"github.com/tracklines/backend/internal/users"
@@ -45,10 +46,17 @@ func (s *Service) Start() error {
 	// Health
 	mux.HandleFunc("GET /health", s.health)
 
+	// Projects — a project holds a board per team plus its roadmaps; free tier = 1 project
+	p := projects.NewSystem(s.DB)
+	mux.Handle("GET /api/projects", signedIn(p.List))
+	mux.Handle("POST /api/projects", signedIn(p.Create))
+	mux.Handle("GET /api/projects/{id}", signedIn(p.Get))
+	mux.Handle("PATCH /api/projects/{id}", signedIn(p.Update))
+	mux.Handle("DELETE /api/projects/{id}", signedIn(p.Delete))
+
 	// Boards
 	b := boards.NewSystem(s.DB)
-	mux.Handle("GET /api/boards", signedIn(b.List))
-	mux.Handle("POST /api/boards", signedIn(b.Create))
+	mux.Handle("POST /api/projects/{id}/boards", signedIn(b.Create))
 	mux.Handle("GET /api/boards/{id}", signedIn(b.Get))
 	mux.Handle("DELETE /api/boards/{id}", signedIn(b.Delete))
 
@@ -70,7 +78,7 @@ func (s *Service) Start() error {
 	r := roadmaps.NewSystem(s.DB)
 	mux.HandleFunc("GET /api/roadmaps/{id}", r.Get)
 	mux.Handle("GET /api/roadmaps", signedIn(r.List))
-	mux.Handle("POST /api/roadmaps", signedIn(r.Create))
+	mux.Handle("POST /api/projects/{id}/roadmaps", signedIn(r.Create))
 	mux.Handle("PUT /api/roadmaps/{id}", signedIn(r.Update))
 	mux.Handle("DELETE /api/roadmaps/{id}", signedIn(r.Delete))
 	mux.Handle("PUT /api/roadmaps/{id}/items", signedIn(r.ReplaceItems))

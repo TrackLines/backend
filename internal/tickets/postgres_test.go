@@ -35,7 +35,11 @@ func TestStore(t *testing.T) {
 	if _, err := db.Exec(ctx, `INSERT INTO users (clerk_id, email) VALUES ('t1', 'a@b.c'), ('t2', 'd@e.f') ON CONFLICT DO NOTHING`); err != nil {
 		t.Fatal(err)
 	}
-	b, err := boards.Store{DB: db}.Create(ctx, "t1", "b", "", -1)
+	var pid string
+	if err := db.QueryRow(ctx, `INSERT INTO projects (owner_clerk_id, name) VALUES ('t1', 'p') RETURNING id`).Scan(&pid); err != nil {
+		t.Fatal(err)
+	}
+	b, err := boards.Store{DB: db}.Create(ctx, "t1", pid, "b", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,7 +89,7 @@ func TestStore(t *testing.T) {
 	if err := s.Move(ctx, "t2", ids[1], doing, 0); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("non-owner move: %v", err)
 	}
-	other, _ := boards.Store{DB: db}.Create(ctx, "t1", "other", "", -1)
+	other, _ := boards.Store{DB: db}.Create(ctx, "t1", pid, "other", "")
 	if err := s.Move(ctx, "t1", ids[1], other.Columns[0].ID, 0); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("cross-board move: %v", err)
 	}

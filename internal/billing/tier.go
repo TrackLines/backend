@@ -6,8 +6,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// FreeBoardLimit is how many boards a free-tier user may own.
-const FreeBoardLimit = 1
+// FreeProjectLimit is how many projects a free-tier user may own (boards inside are unlimited).
+const FreeProjectLimit = 1
 
 // IsPaid reports whether the user's Stripe subscription is live.
 func IsPaid(ctx context.Context, db *pgxpool.Pool, clerkID string) (bool, error) {
@@ -17,11 +17,11 @@ func IsPaid(ctx context.Context, db *pgxpool.Pool, clerkID string) (bool, error)
 	return paid, err
 }
 
-// BoardLimit returns the board cap for the user: -1 (unlimited) when paid.
-func BoardLimit(ctx context.Context, db *pgxpool.Pool, clerkID string) (int, error) {
+// ProjectLimit returns the project cap for the user: -1 (unlimited) when paid.
+func ProjectLimit(ctx context.Context, db *pgxpool.Pool, clerkID string) (int, error) {
 	paid, err := IsPaid(ctx, db, clerkID)
 	if err != nil || paid {
 		return -1, err
 	}
-	return FreeBoardLimit, nil
+	return FreeProjectLimit, nil
 }

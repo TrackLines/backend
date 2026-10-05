@@ -37,14 +37,14 @@ func (s Service) Portal(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusOK, map[string]string{"url": url})
 }
 
-// status reports the caller's plan for the frontend badge: {"paid": bool, "board_limit": n (-1 = unlimited)}.
+// status reports the caller's plan for the frontend badge: {"paid": bool, "project_limit": n (-1 = unlimited)}.
 func (s Service) Status(w http.ResponseWriter, r *http.Request) {
 	user, _ := auth.UserID(r.Context())
-	limit, err := BoardLimit(r.Context(), s.DB, user)
+	limit, err := ProjectLimit(r.Context(), s.DB, user)
 	if err != nil {
 		logs.Errorf("billing: status: %v", err)
 		http.Error(w, "billing unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	httpx.JSON(w, http.StatusOK, map[string]any{"paid": limit < 0, "board_limit": limit})
+	httpx.JSON(w, http.StatusOK, map[string]any{"paid": limit < 0, "project_limit": limit})
 }

@@ -9,10 +9,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-var (
-	ErrNotFound = errors.New("board not found")
-	ErrLimit    = errors.New("board limit reached for plan")
-)
+var ErrNotFound = errors.New("board not found")
 
 // DefaultColumns are created with every board so it's usable immediately.
 var DefaultColumns = []string{"To do", "In progress", "Done"}
@@ -34,6 +31,7 @@ type Column struct {
 
 type Board struct {
 	ID           string   `json:"id"`
+	ProjectID    string   `json:"project_id"`
 	OwnerClerkID string   `json:"owner_clerk_id"`
 	Name         string   `json:"name"`
 	Description  string   `json:"description"`
@@ -44,13 +42,13 @@ type Board struct {
 
 type Store struct{ DB *pgxpool.Pool }
 
-const cols = `id, owner_clerk_id, name, description,
+const cols = `id, project_id, owner_clerk_id, name, description,
 	to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
 	to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')`
 
 func scan(row pgx.Row) (Board, error) {
 	var b Board
-	err := row.Scan(&b.ID, &b.OwnerClerkID, &b.Name, &b.Description, &b.CreatedAt, &b.UpdatedAt)
+	err := row.Scan(&b.ID, &b.ProjectID, &b.OwnerClerkID, &b.Name, &b.Description, &b.CreatedAt, &b.UpdatedAt)
 	return b, notFound(err)
 }
 
@@ -63,27 +61,15 @@ func notFound(err error) error {
 	return err
 }
 
-// Create inserts a board plus DefaultColumns. limit < 0 means unlimited; otherwise
-// ErrLimit when the owner already has limit boards (checked under a per-owner lock, so
-// concurrent creates can't both slip past the free tier).
-func (s Store) Create(ctx context.Context, owner, name, desc string, limit int) (*Board, error) {
+// Create inserts a board (one per team) into the owner's project, plus DefaultColumns.
+// ErrNotFound when the project isn't the owner's.
+func (s Store) Create(ctx context.Context, owner, projectID, name, desc string) (*Board, error) {
 	var b Board
 	err := pgx.BeginFunc(ctx, s.DB, func(tx pgx.Tx) error {
-		if limit >= 0 {
-			var n int
-			if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext('boards:' || $1))`, owner); err != nil {
-				return err
-			}
-			if err := tx.QueryRow(ctx, `SELECT count(*) FROM boards WHERE owner_clerk_id = $1`, owner).Scan(&n); err != nil {
-				return err
-			}
-			if n >= limit {
-				return ErrLimit
-			}
-		}
 		var err error
-		if b, err = scan(tx.QueryRow(ctx, `INSERT INTO boards (owner_clerk_id, name, description)
-			VALUES ($1, $2, $3) RETURNING `+cols, owner, name, desc)); err != nil {
+		if b, err = scan(tx.QueryRow(ctx, `INSERT INTO boards (project_id, owner_clerk_id, name, description)
+			SELECT id, owner_clerk_id, $3, $4 FROM projects WHERE id = $1 AND owner_clerk_id = $2
+			RETURNING `+cols, projectID, owner, name, desc)); err != nil {
 			return err
 		}
 		for pos, c := range DefaultColumns {
@@ -103,8 +89,9 @@ func (s Store) Create(ctx context.Context, owner, name, desc string, limit int) 
 	return &b, nil
 }
 
-func (s Store) ListByOwner(ctx context.Context, owner string) ([]Board, error) {
-	rows, err := s.DB.Query(ctx, `SELECT `+cols+` FROM boards WHERE owner_clerk_id = $1 ORDER BY updated_at DESC`, owner)
+// ListByProject lists a project's boards (without columns); callers check ownership.
+func (s Store) ListByProject(ctx context.Context, projectID string) ([]Board, error) {
+	rows, err := s.DB.Query(ctx, `SELECT `+cols+` FROM boards WHERE project_id = $1 ORDER BY created_at`, projectID)
 	if err != nil {
 		return nil, err
 	}

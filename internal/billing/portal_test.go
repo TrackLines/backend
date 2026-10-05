@@ -57,7 +57,7 @@ func TestPortalAndStatus(t *testing.T) {
 	}
 	rec = httptest.NewRecorder()
 	s.Status(rec, signedIn(httptest.NewRequest("GET", "/", nil), "p0"))
-	if rec.Body.String() != `{"board_limit":1,"paid":false}`+"\n" {
+	if rec.Body.String() != `{"paid":false,"project_limit":1}`+"\n" {
 		t.Fatalf("status: %s", rec.Body)
 	}
 }

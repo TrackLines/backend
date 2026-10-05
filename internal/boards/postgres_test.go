@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"os"
-	"sync"
 	"testing"
 
 	"github.com/golang-migrate/migrate/v4"
@@ -35,36 +34,26 @@ func TestStore(t *testing.T) {
 	if _, err := db.Exec(ctx, `INSERT INTO users (clerk_id, email) VALUES ('b1', 'a@b.c'), ('b2', 'd@e.f') ON CONFLICT DO NOTHING`); err != nil {
 		t.Fatal(err)
 	}
+	var pid, otherPID string
+	if err := db.QueryRow(ctx, `INSERT INTO projects (owner_clerk_id, name) VALUES ('b1', 'p') RETURNING id`).Scan(&pid); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(ctx, `INSERT INTO projects (owner_clerk_id, name) VALUES ('b2', 'p') RETURNING id`).Scan(&otherPID); err != nil {
+		t.Fatal(err)
+	}
 	s := Store{DB: db}
 
-	// free tier: 5 concurrent creates with limit 1 → exactly one wins
-	var wg sync.WaitGroup
-	var mu sync.Mutex
-	wins := 0
-	for range 5 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			if _, err := s.Create(ctx, "b1", "x", "", 1); err == nil {
-				mu.Lock()
-				wins++
-				mu.Unlock()
-			} else if !errors.Is(err, ErrLimit) {
-				t.Error(err)
-			}
-		}()
+	if _, err := s.Create(ctx, "b1", otherPID, "x", ""); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("board in someone else's project: %v", err)
 	}
-	wg.Wait()
-	if wins != 1 {
-		t.Fatalf("free-tier race: %d boards created", wins)
+	for _, team := range []string{"Backend", "Design"} { // one board per team
+		if _, err := s.Create(ctx, "b1", pid, team, ""); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if _, err := s.Create(ctx, "b1", "y", "", -1); err != nil {
-		t.Fatalf("paid unlimited: %v", err)
-	}
-
-	list, _ := s.ListByOwner(ctx, "b1")
-	if len(list) != 2 {
-		t.Fatalf("list: %d", len(list))
+	list, _ := s.ListByProject(ctx, pid)
+	if len(list) != 2 || list[0].ProjectID != pid {
+		t.Fatalf("list: %+v", list)
 	}
 	b := list[0]
 	if _, err := s.Get(ctx, b.ID, "b2"); !errors.Is(err, ErrNotFound) {
