@@ -324,7 +324,7 @@ func (s Store) SetParent(ctx context.Context, owner, id string, parentID *string
 // Get returns the owner's ticket with its project/board/column/sprint context.
 func (s Store) Get(ctx context.Context, owner, id string) (*Detail, error) {
 	var d Detail
-	dest := append(boards.TicketDest(&d.Ticket), &d.ProjectName, &d.BoardID, &d.BoardName, &d.ColumnName, &d.SprintNumber, &d.Done)
+	dest := append(boards.TicketDest(&d.Ticket), &d.ProjectName, &d.BoardID, &d.BoardName, &d.ColumnName, &d.SprintNumber, &d.Done, &d.Parent)
 	err := s.DB.QueryRow(ctx, `SELECT `+boards.TicketCols+`, p.name, t.board_id, b.name, c.name, sp.number, `+boards.TicketDoneSQL+`, t.parent_id
 		FROM tickets t JOIN projects p ON p.id = t.project_id AND p.owner_clerk_id = $2
 		LEFT JOIN boards b ON b.id = t.board_id
