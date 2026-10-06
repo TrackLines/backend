@@ -88,7 +88,12 @@ func (s Stripe) CreateCustomer(ctx context.Context, clerkID, email string) (stri
 	if email != "" {
 		form.Set("email", email)
 	}
-	if err := s.call(ctx, http.MethodPost, "/v1/customers", form, "tracklines-customer-"+clerkID, &customer); err != nil {
+	// Idempotency collapses double-clicks into one customer, but only within the same minute:
+	// Stripe replays a key for 24h, so a plain per-user key would hand back a customer that
+	// was since deleted in Stripe and break checkout for a day.
+	// ponytail: minute bucket; two creates straddling a minute make an orphan customer (DB keeps the first id).
+	key := fmt.Sprintf("tracklines-customer-%s-%d", clerkID, time.Now().Unix()/60)
+	if err := s.call(ctx, http.MethodPost, "/v1/customers", form, key, &customer); err != nil {
 		return "", err
 	}
 	if customer.ID == "" {
@@ -188,4 +193,31 @@ func VerifyWebhook(payload []byte, header, secret string, now time.Time) error {
 
 func (s Stripe) PortalURL(ctx context.Context, customerID, returnURL string) (string, error) {
 	return s.sessionURL(ctx, "/v1/billing_portal/sessions", url.Values{"customer": {customerID}, "return_url": {returnURL}})
+}
+
+// ResolvePrice accepts a price id (price_…) as is, or a product id (prod_…) and returns that
+// product's default price — so STRIPE_PRICE_ID can hold either (same as bugfixes).
+func (s Stripe) ResolvePrice(ctx context.Context, id string) (string, error) {
+	if !strings.HasPrefix(id, "prod_") {
+		return id, nil
+	}
+	var product struct {
+		DefaultPrice json.RawMessage `json:"default_price"`
+	}
+	if err := s.call(ctx, http.MethodGet, "/v1/products/"+url.PathEscape(id), nil, "", &product); err != nil {
+		return "", err
+	}
+	// default_price is an id string unless expanded into an object
+	var price string
+	if json.Unmarshal(product.DefaultPrice, &price) != nil {
+		var expanded struct {
+			ID string `json:"id"`
+		}
+		_ = json.Unmarshal(product.DefaultPrice, &expanded)
+		price = expanded.ID
+	}
+	if price == "" {
+		return "", fmt.Errorf("stripe product %s has no default price", id)
+	}
+	return price, nil
 }

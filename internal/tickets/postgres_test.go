@@ -46,12 +46,12 @@ func TestStore(t *testing.T) {
 	todo, doing := b.Columns[0].ID, b.Columns[1].ID
 	s := Store{DB: db}
 
-	if _, err := s.Create(ctx, "t2", todo, "nope", ""); !errors.Is(err, ErrNotFound) {
+	if _, err := s.Create(ctx, "t2", todo, "task", "nope", ""); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("non-owner create: %v", err)
 	}
 	var ids []string
 	for _, title := range []string{"a", "b", "c"} {
-		tk, err := s.Create(ctx, "t1", todo, title, "")
+		tk, err := s.Create(ctx, "t1", todo, "task", title, "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -89,15 +89,69 @@ func TestStore(t *testing.T) {
 	if err := s.Move(ctx, "t2", ids[1], doing, 0); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("non-owner move: %v", err)
 	}
-	other, _ := boards.Store{DB: db}.Create(ctx, "t1", pid, "other", "")
-	if err := s.Move(ctx, "t1", ids[1], other.Columns[0].ID, 0); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("cross-board move: %v", err)
+	var foreignPID string
+	if err := db.QueryRow(ctx, `INSERT INTO projects (owner_clerk_id, name) VALUES ('t1', 'other project') RETURNING id`).Scan(&foreignPID); err != nil {
+		t.Fatal(err)
 	}
-	if err := s.Update(ctx, "t2", ids[1], "x", ""); !errors.Is(err, ErrNotFound) {
+	foreign, _ := boards.Store{DB: db}.Create(ctx, "t1", foreignPID, "other", "")
+	if err := s.Move(ctx, "t1", ids[1], foreign.Columns[0].ID, 0); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("cross-project move: %v", err)
+	}
+	if err := s.Update(ctx, "t2", ids[1], "", "x", "", ""); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("non-owner update: %v", err)
 	}
-	if err := s.Update(ctx, "t1", ids[1], "bee", "d"); err != nil {
+	if err := s.Update(ctx, "t1", ids[1], "bug", "bee", "d", ""); err != nil {
 		t.Fatal(err)
+	}
+	var typ string
+	_ = db.QueryRow(ctx, `SELECT type::text FROM tickets WHERE id = $1`, ids[1]).Scan(&typ)
+	if typ != "bug" {
+		t.Fatalf("type after update: %q", typ)
+	}
+	if err := s.Update(ctx, "t1", ids[1], "", "bee", "d", ""); err != nil { // "" keeps type
+		t.Fatal(err)
+	}
+	if err := s.Update(ctx, "t1", ids[1], "epic", "bee", "d", ""); !errors.Is(err, ErrInvalidType) {
+		t.Fatalf("bad type: %v", err)
+	}
+
+	// backlog: lives in the project, no board; filter by type; moves on and off boards
+	if _, err := s.CreateBacklog(ctx, "t2", pid, "bug", "nope", ""); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("non-owner backlog create: %v", err)
+	}
+	bug, err := s.CreateBacklog(ctx, "t1", pid, "bug", "crash on save", "")
+	if err != nil || bug.ColumnID != nil || bug.Type != "bug" {
+		t.Fatalf("backlog create: %+v %v", bug, err)
+	}
+	if _, err := s.CreateBacklog(ctx, "t1", pid, "feature", "dark mode", ""); err != nil {
+		t.Fatal(err)
+	}
+	if all, _ := s.Backlog(ctx, "t1", pid, ""); len(all) != 2 {
+		t.Fatalf("backlog: %+v", all)
+	}
+	if bugs, _ := s.Backlog(ctx, "t1", pid, "bug"); len(bugs) != 1 || bugs[0].Title != "crash on save" {
+		t.Fatalf("backlog bugs: %+v", bugs)
+	}
+	if _, err := s.Backlog(ctx, "t2", pid, ""); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("non-owner backlog: %v", err)
+	}
+	if err := s.Move(ctx, "t1", bug.ID, todo, 0); err != nil { // backlog → board
+		t.Fatal(err)
+	}
+	if got := order(todo); len(got) != 3 || got[0] != "crash on save" {
+		t.Fatalf("pulled from backlog: %v", got)
+	}
+	if left, _ := s.Backlog(ctx, "t1", pid, ""); len(left) != 1 {
+		t.Fatalf("backlog after pull: %+v", left)
+	}
+	if err := s.ToBacklog(ctx, "t1", bug.ID); err != nil { // board → backlog
+		t.Fatal(err)
+	}
+	if got := order(todo); len(got) != 2 {
+		t.Fatalf("todo after sending back: %v", got)
+	}
+	if back, _ := s.Backlog(ctx, "t1", pid, ""); len(back) != 2 || back[1].ID != bug.ID || back[1].Position != 1 {
+		t.Fatalf("backlog after sending back: %+v", back)
 	}
 	if err := s.Delete(ctx, "t1", ids[1]); err != nil {
 		t.Fatal(err)

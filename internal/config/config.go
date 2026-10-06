@@ -20,6 +20,7 @@ type Project struct {
 	ValkeyURL        string `env:"VALKEY_URL" envDefault:"redis://localhost:6379"`
 	RailwayPort      string `env:"PORT"` // Railway injects PORT; overrides HTTP_PORT
 	BugfixesLogLevel string `env:"BUGFIXES_LOG_LEVEL" envDefault:"info"`
+	UploadThingToken string `env:"UPLOADTHING_TOKEN"` // ticket attachments; used to delete stored files
 }
 
 type ProjectConfigurator struct{}

@@ -12,13 +12,18 @@ import (
 	goFlags "github.com/flags-gg/go-flags"
 	"github.com/jackc/pgx/v5/pgxpool"
 	ConfigBuilder "github.com/keloran/go-config"
+	"github.com/tracklines/backend/internal/apikeys"
+	"github.com/tracklines/backend/internal/attachments"
 	"github.com/tracklines/backend/internal/auth"
 	"github.com/tracklines/backend/internal/billing"
 	"github.com/tracklines/backend/internal/boards"
+	"github.com/tracklines/backend/internal/bugfixes-tickets"
 	"github.com/tracklines/backend/internal/columns"
+	"github.com/tracklines/backend/internal/config"
 	"github.com/tracklines/backend/internal/middleware"
 	"github.com/tracklines/backend/internal/projects"
 	"github.com/tracklines/backend/internal/roadmaps"
+	"github.com/tracklines/backend/internal/sprints"
 	"github.com/tracklines/backend/internal/tickets"
 	"github.com/tracklines/backend/internal/users"
 	"github.com/valkey-io/valkey-go"
@@ -70,9 +75,29 @@ func (s *Service) Start() error {
 	// Tickets
 	t := tickets.NewSystem(s.DB)
 	mux.Handle("POST /api/columns/{id}/tickets", signedIn(t.Create))
+	mux.Handle("GET /api/tickets/{id}", signedIn(t.Get)) // one ticket + where it lives (deep links)
 	mux.Handle("PATCH /api/tickets/{id}", signedIn(t.Update))
+	mux.Handle("POST /api/tickets/{id}/claim", signedIn(t.Claim))
+	mux.Handle("POST /api/tickets/{id}/release", signedIn(t.Release))
 	mux.Handle("DELETE /api/tickets/{id}", signedIn(t.Delete))
-	mux.Handle("POST /api/tickets/{id}/move", signedIn(t.Move))
+	mux.Handle("POST /api/tickets/{id}/move", signedIn(t.Move)) // also pulls a ticket out of the backlog
+	mux.Handle("POST /api/tickets/{id}/backlog", signedIn(t.ToBacklog))
+
+	// Attachments — files live on UploadThing (browser uploads via the Next.js route); we keep the records
+	at := attachments.NewSystem(s.DB, attachments.UploadThing{Token: config.Get(s.Config).UploadThingToken})
+	mux.Handle("GET /api/tickets/{id}/attachments", signedIn(at.List))
+	mux.Handle("POST /api/tickets/{id}/attachments", signedIn(at.Create))
+	mux.Handle("DELETE /api/attachments/{id}", signedIn(at.Delete))
+
+	// Backlog — project tickets not on any board/sprint yet (e.g. triaged bugs)
+	mux.Handle("GET /api/projects/{id}/backlog", signedIn(t.Backlog))
+	mux.Handle("POST /api/projects/{id}/backlog", signedIn(t.CreateBacklog))
+
+	// Sprints — per team board; closing opens the next and carries unfinished tickets over
+	sp := sprints.NewSystem(s.DB)
+	mux.Handle("GET /api/boards/{id}/sprints", signedIn(sp.List))
+	mux.Handle("POST /api/boards/{id}/sprints", signedIn(sp.Start))
+	mux.Handle("POST /api/sprints/{id}/close", signedIn(sp.Close))
 
 	// Roadmaps — GET by id is open: public ones are readable by anyone with the link
 	r := roadmaps.NewSystem(s.DB)
@@ -83,16 +108,29 @@ func (s *Service) Start() error {
 	mux.Handle("DELETE /api/roadmaps/{id}", signedIn(r.Delete))
 	mux.Handle("PUT /api/roadmaps/{id}/items", signedIn(r.ReplaceItems))
 
+	// API keys — one per agent, acts as its owner; managing keys needs a signed-in session
+	k := apikeys.NewSystem(s.DB)
+	mux.Handle("GET /api/keys", auth.SessionRequired(http.HandlerFunc(k.List)))
+	mux.Handle("POST /api/keys", auth.SessionRequired(http.HandlerFunc(k.Create)))
+	mux.Handle("DELETE /api/keys/{id}", auth.SessionRequired(http.HandlerFunc(k.Revoke)))
+
 	// Billing — answers 503 until Stripe is configured
 	mux.Handle("GET /api/subscription", signedIn(s.Billing.Status))
 	mux.Handle("POST /api/subscription/checkout", signedIn(s.Billing.Checkout))
 	mux.Handle("POST /api/subscription/portal", signedIn(s.Billing.Portal))
 	// Stripe authenticates webhooks by signature, not session
 	mux.HandleFunc("POST /api/webhooks/stripe", s.Billing.Webhook(time.Now))
+	mux.HandleFunc("POST /webhooks/stripe", s.Billing.Webhook(time.Now)) // same path as ../bugfixes (stripe listen --forward-to …/webhooks/stripe)
 
-	// Every request: optional Clerk auth + users row for signed-in callers, then
+	// Bugfixes ticket-creation — auth via bf_ key (no Clerk session)
+	bt := bugfixesTickets.NewSystem(s.DB)
+	mux.Handle("POST /api/bugfixes/tickets", bugfixesTickets.Middleware(s.DB)(http.HandlerFunc(bt.Create)))
+
+	// Every request: API key (tl_…) or bf_ key or optional Clerk auth + users row for signed-in callers, then
 	// recovery/request id/logging (bugfixes) and CORS.
-	handler := auth.Optional(users.Ensure(s.DB)(middleware.Wrap(middleware.CORS([]string{"http://localhost:3000"})(mux))))
+	handler := apikeys.Middleware(s.DB)(bugfixesTickets.Middleware(s.DB)(auth.Optional(users.Ensure(s.DB)(middleware.Wrap(middleware.CORS([]string{"http://localhost:3000"})(mux))))))
+	// overdue sprints close themselves (manual close is POST /api/sprints/{id}/close)
+	go sprints.Store{DB: s.DB}.RunAutoClose(context.Background(), time.Minute)
 	return s.serve(handler)
 }
 

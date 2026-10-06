@@ -33,7 +33,13 @@ func (s Service) Checkout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ret := strings.TrimRight(s.ReturnURL, "/")
-	url, err := s.Stripe.CheckoutURL(r.Context(), user, customer, s.PriceID, ret+"?billing=success", ret+"?billing=cancelled")
+	price, err := s.Stripe.ResolvePrice(r.Context(), s.PriceID)
+	if err != nil {
+		logs.Errorf("billing: price: %v", err)
+		http.Error(w, "billing provider unavailable", http.StatusBadGateway)
+		return
+	}
+	url, err := s.Stripe.CheckoutURL(r.Context(), user, customer, price, ret+"?billing=success", ret+"?billing=cancelled")
 	if err != nil {
 		logs.Errorf("billing: checkout: %v", err)
 		http.Error(w, "billing provider unavailable", http.StatusBadGateway)

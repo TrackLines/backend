@@ -58,16 +58,23 @@ func (s Store) Rename(ctx context.Context, owner, id, name string) error {
 	return affected(tag, err)
 }
 
-// Delete refuses to discard tickets, then compacts the remaining positions.
+// Delete refuses to discard tickets that are still visible (open-sprint or no-sprint),
+// then compacts the remaining positions. Tickets in a closed sprint's Done column are
+// already hidden by the board view, so they don't block deletion.
 func (s Store) Delete(ctx context.Context, owner, id string) error {
 	return pgx.BeginFunc(ctx, s.DB, func(tx pgx.Tx) error {
-		var boardID string
-		if err := tx.QueryRow(ctx, `SELECT c.board_id FROM columns c JOIN boards b ON b.id = c.board_id
-			WHERE c.id = $1 AND b.owner_clerk_id = $2 FOR UPDATE OF b, c`, id, owner).Scan(&boardID); err != nil {
+		var boardID, openSprintID string
+		var openSprint bool
+		if err := tx.QueryRow(ctx, `SELECT c.board_id,
+				(SELECT id FROM sprints WHERE board_id = b.id AND closed_at IS NULL)
+			FROM columns c JOIN boards b ON b.id = c.board_id
+			WHERE c.id = $1 AND b.owner_clerk_id = $2 FOR UPDATE OF b, c`, id, owner).Scan(&boardID, &openSprintID); err != nil {
 			return notFound(err)
 		}
+		openSprint = openSprintID != ""
 		var count int
-		if err := tx.QueryRow(ctx, `SELECT count(*) FROM tickets WHERE column_id = $1`, id).Scan(&count); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT count(*) FROM tickets
+			WHERE column_id = $1 AND sprint_id IS NOT DISTINCT FROM $2`, id, pickString(openSprint, &openSprintID, nil)).Scan(&count); err != nil {
 			return err
 		}
 		if count != 0 {
@@ -82,11 +89,19 @@ func (s Store) Delete(ctx context.Context, owner, id string) error {
 			return err
 		}
 		_, err = tx.Exec(ctx, `WITH ordered AS (
-			SELECT id, row_number() OVER (ORDER BY position, id) - 1 AS position
-			FROM columns WHERE board_id = $1
-		) UPDATE columns c SET position = ordered.position FROM ordered WHERE c.id = ordered.id`, boardID)
+				SELECT id, row_number() OVER (ORDER BY position, id) - 1 AS position
+				FROM columns WHERE board_id = $1
+			) UPDATE columns c SET position = ordered.position FROM ordered WHERE c.id = ordered.id`, boardID)
 		return err
 	})
+}
+
+// pickString returns a when useA, otherwise b.
+func pickString(useA bool, a, b *string) *string {
+	if useA {
+		return a
+	}
+	return b
 }
 
 // Reorder requires an exact permutation so columns cannot be silently omitted.

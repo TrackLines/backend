@@ -64,7 +64,7 @@ func TestStore(t *testing.T) {
 		t.Fatalf("get: %+v %v", full, err)
 	}
 	col := full.Columns[1].ID
-	if _, err := db.Exec(ctx, `INSERT INTO tickets (board_id, column_id, title, position) VALUES ($1, $2, 't2', 1), ($1, $2, 't1', 0)`, b.ID, col); err != nil {
+	if _, err := db.Exec(ctx, `INSERT INTO tickets (project_id, board_id, column_id, title, position) VALUES ($3, $1, $2, 't2', 1), ($3, $1, $2, 't1', 0)`, b.ID, col, pid); err != nil {
 		t.Fatal(err)
 	}
 	full, _ = s.Get(ctx, b.ID, "b1")

@@ -15,11 +15,58 @@ var ErrNotFound = errors.New("board not found")
 var DefaultColumns = []string{"To do", "In progress", "Done"}
 
 type Ticket struct {
-	ID          string `json:"id"`
-	ColumnID    string `json:"column_id"`
-	Title       string `json:"title"`
-	Description string `json:"description"`
-	Position    int    `json:"position"`
+	ID          string  `json:"id"`
+	CreatedBy   string  `json:"created_by"`
+	AssignedTo  *string `json:"assigned_to"`
+	ProjectID   string  `json:"project_id"`
+	ColumnID    *string `json:"column_id"`
+	SprintID    *string `json:"sprint_id"`
+	Type        string  `json:"type"`
+	Title       string  `json:"title"`
+	Description string  `json:"description"`
+	Priority    string  `json:"priority"`
+	Position    int     `json:"position"`
+}
+
+// TicketCols + ScanTicket read a ticket row; shared with the tickets package.
+const TicketCols = `t.id, t.created_by, t.assigned_to, t.project_id, t.column_id, t.sprint_id, t.type::text, t.title, t.description, t.priority::text, t.position`
+
+func ScanTicket(row pgx.Row) (Ticket, error) {
+	var t Ticket
+	err := row.Scan(TicketDest(&t)...)
+	return t, err
+}
+
+// TicketDoneSQL is true when ticket t sits in its board's last column ("done") — the same rule
+// sprint carry-over uses. Done tickets are locked against new attachments.
+const TicketDoneSQL = `(t.column_id IS NOT NULL AND t.column_id = (
+	SELECT dc.id FROM columns dc WHERE dc.board_id = t.board_id ORDER BY dc.position DESC LIMIT 1))`
+
+// TicketDest lists scan targets matching TicketCols, for queries that select extra columns after them.
+func TicketDest(t *Ticket) []any {
+	return []any{&t.ID, &t.CreatedBy, &t.AssignedTo, &t.ProjectID, &t.ColumnID, &t.SprintID, &t.Type, &t.Title, &t.Description, &t.Priority, &t.Position}
+}
+
+// Sprint is a board's time box; only the open one is shown on the board.
+type Sprint struct {
+	ID         string  `json:"id"`
+	BoardID    string  `json:"board_id"`
+	Number     int     `json:"number"`
+	LengthDays int     `json:"length_days"`
+	StartsAt   string  `json:"starts_at"`
+	EndsAt     string  `json:"ends_at"`
+	ClosedAt   *string `json:"closed_at"`
+}
+
+const SprintCols = `id, board_id, number, length_days,
+	to_char(starts_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
+	to_char(ends_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
+	to_char(closed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')`
+
+func ScanSprint(row pgx.Row) (Sprint, error) {
+	var s Sprint
+	err := row.Scan(&s.ID, &s.BoardID, &s.Number, &s.LengthDays, &s.StartsAt, &s.EndsAt, &s.ClosedAt)
+	return s, err
 }
 
 type Column struct {
@@ -37,6 +84,7 @@ type Board struct {
 	Description  string   `json:"description"`
 	CreatedAt    string   `json:"created_at"`
 	UpdatedAt    string   `json:"updated_at"`
+	Sprint       *Sprint  `json:"sprint,omitempty"` // open sprint, if the board runs sprints
 	Columns      []Column `json:"columns,omitempty"`
 }
 
@@ -123,20 +171,24 @@ func (s Store) Get(ctx context.Context, id, owner string) (*Board, error) {
 	for i, c := range b.Columns {
 		idx[c.ID] = i
 	}
-	rows, err = s.DB.Query(ctx, `SELECT id, column_id, title, description, position
-		FROM tickets WHERE board_id = $1 ORDER BY position`, id)
+	// only the open sprint's tickets (or all, if the board has never run a sprint)
+	var sprintID *string
+	if sp, err := ScanSprint(s.DB.QueryRow(ctx, `SELECT `+SprintCols+` FROM sprints WHERE board_id = $1 AND closed_at IS NULL`, id)); err == nil {
+		b.Sprint, sprintID = &sp, &sp.ID
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return nil, err
+	}
+	rows, err = s.DB.Query(ctx, `SELECT `+TicketCols+` FROM tickets t
+		WHERE t.board_id = $1 AND t.sprint_id IS NOT DISTINCT FROM $2 ORDER BY t.position, t.created_at`, id, sprintID)
 	if err != nil {
 		return nil, err
 	}
-	tickets, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (Ticket, error) {
-		var t Ticket
-		return t, row.Scan(&t.ID, &t.ColumnID, &t.Title, &t.Description, &t.Position)
-	})
+	tickets, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (Ticket, error) { return ScanTicket(row) })
 	if err != nil {
 		return nil, err
 	}
 	for _, t := range tickets {
-		c := &b.Columns[idx[t.ColumnID]]
+		c := &b.Columns[idx[*t.ColumnID]]
 		c.Tickets = append(c.Tickets, t)
 	}
 	return &b, nil
