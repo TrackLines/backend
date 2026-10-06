@@ -11,7 +11,6 @@ import (
 var (
 	ErrBlocked      = errors.New("ticket is blocked by tickets that aren't done yet")
 	ErrSelfBlock    = errors.New("a ticket can't block itself")
-	ErrOtherProject = errors.New("blocking tickets must be in the same project")
 	ErrCycle        = errors.New("that would make tickets block each other in a loop")
 )
 

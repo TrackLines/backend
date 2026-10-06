@@ -16,7 +16,7 @@ var (
 	ErrAlreadyAssigned     = errors.New("ticket is already assigned")
 	ErrNotAssignedToCaller = errors.New("ticket is not assigned to caller")
 	ErrSelfParent          = errors.New("a ticket can't be its own parent")
-	ErrOtherProject        = errors.New("ticket isn't in this project")
+	ErrOtherProject        = errors.New("tickets must belong to the same project")
 )
 
 type Ticket = boards.Ticket
