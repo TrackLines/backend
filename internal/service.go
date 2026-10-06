@@ -138,7 +138,10 @@ func (s *Service) Start() error {
 
 	// Every request: API key (tl_…) or bf_ key or optional Clerk auth + users row for signed-in callers, then
 	// recovery/request id/logging (bugfixes) and CORS.
-	handler := apikeys.Middleware(s.DB)(bugfixesTickets.Middleware(s.DB)(auth.Optional(users.Ensure(s.DB)(middleware.Wrap(middleware.CORS([]string{"http://localhost:3000"})(mux))))))
+	handler := apikeys.Middleware(s.DB)(bugfixesTickets.Middleware(s.DB)(auth.Optional(users.Ensure(s.DB)(middleware.Wrap(middleware.CORS([]string{
+		"http://localhost:3000",
+		"https://tracklin.es",
+	})(mux))))))
 	// overdue sprints close themselves (manual close is POST /api/sprints/{id}/close)
 	go sprints.Store{DB: s.DB}.RunAutoClose(context.Background(), time.Minute)
 	return s.serve(handler)
