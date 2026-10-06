@@ -51,8 +51,11 @@ func writeErr(w http.ResponseWriter, err error) {
 	case errors.Is(err, ErrAlreadyAssigned):
 		http.Error(w, err.Error(), http.StatusConflict)
 		return
-	case errors.Is(err, ErrNotAssignedToCaller):
+	case errors.Is(err, ErrNotAssignedToCaller), errors.Is(err, ErrBlocked):
 		http.Error(w, err.Error(), http.StatusConflict)
+		return
+	case errors.Is(err, ErrSelfBlock), errors.Is(err, ErrOtherProject), errors.Is(err, ErrCycle), errors.Is(err, ErrUnknownAssignee):
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	logs.Errorf("tickets: %v", err)
@@ -182,4 +185,20 @@ func (h System) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.JSON(w, http.StatusOK, d)
+}
+
+// SetBlockedBy replaces the tickets that ticket {id} waits on: {"ticket_ids": [...]} ([] clears).
+func (h System) SetBlockedBy(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		TicketIDs []string `json:"ticket_ids"`
+	}
+	if !httpx.Decode(w, r, &in) {
+		return
+	}
+	user, _ := auth.UserID(r.Context())
+	if err := h.store.SetBlockedBy(r.Context(), user, r.PathValue("id"), in.TicketIDs); err != nil {
+		writeErr(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }

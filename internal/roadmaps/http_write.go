@@ -73,9 +73,33 @@ func (h System) ReplaceItems(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "item title is required", http.StatusBadRequest)
 			return
 		}
+		if i.ManualStatus != "" && !ValidManualStatus(i.ManualStatus) {
+			http.Error(w, ErrInvalidItemStatus.Error(), http.StatusBadRequest)
+			return
+		}
+		if !ValidDates(i) {
+			http.Error(w, ErrBadDates.Error()+": "+i.Title, http.StatusBadRequest)
+			return
+		}
 	}
 	user, _ := auth.UserID(r.Context())
 	if err := h.store.ReplaceItems(r.Context(), r.PathValue("id"), user, items); err != nil {
+		writeErr(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// SetItemTickets links tickets to roadmap {id}'s item {item}: {"ticket_ids": [...]} ([] clears).
+func (h System) SetItemTickets(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		TicketIDs []string `json:"ticket_ids"`
+	}
+	if !httpx.Decode(w, r, &in) {
+		return
+	}
+	user, _ := auth.UserID(r.Context())
+	if err := h.store.SetItemTickets(r.Context(), user, r.PathValue("id"), r.PathValue("item"), in.TicketIDs); err != nil {
 		writeErr(w, err)
 		return
 	}

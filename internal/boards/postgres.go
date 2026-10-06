@@ -26,10 +26,12 @@ type Ticket struct {
 	Description string  `json:"description"`
 	Priority    string  `json:"priority"`
 	Position    int     `json:"position"`
+	Blocked     bool    `json:"blocked"` // a ticket it depends on isn't done yet
 }
 
-// TicketCols + ScanTicket read a ticket row; shared with the tickets package.
-const TicketCols = `t.id, t.created_by, t.assigned_to, t.project_id, t.column_id, t.sprint_id, t.type::text, t.title, t.description, t.priority::text, t.position`
+// TicketCols + ScanTicket read a ticket row; shared with the tickets package. The last column
+// is "blocked": some ticket it depends on isn't done yet.
+var TicketCols = `t.id, t.created_by, t.assigned_to, t.project_id, t.column_id, t.sprint_id, t.type::text, t.title, t.description, t.priority::text, t.position, ` + TicketBlockedSQL
 
 func ScanTicket(row pgx.Row) (Ticket, error) {
 	var t Ticket
@@ -39,12 +41,21 @@ func ScanTicket(row pgx.Row) (Ticket, error) {
 
 // TicketDoneSQL is true when ticket t sits in its board's last column ("done") — the same rule
 // sprint carry-over uses. Done tickets are locked against new attachments.
-const TicketDoneSQL = `(t.column_id IS NOT NULL AND t.column_id = (
-	SELECT dc.id FROM columns dc WHERE dc.board_id = t.board_id ORDER BY dc.position DESC LIMIT 1))`
+var TicketDoneSQL = DoneSQL("t")
+
+// DoneSQL is TicketDoneSQL for a ticket table alias other than t.
+func DoneSQL(a string) string {
+	return `(` + a + `.column_id IS NOT NULL AND ` + a + `.column_id = (
+	SELECT dc.id FROM columns dc WHERE dc.board_id = ` + a + `.board_id ORDER BY dc.position DESC LIMIT 1))`
+}
+
+// TicketBlockedSQL is true while any ticket that t depends on (ticket_dependencies) isn't done.
+var TicketBlockedSQL = `EXISTS (SELECT 1 FROM ticket_dependencies td JOIN tickets bt ON bt.id = td.blocked_by_id
+	WHERE td.ticket_id = t.id AND NOT ` + DoneSQL("bt") + `)`
 
 // TicketDest lists scan targets matching TicketCols, for queries that select extra columns after them.
 func TicketDest(t *Ticket) []any {
-	return []any{&t.ID, &t.CreatedBy, &t.AssignedTo, &t.ProjectID, &t.ColumnID, &t.SprintID, &t.Type, &t.Title, &t.Description, &t.Priority, &t.Position}
+	return []any{&t.ID, &t.CreatedBy, &t.AssignedTo, &t.ProjectID, &t.ColumnID, &t.SprintID, &t.Type, &t.Title, &t.Description, &t.Priority, &t.Position, &t.Blocked}
 }
 
 // Sprint is a board's time box; only the open one is shown on the board.

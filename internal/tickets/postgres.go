@@ -15,6 +15,8 @@ var (
 	ErrInvalidType         = errors.New("type must be bug, feature or task")
 	ErrAlreadyAssigned     = errors.New("ticket is already assigned")
 	ErrNotAssignedToCaller = errors.New("ticket is not assigned to caller")
+	ErrSelfParent          = errors.New("a ticket can't be its own parent")
+	ErrOtherProject        = errors.New("ticket isn't in this project")
 )
 
 type Ticket = boards.Ticket
@@ -115,7 +117,7 @@ func (s Store) Update(ctx context.Context, owner, id, typ, title, desc, priority
 func (s Store) Claim(ctx context.Context, owner, actor, id string) (*Ticket, error) {
 	t, err := boards.ScanTicket(s.DB.QueryRow(ctx, `UPDATE tickets t SET assigned_to = $3, updated_at = now()
 		FROM projects p WHERE t.id = $1 AND p.id = t.project_id AND p.owner_clerk_id = $2
-		AND t.assigned_to IS NULL RETURNING `+boards.TicketCols, id, owner, actor))
+		AND t.assigned_to IS NULL AND NOT `+boards.TicketBlockedSQL+` RETURNING `+boards.TicketCols, id, owner, actor))
 	if err == nil {
 		return &t, nil
 	}
@@ -129,6 +131,9 @@ func (s Store) Claim(ctx context.Context, owner, actor, id string) (*Ticket, err
 	}
 	if current.AssignedTo != nil && *current.AssignedTo == actor {
 		return &current, nil // idempotent retry by the current assignee
+	}
+	if current.Blocked && current.AssignedTo == nil {
+		return nil, ErrBlocked // can't be picked up until its blockers are done
 	}
 	return nil, ErrAlreadyAssigned
 }
@@ -272,13 +277,55 @@ type Detail struct {
 	ColumnName   *string `json:"column_name"`
 	SprintNumber *int    `json:"sprint_number"`
 	Done         bool    `json:"done"` // in the board's last column: locked for attachments
+	BlockedBy    []Dep   `json:"blocked_by"`
+	Blocks       []Dep   `json:"blocks"`
+	Parent       *string `json:"parent_id,omitempty"` // the ticket this one belongs to, if any
+	Children     []Child `json:"children,omitempty"`  // immediate sub-tickets (done count included)
+}
+
+type Child struct {
+	ID     string `json:"id"`
+	Title  string `json:"title"`
+	Done   bool   `json:"done"`
+	Type   string `json:"type"`
+	Assign *string `json:"assigned_to"`
+}
+
+// SetParent clears (parentID nil) or sets the parent of ticket id.
+// Both tickets must be in the same project; a ticket can't be its own parent.
+func (s Store) SetParent(ctx context.Context, owner, id string, parentID *string) error {
+	if parentID != nil && *parentID == id {
+		return ErrSelfParent
+	}
+	// verify the ticket exists and is owned
+	var pid string
+	err := s.DB.QueryRow(ctx, `SELECT t.project_id FROM tickets t JOIN projects p ON p.id = t.project_id
+		WHERE t.id = $1 AND p.owner_clerk_id = $2`, id, owner).Scan(&pid)
+	if err != nil {
+		return notFound(err)
+	}
+	if parentID != nil {
+		// parent must exist and be in the same project
+		var ppID string
+		err := s.DB.QueryRow(ctx, `SELECT t.project_id FROM tickets t JOIN projects p ON p.id = t.project_id
+			WHERE t.id = $1 AND p.owner_clerk_id = $2`, parentID, owner).Scan(&ppID)
+		if err != nil {
+			return notFound(err)
+		}
+		if ppID != pid {
+			return ErrOtherProject
+		}
+	}
+	return exec(s.DB.Exec(ctx, `UPDATE tickets t SET parent_id = $2, updated_at = now()
+		FROM projects p WHERE t.id = $1 AND p.id = t.project_id AND p.owner_clerk_id = $3`,
+		id, parentID, owner))
 }
 
 // Get returns the owner's ticket with its project/board/column/sprint context.
 func (s Store) Get(ctx context.Context, owner, id string) (*Detail, error) {
 	var d Detail
 	dest := append(boards.TicketDest(&d.Ticket), &d.ProjectName, &d.BoardID, &d.BoardName, &d.ColumnName, &d.SprintNumber, &d.Done)
-	err := s.DB.QueryRow(ctx, `SELECT `+boards.TicketCols+`, p.name, t.board_id, b.name, c.name, sp.number, `+boards.TicketDoneSQL+`
+	err := s.DB.QueryRow(ctx, `SELECT `+boards.TicketCols+`, p.name, t.board_id, b.name, c.name, sp.number, `+boards.TicketDoneSQL+`, t.parent_id
 		FROM tickets t JOIN projects p ON p.id = t.project_id AND p.owner_clerk_id = $2
 		LEFT JOIN boards b ON b.id = t.board_id
 		LEFT JOIN columns c ON c.id = t.column_id
@@ -287,5 +334,34 @@ func (s Store) Get(ctx context.Context, owner, id string) (*Detail, error) {
 	if err != nil {
 		return nil, notFound(err)
 	}
+	if d.BlockedBy, err = s.deps(ctx, id, true); err != nil {
+		return nil, err
+	}
+	if d.Blocks, err = s.deps(ctx, id, false); err != nil {
+		return nil, err
+	}
+	if d.Parent != nil {
+		d.Children, _ = s.ChildrenFor(ctx, id)
+	}
 	return &d, nil
+}
+
+// ChildrenFor returns the ticket's immediate children with done status.
+func (s Store) ChildrenFor(ctx context.Context, id string) ([]Child, error) {
+	rows, err := s.DB.Query(ctx, `SELECT c.id, c.title, c.type::text, c.assigned_to,
+		EXISTS (SELECT 1 FROM tickets d WHERE d.id = c.id AND d.column_id = (
+			SELECT dc.id FROM columns dc WHERE dc.board_id = c.board_id ORDER BY dc.position DESC LIMIT 1)) AS done
+		FROM tickets c WHERE c.parent_id = $1 ORDER BY c.position, c.created_at`, id)
+	if err != nil {
+		return nil, err
+	}
+	out, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (Child, error) {
+		var c Child
+		err := row.Scan(&c.ID, &c.Title, &c.Type, &c.Assign, &c.Done)
+		return c, err
+	})
+	if out == nil {
+		out = []Child{}
+	}
+	return out, err
 }

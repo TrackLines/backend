@@ -21,7 +21,7 @@ func writeErr(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, ErrNotFound):
 		http.Error(w, "not found", http.StatusNotFound)
-	case errors.Is(err, ErrInvalidVisibility):
+	case errors.Is(err, ErrInvalidVisibility), errors.Is(err, ErrOtherProject), errors.Is(err, ErrBadDates), errors.Is(err, ErrInvalidItemStatus):
 		http.Error(w, err.Error(), http.StatusBadRequest)
 	default:
 		logs.Errorf("roadmaps: %v", err)
@@ -55,6 +55,9 @@ func (h System) Get(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, http.StatusText(status), status)
 		return
 	}
+	if !ok || rm.OwnerClerkID != user {
+		redactTickets(rm) // public/login-only readers see progress counts, never ticket titles or ids
+	}
 	httpx.JSON(w, http.StatusOK, rm)
 }
 
@@ -68,4 +71,11 @@ func (h System) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.JSON(w, http.StatusOK, out)
+}
+
+// redactTickets drops linked-ticket details, keeping each item's progress counts.
+func redactTickets(rm *Roadmap) {
+	for i := range rm.Items {
+		rm.Items[i].Tickets = nil
+	}
 }

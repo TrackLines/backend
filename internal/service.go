@@ -19,6 +19,7 @@ import (
 	"github.com/tracklines/backend/internal/boards"
 	"github.com/tracklines/backend/internal/bugfixes-tickets"
 	"github.com/tracklines/backend/internal/columns"
+	"github.com/tracklines/backend/internal/comments"
 	"github.com/tracklines/backend/internal/config"
 	"github.com/tracklines/backend/internal/middleware"
 	"github.com/tracklines/backend/internal/projects"
@@ -79,9 +80,17 @@ func (s *Service) Start() error {
 	mux.Handle("PATCH /api/tickets/{id}", signedIn(t.Update))
 	mux.Handle("POST /api/tickets/{id}/claim", signedIn(t.Claim))
 	mux.Handle("POST /api/tickets/{id}/release", signedIn(t.Release))
+	mux.Handle("PUT /api/tickets/{id}/assignee", signedIn(t.Assign)) // owner hands a ticket to themself or an agent
+	mux.Handle("GET /api/assignees", signedIn(t.Assignees))
 	mux.Handle("DELETE /api/tickets/{id}", signedIn(t.Delete))
 	mux.Handle("POST /api/tickets/{id}/move", signedIn(t.Move)) // also pulls a ticket out of the backlog
 	mux.Handle("POST /api/tickets/{id}/backlog", signedIn(t.ToBacklog))
+	mux.Handle("PUT /api/tickets/{id}/blocked-by", signedIn(t.SetBlockedBy)) // dependencies; claim is refused while blocked
+
+	// Comments — a ticket's conversation, separate from its description; replies via parent_comment_id
+	cm := comments.NewSystem(s.DB)
+	mux.Handle("GET /api/tickets/{id}/comments", signedIn(cm.List))
+	mux.Handle("POST /api/tickets/{id}/comments", signedIn(cm.Create))
 
 	// Attachments — files live on UploadThing (browser uploads via the Next.js route); we keep the records
 	at := attachments.NewSystem(s.DB, attachments.UploadThing{Token: config.Get(s.Config).UploadThingToken})
@@ -107,6 +116,7 @@ func (s *Service) Start() error {
 	mux.Handle("PUT /api/roadmaps/{id}", signedIn(r.Update))
 	mux.Handle("DELETE /api/roadmaps/{id}", signedIn(r.Delete))
 	mux.Handle("PUT /api/roadmaps/{id}/items", signedIn(r.ReplaceItems))
+	mux.Handle("PUT /api/roadmaps/{id}/items/{item}/tickets", signedIn(r.SetItemTickets)) // item progress = linked tickets done
 
 	// API keys — one per agent, acts as its owner; managing keys needs a signed-in session
 	k := apikeys.NewSystem(s.DB)
