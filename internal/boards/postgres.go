@@ -15,23 +15,25 @@ var ErrNotFound = errors.New("board not found")
 var DefaultColumns = []string{"To do", "In progress", "Done"}
 
 type Ticket struct {
-	ID          string  `json:"id"`
-	CreatedBy   string  `json:"created_by"`
-	AssignedTo  *string `json:"assigned_to"`
-	ProjectID   string  `json:"project_id"`
-	ColumnID    *string `json:"column_id"`
-	SprintID    *string `json:"sprint_id"`
-	Type        string  `json:"type"`
-	Title       string  `json:"title"`
-	Description string  `json:"description"`
-	Priority    string  `json:"priority"`
-	Position    int     `json:"position"`
-	Blocked     bool    `json:"blocked"` // a ticket it depends on isn't done yet
+	ID          string   `json:"id"`
+	CreatedBy   string   `json:"created_by"`
+	AssignedTo  *string  `json:"assigned_to"`
+	ProjectID   string   `json:"project_id"`
+	ColumnID    *string  `json:"column_id"`
+	SprintID    *string  `json:"sprint_id"`
+	Type        string   `json:"type"`
+	Title       string   `json:"title"`
+	Description string   `json:"description"`
+	Priority    string   `json:"priority"`
+	Position    int      `json:"position"`
+	Blocked     bool     `json:"blocked"` // a ticket it depends on isn't done yet
+	Labels      []string `json:"labels"`  // free-form, sorted case-insensitively
 }
 
 // TicketCols + ScanTicket read a ticket row; shared with the tickets package. The last column
 // is "blocked": some ticket it depends on isn't done yet.
-var TicketCols = `t.id, t.created_by, t.assigned_to, t.project_id, t.column_id, t.sprint_id, t.type::text, t.title, t.description, t.priority::text, t.position, ` + TicketBlockedSQL
+var TicketCols = `t.id, t.created_by, t.assigned_to, t.project_id, t.column_id, t.sprint_id, t.type::text, t.title, t.description, t.priority::text, t.position, ` + TicketBlockedSQL +
+	`, ARRAY(SELECT l.label FROM ticket_labels l WHERE l.ticket_id = t.id ORDER BY lower(l.label))`
 
 func ScanTicket(row pgx.Row) (Ticket, error) {
 	var t Ticket
@@ -55,7 +57,7 @@ var TicketBlockedSQL = `EXISTS (SELECT 1 FROM ticket_dependencies td JOIN ticket
 
 // TicketDest lists scan targets matching TicketCols, for queries that select extra columns after them.
 func TicketDest(t *Ticket) []any {
-	return []any{&t.ID, &t.CreatedBy, &t.AssignedTo, &t.ProjectID, &t.ColumnID, &t.SprintID, &t.Type, &t.Title, &t.Description, &t.Priority, &t.Position, &t.Blocked}
+	return []any{&t.ID, &t.CreatedBy, &t.AssignedTo, &t.ProjectID, &t.ColumnID, &t.SprintID, &t.Type, &t.Title, &t.Description, &t.Priority, &t.Position, &t.Blocked, &t.Labels}
 }
 
 // Sprint is a board's time box; only the open one is shown on the board.

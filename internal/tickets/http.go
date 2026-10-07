@@ -19,10 +19,11 @@ func NewSystem(db *pgxpool.Pool) System {
 type System struct{ store Store }
 
 type ticketInput struct {
-	Type        string `json:"type"` // bug | feature | task; defaults to task on create, unchanged on update
-	Title       string `json:"title"`
-	Description string `json:"description"`
-	Priority    string `json:"priority"` // low | medium | high | urgent; defaults to medium on create
+	Type        string    `json:"type"` // bug | feature | task; defaults to task on create, unchanged on update
+	Title       string    `json:"title"`
+	Description string    `json:"description"`
+	Priority    string    `json:"priority"` // low | medium | high | urgent; defaults to medium on create
+	Labels      *[]string `json:"labels"`   // optional; omitted = unchanged, [] clears
 }
 
 func (in ticketInput) createType() string {
@@ -37,7 +38,26 @@ func (in *ticketInput) valid(w http.ResponseWriter) bool {
 		http.Error(w, "title is required", http.StatusBadRequest)
 		return false
 	}
+	if in.Labels != nil {
+		labels, err := NormalizeLabels(*in.Labels)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return false
+		}
+		in.Labels = &labels
+	}
 	return true
+}
+
+// applyLabels stores labels sent with a create/update (validated by valid); t may be nil.
+func (h System) applyLabels(r *http.Request, user, id string, in ticketInput, t *Ticket) error {
+	if in.Labels == nil {
+		return nil
+	}
+	if t != nil {
+		t.Labels = *in.Labels
+	}
+	return h.store.SetLabels(r.Context(), user, id, *in.Labels)
 }
 
 func writeErr(w http.ResponseWriter, err error) {
@@ -54,7 +74,7 @@ func writeErr(w http.ResponseWriter, err error) {
 	case errors.Is(err, ErrNotAssignedToCaller), errors.Is(err, ErrBlocked):
 		http.Error(w, err.Error(), http.StatusConflict)
 		return
-	case errors.Is(err, ErrSelfBlock), errors.Is(err, ErrOtherProject), errors.Is(err, ErrCycle), errors.Is(err, ErrUnknownAssignee):
+	case errors.Is(err, ErrSelfBlock), errors.Is(err, ErrOtherProject), errors.Is(err, ErrCycle), errors.Is(err, ErrUnknownAssignee), errors.Is(err, ErrBadLabels):
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -69,6 +89,9 @@ func (h System) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	user, _ := auth.UserID(r.Context())
 	t, err := h.store.CreateAs(r.Context(), user, auth.ActorID(r.Context()), r.PathValue("id"), in.createType(), in.Title, in.Description)
+	if err == nil {
+		err = h.applyLabels(r, user, t.ID, in, t)
+	}
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -82,7 +105,11 @@ func (h System) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	user, _ := auth.UserID(r.Context())
-	if err := h.store.Update(r.Context(), user, r.PathValue("id"), in.Type, in.Title, in.Description, in.Priority); err != nil {
+	err := h.store.Update(r.Context(), user, r.PathValue("id"), in.Type, in.Title, in.Description, in.Priority)
+	if err == nil {
+		err = h.applyLabels(r, user, r.PathValue("id"), in, nil)
+	}
+	if err != nil {
 		writeErr(w, err)
 		return
 	}
@@ -137,6 +164,9 @@ func (h System) CreateBacklog(w http.ResponseWriter, r *http.Request) {
 	}
 	user, _ := auth.UserID(r.Context())
 	t, err := h.store.CreateBacklogAs(r.Context(), user, auth.ActorID(r.Context()), r.PathValue("id"), in.createType(), in.Title, in.Description)
+	if err == nil {
+		err = h.applyLabels(r, user, t.ID, in, t)
+	}
 	if err != nil {
 		writeErr(w, err)
 		return

@@ -1,0 +1,1414 @@
+openapi: 3.1.0
+info:
+  title: TrackLines API
+  version: 1.0.0
+  description: |
+    Complete HTTP API for projects, boards, tickets, roadmaps, billing, and
+    integrations. The API also supports the BugFixes workflow: create in a
+    board column or project backlog, append conversation updates, and close a
+    board ticket by moving it to the board's last (Done) column.
+
+    Most private endpoints accept a Clerk session token or a TrackLines (`tl_…`)
+    or BugFixes (`bf_…`) agent API key as a Bearer token. Agent keys act as
+    their owner's identity and attribute writes to the key's name. API-key
+    management requires a Clerk session. Stripe webhooks use Stripe-Signature.
+    IDs are UUIDs. Error responses are plain-text messages.
+servers:
+  - url: https://tracklin.es/api
+    description: Production same-origin API proxy
+  - url: http://localhost:8080/api
+    description: Local API
+security:
+  - bearerAuth: []
+tags:
+  - name: Projects
+    description: Create, list, inspect, update, and delete projects.
+  - name: Tickets
+    description: Create, inspect, move, and close tickets.
+  - name: Comments
+    description: Append updates to a ticket conversation.
+  - name: Boards
+    description: Team boards and columns.
+  - name: Columns
+    description: Board workflow columns.
+  - name: Attachments
+    description: UploadThing attachment metadata.
+  - name: Sprints
+    description: Board sprints.
+  - name: Roadmaps
+    description: Project roadmaps and linked ticket progress.
+  - name: API keys
+    description: Manage agent API keys with a Clerk session.
+  - name: Billing
+    description: Stripe subscription and webhook operations.
+  - name: System
+    description: Health check.
+paths:
+  /projects:
+    get:
+      tags: [Projects]
+      operationId: listProjects
+      summary: List projects accessible to this agent
+      description: Use a project's ID when creating a ticket directly in its backlog.
+      responses:
+        '200':
+          description: Projects owned by the API key's owner.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Project'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      tags: [Projects]
+      operationId: createProject
+      summary: Create a project
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProjectInput'
+      responses:
+        '201':
+          description: Project created.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Project' }
+        '402':
+          description: Free plan project limit reached.
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /projects/{projectId}:
+    parameters:
+      - $ref: '#/components/parameters/ProjectId'
+    get:
+      tags: [Projects]
+      operationId: getProject
+      summary: Get a project with its boards and roadmaps
+      responses:
+        '200':
+          description: Project details.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Project' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [Projects]
+      operationId: updateProject
+      summary: Update a project
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProjectInput' }
+      responses:
+        '204': { description: Project updated. }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [Projects]
+      operationId: deleteProject
+      summary: Delete a project and its boards, tickets, and roadmaps
+      responses:
+        '204': { description: Project deleted. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /projects/{projectId}/boards:
+    parameters:
+      - $ref: '#/components/parameters/ProjectId'
+    post:
+      tags: [Boards]
+      operationId: createBoard
+      summary: Create a team board with default columns
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/BoardInput' }
+      responses:
+        '201':
+          description: Board created.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Board' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /projects/{projectId}/backlog:
+    parameters:
+      - $ref: '#/components/parameters/ProjectId'
+    get:
+      tags: [Tickets]
+      operationId: listBacklog
+      summary: List a project's backlog
+      parameters:
+        - name: type
+          in: query
+          schema: { type: string, enum: [bug, feature, task] }
+      responses:
+        '200':
+          description: Backlog tickets, ordered by position.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Ticket' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [Tickets]
+      operationId: createBacklogTicket
+      summary: Create a ticket directly in a project's backlog
+      description: Creates a ticket without requiring a board or column. The ticket is attributed to the API key's agent name and defaults to type `task` if `type` is omitted.
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateBacklogTicket'
+            example:
+              type: bug
+              title: Project creation returns an error
+              description: Creating a project from the dashboard returns HTTP 403.
+      responses:
+        '201':
+          description: Backlog ticket created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Ticket'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /bugfixes/tickets:
+    post:
+      tags: [Tickets]
+      operationId: createBugfixTicket
+      summary: Create a ticket as a BugFixes agent
+      description: Creates a ticket in the specified board column and records the API key's agent name as `created_by`.
+      security:
+        - bugfixesBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateBugfixTicket'
+            example:
+              board_id: 185abf7c-bdad-4f01-9e90-9afcfa8c1eea
+              column_id: 29e570c0-2e5b-44ed-b257-4981b1d4a273
+              title: Project creation returns an error
+              body: Creating a project from the dashboard returns HTTP 403.
+              priority: high
+      responses:
+        '201':
+          description: Ticket created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BugfixTicket'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: Board or column not found.
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /boards/{boardId}:
+    parameters:
+      - $ref: '#/components/parameters/BoardId'
+    get:
+      tags: [Boards]
+      operationId: getBoard
+      summary: Get board columns and tickets
+      description: Use the column with the greatest `position` as the Done column when closing a ticket.
+      responses:
+        '200':
+          description: Board, with ordered columns and their current tickets.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Board'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      tags: [Boards]
+      operationId: deleteBoard
+      summary: Delete a board
+      responses:
+        '204': { description: Board deleted. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /boards/{boardId}/columns:
+    parameters:
+      - $ref: '#/components/parameters/BoardId'
+    post:
+      tags: [Columns]
+      operationId: createColumn
+      summary: Add a column to a board
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/NameInput' }
+      responses:
+        '201':
+          description: Column created.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Column' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /boards/{boardId}/columns/order:
+    put:
+      tags: [Columns]
+      operationId: reorderColumns
+      summary: Replace a board's column order
+      parameters:
+        - $ref: '#/components/parameters/BoardId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [column_ids]
+              properties:
+                column_ids:
+                  type: array
+                  items: { type: string, format: uuid }
+      responses:
+        '204': { description: Column order updated. }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /columns/{columnId}:
+    parameters:
+      - name: columnId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    patch:
+      tags: [Columns]
+      operationId: renameColumn
+      summary: Rename a column
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/NameInput' }
+      responses:
+        '204': { description: Column renamed. }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [Columns]
+      operationId: deleteColumn
+      summary: Delete an empty column
+      responses:
+        '204': { description: Column deleted. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Column still contains tickets. }
+
+  /columns/{columnId}/tickets:
+    post:
+      tags: [Tickets]
+      operationId: createBoardTicket
+      summary: Create a ticket in a board column
+      parameters:
+        - name: columnId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TicketInput' }
+      responses:
+        '201':
+          description: Ticket created.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Ticket' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /tickets/{ticketId}:
+    parameters:
+      - $ref: '#/components/parameters/TicketId'
+    get:
+      tags: [Tickets]
+      operationId: getTicket
+      summary: Get a ticket and its board context
+      description: Use `board_id` to look up the Done column before closing a ticket.
+      responses:
+        '200':
+          description: Ticket details.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TicketDetail'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      tags: [Tickets]
+      operationId: updateTicket
+      summary: Update a ticket
+      description: "`title` is required; empty `type` and `priority` retain their current values."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TicketInput' }
+      responses:
+        '204': { description: Ticket updated. }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [Tickets]
+      operationId: deleteTicket
+      summary: Delete a ticket
+      responses:
+        '204': { description: Ticket deleted. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /tickets/{ticketId}/claim:
+    post:
+      tags: [Tickets]
+      operationId: claimTicket
+      summary: Assign an unassigned ticket to the caller
+      parameters:
+        - $ref: '#/components/parameters/TicketId'
+      responses:
+        '200':
+          description: Claimed ticket.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Ticket' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Ticket is already assigned or blocked by another ticket. }
+
+  /tickets/{ticketId}/release:
+    post:
+      tags: [Tickets]
+      operationId: releaseTicket
+      summary: Clear the caller's assignment from a ticket
+      parameters:
+        - $ref: '#/components/parameters/TicketId'
+      responses:
+        '204': { description: Assignment cleared. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Ticket is not assigned to the caller. }
+
+  /tickets/{ticketId}/assignee:
+    put:
+      tags: [Tickets]
+      operationId: assignTicket
+      summary: Assign or unassign a ticket
+      description: Set `assignee` to the caller's ID or an agent name; set it to null to unassign.
+      parameters:
+        - $ref: '#/components/parameters/TicketId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [assignee]
+              properties:
+                assignee: { type: [string, 'null'] }
+      responses:
+        '200':
+          description: Updated ticket.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Ticket' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /assignees:
+    get:
+      tags: [Tickets]
+      operationId: listAssignees
+      summary: List people and agents available for assignment
+      responses:
+        '200':
+          description: Assignable identities.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id: { type: string }
+                    label: { type: string }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /tickets/{ticketId}/backlog:
+    post:
+      tags: [Tickets]
+      operationId: sendTicketToBacklog
+      summary: Move a ticket into its project's backlog
+      parameters:
+        - $ref: '#/components/parameters/TicketId'
+      responses:
+        '204': { description: Ticket moved to backlog. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /tickets/{ticketId}/blocked-by:
+    put:
+      tags: [Tickets]
+      operationId: setTicketDependencies
+      summary: Replace the tickets blocking this ticket
+      description: Use an empty `ticket_ids` array to clear dependencies. Dependencies must be in the same project and cannot form a cycle.
+      parameters:
+        - $ref: '#/components/parameters/TicketId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ticket_ids]
+              properties:
+                ticket_ids:
+                  type: array
+                  items: { type: string, format: uuid }
+      responses:
+        '204': { description: Dependencies replaced. }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /tickets/{ticketId}/comments:
+    parameters:
+      - $ref: '#/components/parameters/TicketId'
+    get:
+      tags: [Comments]
+      operationId: listTicketComments
+      summary: List a ticket's conversation
+      responses:
+        '200':
+          description: Comments in chronological order.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Comment' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [Comments]
+      operationId: appendTicketComment
+      summary: Append an update to a ticket
+      description: Adds a top-level comment to the ticket conversation. Use this for progress reports or follow-up findings; it does not replace the ticket description.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateComment'
+            example:
+              body: |
+                Fixed in the backend. The request now succeeds with the production origin.
+      responses:
+        '201':
+          description: Comment appended.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Comment'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /tickets/{ticketId}/move:
+    post:
+      tags: [Tickets]
+      operationId: moveTicket
+      summary: Move a ticket to another column
+      description: To close a ticket, first get its board, then move it to the column with the greatest `position` (the board's Done column). `position` may be zero.
+      parameters:
+        - $ref: '#/components/parameters/TicketId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MoveTicket'
+      responses:
+        '204':
+          description: Ticket moved.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /tickets/{ticketId}/attachments:
+    parameters:
+      - $ref: '#/components/parameters/TicketId'
+    get:
+      tags: [Attachments]
+      operationId: listTicketAttachments
+      summary: List ticket attachments
+      responses:
+        '200':
+          description: Attachment records.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Attachment' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [Attachments]
+      operationId: recordTicketAttachment
+      summary: Record an uploaded UploadThing file on a ticket
+      description: The file must already be uploaded; this endpoint stores its metadata and does not upload bytes.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AttachmentInput' }
+      responses:
+        '201':
+          description: Attachment recorded.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Attachment' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Ticket is in its Done column. }
+
+  /attachments/{attachmentId}:
+    delete:
+      tags: [Attachments]
+      operationId: deleteAttachment
+      summary: Delete an attachment and its stored file
+      parameters:
+        - name: attachmentId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '204': { description: Attachment deleted. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /boards/{boardId}/sprints:
+    parameters:
+      - $ref: '#/components/parameters/BoardId'
+    get:
+      tags: [Sprints]
+      operationId: listSprints
+      summary: List a board's sprints
+      responses:
+        '200':
+          description: Sprints, newest first.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Sprint' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [Sprints]
+      operationId: startSprint
+      summary: Start a sprint and pull in unassigned board tickets
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [length_days]
+              properties:
+                length_days: { type: integer, minimum: 1, maximum: 365 }
+      responses:
+        '201':
+          description: Sprint started.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Sprint' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Board already has an open sprint. }
+
+  /sprints/{sprintId}/close:
+    post:
+      tags: [Sprints]
+      operationId: closeSprint
+      summary: Close a sprint and start the next one
+      parameters:
+        - name: sprintId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Newly opened next sprint.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Sprint' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /roadmaps:
+    get:
+      tags: [Roadmaps]
+      operationId: listRoadmaps
+      summary: List the caller's roadmaps
+      responses:
+        '200':
+          description: Roadmaps owned by the caller.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Roadmap' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /roadmaps/{roadmapId}:
+    parameters:
+      - name: roadmapId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [Roadmaps]
+      operationId: getRoadmap
+      summary: Get a roadmap
+      description: Public roadmaps are readable without a token; login_only roadmaps require sign-in; team roadmaps require the owner. Non-owner readers see progress counts but not linked-ticket IDs or titles.
+      security:
+        - {}
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Roadmap and items.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Roadmap' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: Roadmap is restricted to its owner. }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [Roadmaps]
+      operationId: updateRoadmap
+      summary: Update a roadmap
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RoadmapInput' }
+      responses:
+        '204': { description: Roadmap updated. }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [Roadmaps]
+      operationId: deleteRoadmap
+      summary: Delete a roadmap
+      responses:
+        '204': { description: Roadmap deleted. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /projects/{projectId}/roadmaps:
+    post:
+      tags: [Roadmaps]
+      operationId: createRoadmap
+      summary: Create a roadmap in a project
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RoadmapInput' }
+      responses:
+        '201':
+          description: Roadmap created.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Roadmap' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /roadmaps/{roadmapId}/items:
+    put:
+      tags: [Roadmaps]
+      operationId: replaceRoadmapItems
+      summary: Replace a roadmap's item list
+      description: Existing item IDs are updated in place; IDs omitted from the submitted list are removed. Unknown or omitted IDs create items.
+      parameters:
+        - name: roadmapId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items: { $ref: '#/components/schemas/RoadmapItemInput' }
+      responses:
+        '204': { description: Roadmap items replaced. }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /roadmaps/{roadmapId}/items/{itemId}/tickets:
+    put:
+      tags: [Roadmaps]
+      operationId: setRoadmapItemTickets
+      summary: Replace tickets linked to a roadmap item
+      parameters:
+        - name: roadmapId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: itemId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ticket_ids]
+              properties:
+                ticket_ids:
+                  type: array
+                  items: { type: string, format: uuid }
+      responses:
+        '204': { description: Linked tickets replaced. }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /keys:
+    get:
+      tags: [API keys]
+      operationId: listApiKeys
+      summary: List the caller's active API keys
+      security:
+        - clerkSession: []
+      responses:
+        '200':
+          description: API key metadata. Secret values are never returned after creation.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/ApiKey' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      tags: [API keys]
+      operationId: createApiKey
+      summary: Create a TrackLines API key
+      description: The plaintext key is returned only once. This route requires a Clerk session.
+      security:
+        - clerkSession: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/NameInput' }
+      responses:
+        '201':
+          description: Key created; save the returned `key` securely now.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CreatedApiKey' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /keys/{keyId}:
+    parameters:
+      - name: keyId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    delete:
+      tags: [API keys]
+      operationId: revokeApiKey
+      summary: Revoke an API key
+      security:
+        - clerkSession: []
+      responses:
+        '204': { description: API key revoked. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /subscription:
+    get:
+      tags: [Billing]
+      operationId: getSubscription
+      summary: Get the caller's plan and project limit
+      responses:
+        '200':
+          description: Subscription status.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [paid, project_limit]
+                properties:
+                  paid: { type: boolean }
+                  project_limit: { type: integer, description: '-1 means unlimited.' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '503': { description: Billing status unavailable. }
+
+  /subscription/checkout:
+    post:
+      tags: [Billing]
+      operationId: createCheckoutSession
+      summary: Create a Stripe checkout session
+      responses:
+        '200':
+          description: Stripe Checkout URL.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/URLResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409': { description: Caller is already subscribed. }
+        '503': { description: Billing is not configured or unavailable. }
+        '502': { description: Stripe is unavailable. }
+
+  /subscription/portal:
+    post:
+      tags: [Billing]
+      operationId: createBillingPortalSession
+      summary: Create a Stripe billing portal session
+      responses:
+        '200':
+          description: Stripe Billing Portal URL.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/URLResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409': { description: Caller has no Stripe customer yet. }
+        '503': { description: Billing is not configured or unavailable. }
+        '502': { description: Stripe is unavailable. }
+
+  /webhooks/stripe:
+    post:
+      tags: [Billing]
+      operationId: stripeWebhook
+      summary: Receive a Stripe webhook event
+      description: Authenticates the raw payload with Stripe-Signature. The handler is mounted at this path both under /api and at the API root.
+      servers:
+        - url: https://tracklin.es/api
+        - url: http://localhost:8080/api
+        - url: http://localhost:8080
+      security: []
+      parameters:
+        - name: Stripe-Signature
+          in: header
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        '200': { description: Event acknowledged. }
+        '400': { description: Invalid body or signature. }
+        '502': { description: Stripe is unavailable while processing the event. }
+        '503': { description: Billing is unavailable. }
+
+  /health:
+    get:
+      tags: [System]
+      operationId: healthCheck
+      summary: Check API and backing services health
+      servers:
+        - url: http://localhost:8080
+          description: Use the deployed backend origin directly in production; the frontend API proxy does not expose /health.
+      security: []
+      responses:
+        '200':
+          description: API, PostgreSQL, and Valkey are healthy.
+          content:
+            text/plain:
+              schema: { type: string, example: ok }
+        '503': { description: Database or Valkey is unavailable. }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT or TrackLines API key
+      description: Clerk session token, TrackLines `tl_` key, or BugFixes `bf_` key, depending on the route.
+    bugfixesBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: API key
+      description: TrackLines API key created for a BugFixes agent; key starts with `bf_`.
+    clerkSession:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: A signed-in Clerk session token. API keys are rejected on API-key management routes.
+  parameters:
+    ProjectId:
+      name: projectId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    BoardId:
+      name: boardId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    TicketId:
+      name: ticketId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  schemas:
+    ProjectInput:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string, minLength: 1 }
+        description: { type: string }
+    BoardInput:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string, minLength: 1 }
+        description: { type: string }
+    NameInput:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string, minLength: 1 }
+    TicketInput:
+      type: object
+      required: [title]
+      properties:
+        type:
+          type: string
+          enum: [bug, feature, task]
+          default: task
+        title: { type: string, minLength: 1 }
+        description: { type: string }
+        priority:
+          type: string
+          enum: [low, medium, high, urgent]
+          default: medium
+    CreateBugfixTicket:
+      type: object
+      required: [board_id, column_id, title]
+      properties:
+        board_id:
+          type: string
+          format: uuid
+        column_id:
+          type: string
+          format: uuid
+        title:
+          type: string
+          minLength: 1
+        body:
+          type: string
+          description: Initial ticket description.
+        priority:
+          type: string
+          description: Currently not applied to storage; the database defaults to medium. If supplied, the create response echoes this value.
+          enum: [low, medium, high, urgent]
+    CreateBacklogTicket:
+      type: object
+      required: [title]
+      properties:
+        type:
+          type: string
+          enum: [bug, feature, task]
+          default: task
+        title:
+          type: string
+          minLength: 1
+        description:
+          type: string
+    Project:
+      type: object
+      required: [id, name, description, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        description: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        boards:
+          type: array
+          items: { $ref: '#/components/schemas/BoardSummary' }
+        roadmaps:
+          type: array
+          items: { $ref: '#/components/schemas/Roadmap' }
+    BoardSummary:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        project_id: { type: string, format: uuid }
+        owner_clerk_id: { type: string }
+        name: { type: string }
+        description: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    Ticket:
+      type: object
+      description: Custom labels are not currently supported. Agent origin is recorded in created_by and rendered in the ticket UI; assignment is shown in assigned_to.
+      required: [id, project_id, column_id, title, description, created_by, type, priority, position, blocked]
+      properties:
+        id: { type: string, format: uuid }
+        project_id: { type: string, format: uuid }
+        column_id: { type: [string, 'null'], format: uuid, description: Null while in the backlog. }
+        sprint_id: { type: [string, 'null'], format: uuid }
+        type: { type: string, enum: [bug, feature, task] }
+        title: { type: string }
+        description: { type: string }
+        created_by: { type: string }
+        assigned_to: { type: [string, 'null'] }
+        priority: { type: string, enum: [low, medium, high, urgent] }
+        position: { type: integer }
+        blocked: { type: boolean }
+    Column:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        position: { type: integer }
+        tickets:
+          type: array
+          items: { $ref: '#/components/schemas/Ticket' }
+    Sprint:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        board_id: { type: string, format: uuid }
+        number: { type: integer }
+        length_days: { type: integer }
+        starts_at: { type: string, format: date-time }
+        ends_at: { type: string, format: date-time }
+        closed_at: { type: [string, 'null'], format: date-time }
+    BugfixTicket:
+      type: object
+      required: [id, board_id, column_id, title, body, priority, created_by, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        board_id:
+          type: string
+          format: uuid
+        column_id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        body:
+          type: string
+        priority:
+          type: string
+        created_by:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+    CreateComment:
+      type: object
+      required: [body]
+      properties:
+        body:
+          type: string
+          minLength: 1
+          maxLength: 10000
+        parent_comment_id:
+          type: [string, 'null']
+          format: uuid
+          description: Omit or set null for a top-level appended update; set to a comment ID to reply in a thread.
+    Comment:
+      type: object
+      required: [id, ticket_id, body, author, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        ticket_id:
+          type: string
+          format: uuid
+        parent_comment_id:
+          type: [string, 'null']
+          format: uuid
+        body:
+          type: string
+        author:
+          type: string
+          description: BugFixes API key name.
+        created_at:
+          type: string
+          format: date-time
+    MoveTicket:
+      type: object
+      required: [column_id]
+      properties:
+        column_id:
+          type: string
+          format: uuid
+        position:
+          type: integer
+          default: 0
+    TicketDetail:
+      type: object
+      description: Ticket properties plus board, column, sprint, and completion context.
+      properties:
+        id: { type: string, format: uuid }
+        project_id: { type: string, format: uuid }
+        title: { type: string }
+        description: { type: string }
+        created_by: { type: string }
+        assigned_to: { type: [string, 'null'] }
+        type: { type: string, enum: [bug, feature, task] }
+        priority: { type: string, enum: [low, medium, high, urgent] }
+        board_id: { type: [string, 'null'], format: uuid }
+        board_name: { type: [string, 'null'] }
+        column_id: { type: [string, 'null'], format: uuid }
+        column_name: { type: [string, 'null'] }
+        done: { type: boolean }
+        blocked_by:
+          type: array
+          items: { $ref: '#/components/schemas/TicketDependency' }
+        blocks:
+          type: array
+          items: { $ref: '#/components/schemas/TicketDependency' }
+        parent_id: { type: [string, 'null'], format: uuid }
+        children:
+          type: array
+          items: { $ref: '#/components/schemas/TicketChild' }
+        sprint_id: { type: [string, 'null'], format: uuid }
+        position: { type: integer }
+        blocked: { type: boolean }
+        sprint_number: { type: [integer, 'null'] }
+    TicketDependency:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        title: { type: string }
+        done: { type: boolean }
+    TicketChild:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        title: { type: string }
+        done: { type: boolean }
+        type: { type: string, enum: [bug, feature, task] }
+        assigned_to: { type: [string, 'null'] }
+    AttachmentInput:
+      type: object
+      required: [key, url, name]
+      properties:
+        key: { type: string }
+        url: { type: string, format: uri, description: Must be an https UploadThing URL on utfs.io or a *.ufs.sh host. }
+        name: { type: string, minLength: 1 }
+        size: { type: integer, minimum: 0 }
+        content_type: { type: string }
+    Attachment:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        ticket_id: { type: string, format: uuid }
+        key: { type: string }
+        url: { type: string, format: uri }
+        name: { type: string }
+        size: { type: integer }
+        content_type: { type: string }
+        created_by: { type: string }
+        created_at: { type: string, format: date-time }
+    RoadmapInput:
+      type: object
+      required: [title]
+      properties:
+        title: { type: string, minLength: 1 }
+        description: { type: string }
+        visibility:
+          type: string
+          enum: [public, login_only, team]
+          default: public
+    RoadmapItemInput:
+      type: object
+      required: [title]
+      properties:
+        id: { type: string, format: uuid, description: Omit to create a new item. }
+        title: { type: string, minLength: 1 }
+        description: { type: string }
+        start_date: { type: [string, 'null'], format: date, description: Gantt bar start date. }
+        target_date: { type: [string, 'null'], format: date }
+        manual_status: { type: string, enum: [not_started, in_progress, done] }
+    Roadmap:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        project_id: { type: string, format: uuid }
+        title: { type: string }
+        description: { type: string }
+        visibility: { type: string, enum: [public, login_only, team] }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        progress: { $ref: '#/components/schemas/Progress' }
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/RoadmapItem' }
+    RoadmapItem:
+      allOf:
+        - $ref: '#/components/schemas/RoadmapItemInput'
+        - type: object
+          properties:
+            position: { type: integer }
+            status: { type: string, enum: [not_started, in_progress, done] }
+            progress: { $ref: '#/components/schemas/Progress' }
+            tickets:
+              type: array
+              description: Included for the owner; hidden for other viewers.
+              items:
+                type: object
+                properties:
+                  id: { type: string, format: uuid }
+                  title: { type: string }
+                  done: { type: boolean }
+    Progress:
+      type: object
+      properties:
+        done: { type: integer }
+        total: { type: integer }
+    ApiKey:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        prefix: { type: string }
+        created_at: { type: string, format: date-time }
+        last_used_at: { type: [string, 'null'], format: date-time }
+    CreatedApiKey:
+      allOf:
+        - $ref: '#/components/schemas/ApiKey'
+        - type: object
+          required: [key]
+          properties:
+            key: { type: string, description: Plaintext secret returned only once. }
+    URLResponse:
+      type: object
+      required: [url]
+      properties:
+        url: { type: string, format: uri }
+    Board:
+      type: object
+      required: [id, project_id, name, columns]
+      properties:
+        id: { type: string, format: uuid }
+        project_id: { type: string, format: uuid }
+        owner_clerk_id: { type: string }
+        name: { type: string }
+        description: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        sprint: { $ref: '#/components/schemas/Sprint' }
+        columns:
+          type: array
+          items: { $ref: '#/components/schemas/Column' }
+    Error:
+      type: string
+      description: Plain-text error message.
+  responses:
+    BadRequest:
+      description: Invalid request body or field values.
+      content:
+        text/plain:
+          schema: { $ref: '#/components/schemas/Error' }
+    Unauthorized:
+      description: Missing, invalid, or revoked API key.
+      content:
+        text/plain:
+          schema: { $ref: '#/components/schemas/Error' }
+    NotFound:
+      description: Resource not found or not owned by this API key.
+      content:
+        text/plain:
+          schema: { $ref: '#/components/schemas/Error' }
+    InternalError:
+      description: Unexpected server error.
+      content:
+        text/plain:
+          schema: { $ref: '#/components/schemas/Error' }

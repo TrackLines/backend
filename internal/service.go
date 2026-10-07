@@ -80,7 +80,8 @@ func (s *Service) Start() error {
 	mux.Handle("PATCH /api/tickets/{id}", signedIn(t.Update))
 	mux.Handle("POST /api/tickets/{id}/claim", signedIn(t.Claim))
 	mux.Handle("POST /api/tickets/{id}/release", signedIn(t.Release))
-	mux.Handle("PUT /api/tickets/{id}/assignee", signedIn(t.Assign)) // owner hands a ticket to themself or an agent
+	mux.Handle("PUT /api/tickets/{id}/assignee", signedIn(t.Assign))  // owner hands a ticket to themself or an agent
+	mux.Handle("PUT /api/tickets/{id}/labels", signedIn(t.SetLabels)) // free-form labels; [] clears
 	mux.Handle("GET /api/assignees", signedIn(t.Assignees))
 	mux.Handle("DELETE /api/tickets/{id}", signedIn(t.Delete))
 	mux.Handle("POST /api/tickets/{id}/move", signedIn(t.Move)) // also pulls a ticket out of the backlog
@@ -101,6 +102,7 @@ func (s *Service) Start() error {
 	// Backlog — project tickets not on any board/sprint yet (e.g. triaged bugs)
 	mux.Handle("GET /api/projects/{id}/backlog", signedIn(t.Backlog))
 	mux.Handle("POST /api/projects/{id}/backlog", signedIn(t.CreateBacklog))
+	mux.Handle("GET /api/projects/{id}/labels", signedIn(t.ProjectLabels)) // labels in use, for suggestions
 
 	// Sprints — per team board; closing opens the next and carries unfinished tickets over
 	sp := sprints.NewSystem(s.DB)
