@@ -16,6 +16,7 @@ var (
 	ErrAlreadyAssigned     = errors.New("ticket is already assigned")
 	ErrNotAssignedToCaller = errors.New("ticket is not assigned to caller")
 	ErrSelfParent          = errors.New("a ticket can't be its own parent")
+	ErrParentLoop          = errors.New("that parent is already a sub-ticket of this ticket")
 	ErrOtherProject        = errors.New("tickets must belong to the same project")
 )
 
@@ -279,52 +280,63 @@ type Detail struct {
 	Done         bool    `json:"done"` // in the board's last column: locked for attachments
 	BlockedBy    []Dep   `json:"blocked_by"`
 	Blocks       []Dep   `json:"blocks"`
-	Parent       *string `json:"parent_id,omitempty"` // the ticket this one belongs to, if any
-	Children     []Child `json:"children,omitempty"`  // immediate sub-tickets (done count included)
+	Parent       *Dep    `json:"parent"`   // the ticket this one is a sub-ticket of, if any
+	Children     []Child `json:"children"` // immediate sub-tickets, with done status
 }
 
 type Child struct {
-	ID     string `json:"id"`
-	Title  string `json:"title"`
-	Done   bool   `json:"done"`
-	Type   string `json:"type"`
+	ID     string  `json:"id"`
+	Title  string  `json:"title"`
+	Done   bool    `json:"done"`
+	Type   string  `json:"type"`
 	Assign *string `json:"assigned_to"`
 }
 
-// SetParent clears (parentID nil) or sets the parent of ticket id.
-// Both tickets must be in the same project; a ticket can't be its own parent.
+// SetParent clears (parentID nil) or sets the parent of ticket id. Both must be in the same
+// project, and the parent can't be the ticket itself or one of its descendants.
 func (s Store) SetParent(ctx context.Context, owner, id string, parentID *string) error {
 	if parentID != nil && *parentID == id {
 		return ErrSelfParent
 	}
-	// verify the ticket exists and is owned
-	var pid string
-	err := s.DB.QueryRow(ctx, `SELECT t.project_id FROM tickets t JOIN projects p ON p.id = t.project_id
-		WHERE t.id = $1 AND p.owner_clerk_id = $2`, id, owner).Scan(&pid)
-	if err != nil {
-		return notFound(err)
-	}
-	if parentID != nil {
-		// parent must exist and be in the same project
-		var ppID string
-		err := s.DB.QueryRow(ctx, `SELECT t.project_id FROM tickets t JOIN projects p ON p.id = t.project_id
-			WHERE t.id = $1 AND p.owner_clerk_id = $2`, parentID, owner).Scan(&ppID)
-		if err != nil {
+	return pgx.BeginFunc(ctx, s.DB, func(tx pgx.Tx) error {
+		var project string
+		if err := tx.QueryRow(ctx, `SELECT t.project_id FROM tickets t JOIN projects p ON p.id = t.project_id
+			WHERE t.id = $1 AND p.owner_clerk_id = $2`, id, owner).Scan(&project); err != nil {
 			return notFound(err)
 		}
-		if ppID != pid {
-			return ErrOtherProject
+		// one parent change at a time per project, so two concurrent edits can't form a loop
+		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext('ticket-parent:' || $1))`, project); err != nil {
+			return err
 		}
-	}
-	return exec(s.DB.Exec(ctx, `UPDATE tickets t SET parent_id = $2, updated_at = now()
-		FROM projects p WHERE t.id = $1 AND p.id = t.project_id AND p.owner_clerk_id = $3`,
-		id, parentID, owner))
+		if parentID != nil {
+			var parentProject string
+			var loop bool
+			// walk up from the proposed parent; reaching id means id is its ancestor (UNION stops on any old loop)
+			if err := tx.QueryRow(ctx, `WITH RECURSIVE up AS (
+					SELECT id, parent_id FROM tickets WHERE id = $1
+					UNION SELECT t.id, t.parent_id FROM tickets t JOIN up ON t.id = up.parent_id)
+				SELECT t.project_id, EXISTS (SELECT 1 FROM up WHERE up.id = $2)
+				FROM tickets t JOIN projects p ON p.id = t.project_id WHERE t.id = $1 AND p.owner_clerk_id = $3`,
+				*parentID, id, owner).Scan(&parentProject, &loop); err != nil {
+				return notFound(err)
+			}
+			if parentProject != project {
+				return ErrOtherProject
+			}
+			if loop {
+				return ErrParentLoop
+			}
+		}
+		_, err := tx.Exec(ctx, `UPDATE tickets SET parent_id = $2, updated_at = now() WHERE id = $1`, id, parentID)
+		return err
+	})
 }
 
 // Get returns the owner's ticket with its project/board/column/sprint context.
 func (s Store) Get(ctx context.Context, owner, id string) (*Detail, error) {
 	var d Detail
-	dest := append(boards.TicketDest(&d.Ticket), &d.ProjectName, &d.BoardID, &d.BoardName, &d.ColumnName, &d.SprintNumber, &d.Done, &d.Parent)
+	var parentID *string
+	dest := append(boards.TicketDest(&d.Ticket), &d.ProjectName, &d.BoardID, &d.BoardName, &d.ColumnName, &d.SprintNumber, &d.Done, &parentID)
 	err := s.DB.QueryRow(ctx, `SELECT `+boards.TicketCols+`, p.name, t.board_id, b.name, c.name, sp.number, `+boards.TicketDoneSQL+`, t.parent_id
 		FROM tickets t JOIN projects p ON p.id = t.project_id AND p.owner_clerk_id = $2
 		LEFT JOIN boards b ON b.id = t.board_id
@@ -340,18 +352,23 @@ func (s Store) Get(ctx context.Context, owner, id string) (*Detail, error) {
 	if d.Blocks, err = s.deps(ctx, id, false); err != nil {
 		return nil, err
 	}
-	if d.Parent != nil {
-		d.Children, _ = s.ChildrenFor(ctx, id)
+	if parentID != nil {
+		var p Dep
+		if err := s.DB.QueryRow(ctx, `SELECT t.id, t.title, `+boards.TicketDoneSQL+` FROM tickets t WHERE t.id = $1`, *parentID).Scan(&p.ID, &p.Title, &p.Done); err != nil {
+			return nil, err
+		}
+		d.Parent = &p
+	}
+	if d.Children, err = s.ChildrenFor(ctx, id); err != nil {
+		return nil, err
 	}
 	return &d, nil
 }
 
 // ChildrenFor returns the ticket's immediate children with done status.
 func (s Store) ChildrenFor(ctx context.Context, id string) ([]Child, error) {
-	rows, err := s.DB.Query(ctx, `SELECT c.id, c.title, c.type::text, c.assigned_to,
-		EXISTS (SELECT 1 FROM tickets d WHERE d.id = c.id AND d.column_id = (
-			SELECT dc.id FROM columns dc WHERE dc.board_id = c.board_id ORDER BY dc.position DESC LIMIT 1)) AS done
-		FROM tickets c WHERE c.parent_id = $1 ORDER BY c.position, c.created_at`, id)
+	rows, err := s.DB.Query(ctx, `SELECT t.id, t.title, t.type::text, t.assigned_to, `+boards.TicketDoneSQL+`
+		FROM tickets t WHERE t.parent_id = $1 ORDER BY t.created_at`, id)
 	if err != nil {
 		return nil, err
 	}

@@ -86,6 +86,7 @@ func (s *Service) Start() error {
 	mux.Handle("DELETE /api/tickets/{id}", signedIn(t.Delete))
 	mux.Handle("POST /api/tickets/{id}/move", signedIn(t.Move)) // also pulls a ticket out of the backlog
 	mux.Handle("POST /api/tickets/{id}/backlog", signedIn(t.ToBacklog))
+	mux.Handle("PUT /api/tickets/{id}/parent", signedIn(t.SetParent))        // sub-tickets; null detaches
 	mux.Handle("PUT /api/tickets/{id}/blocked-by", signedIn(t.SetBlockedBy)) // dependencies; claim is refused while blocked
 
 	// Comments — a ticket's conversation, separate from its description; replies via parent_comment_id

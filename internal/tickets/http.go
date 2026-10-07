@@ -74,7 +74,8 @@ func writeErr(w http.ResponseWriter, err error) {
 	case errors.Is(err, ErrNotAssignedToCaller), errors.Is(err, ErrBlocked):
 		http.Error(w, err.Error(), http.StatusConflict)
 		return
-	case errors.Is(err, ErrSelfBlock), errors.Is(err, ErrOtherProject), errors.Is(err, ErrCycle), errors.Is(err, ErrUnknownAssignee), errors.Is(err, ErrBadLabels):
+	case errors.Is(err, ErrSelfBlock), errors.Is(err, ErrOtherProject), errors.Is(err, ErrCycle), errors.Is(err, ErrUnknownAssignee), errors.Is(err, ErrBadLabels),
+		errors.Is(err, ErrSelfParent), errors.Is(err, ErrParentLoop):
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -227,6 +228,22 @@ func (h System) SetBlockedBy(w http.ResponseWriter, r *http.Request) {
 	}
 	user, _ := auth.UserID(r.Context())
 	if err := h.store.SetBlockedBy(r.Context(), user, r.PathValue("id"), in.TicketIDs); err != nil {
+		writeErr(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// SetParent: PUT /api/tickets/{id}/parent {"parent_id": "<ticket>" | null} makes {id} a sub-ticket.
+func (h System) SetParent(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		ParentID *string `json:"parent_id"`
+	}
+	if !httpx.Decode(w, r, &in) {
+		return
+	}
+	user, _ := auth.UserID(r.Context())
+	if err := h.store.SetParent(r.Context(), user, r.PathValue("id"), in.ParentID); err != nil {
 		writeErr(w, err)
 		return
 	}
