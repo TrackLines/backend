@@ -36,7 +36,7 @@ func Middleware(db *pgxpool.Pool) func(http.Handler) http.Handler {
 				next.ServeHTTP(w, r)
 				return
 			}
-			owner, name, err := s.Owner(r.Context(), key)
+			owner, name, kind, err := s.Owner(r.Context(), key)
 			if err != nil {
 				if !errors.Is(err, ErrNotFound) {
 					logs.Errorf("bugfixes-tickets: key lookup: %v", err)
@@ -44,7 +44,7 @@ func Middleware(db *pgxpool.Pool) func(http.Handler) http.Handler {
 				http.Error(w, "invalid bugfixes api key", http.StatusUnauthorized)
 				return
 			}
-			next.ServeHTTP(w, r.WithContext(auth.WithAPIKeyUser(r.Context(), owner, name)))
+			next.ServeHTTP(w, r.WithContext(auth.WithAPIKeyUser(r.Context(), owner, name, kind)))
 		})
 	}
 }

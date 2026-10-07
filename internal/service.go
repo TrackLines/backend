@@ -80,7 +80,7 @@ func (s *Service) Start() error {
 	mux.Handle("PATCH /api/tickets/{id}", signedIn(t.Update))
 	mux.Handle("POST /api/tickets/{id}/claim", signedIn(t.Claim))
 	mux.Handle("POST /api/tickets/{id}/release", signedIn(t.Release))
-	mux.Handle("PUT /api/tickets/{id}/assignee", signedIn(t.Assign))  // owner hands a ticket to themself or an agent
+	mux.Handle("PUT /api/tickets/{id}/assignee", signedIn(t.Assign))  // owner assigns to themself or an AI key
 	mux.Handle("PUT /api/tickets/{id}/labels", signedIn(t.SetLabels)) // free-form labels; [] clears
 	mux.Handle("GET /api/assignees", signedIn(t.Assignees))
 	mux.Handle("DELETE /api/tickets/{id}", signedIn(t.Delete))
@@ -121,7 +121,7 @@ func (s *Service) Start() error {
 	mux.Handle("PUT /api/roadmaps/{id}/items", signedIn(r.ReplaceItems))
 	mux.Handle("PUT /api/roadmaps/{id}/items/{item}/tickets", signedIn(r.SetItemTickets)) // item progress = linked tickets done
 
-	// API keys — one per agent, acts as its owner; managing keys needs a signed-in session
+	// API keys — AI agent or server/service; managing keys needs a signed-in session
 	k := apikeys.NewSystem(s.DB)
 	mux.Handle("GET /api/keys", auth.SessionRequired(http.HandlerFunc(k.List)))
 	mux.Handle("POST /api/keys", auth.SessionRequired(http.HandlerFunc(k.Create)))

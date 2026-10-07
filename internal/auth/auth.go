@@ -42,17 +42,29 @@ type apiKeyUserContextKey struct{}
 type apiKeyUser struct {
 	owner string
 	name  string
+	kind  string
 }
 
 // WithAPIKeyUser marks the request as made with an API key acting as userID.
-func WithAPIKeyUser(ctx context.Context, userID, name string) context.Context {
-	return context.WithValue(ctx, apiKeyUserContextKey{}, apiKeyUser{owner: userID, name: name})
+// Legacy callers default to AI because keys historically represented agents.
+func WithAPIKeyUser(ctx context.Context, userID, name string, kind ...string) context.Context {
+	keyKind := "ai"
+	if len(kind) > 0 && kind[0] != "" {
+		keyKind = kind[0]
+	}
+	return context.WithValue(ctx, apiKeyUserContextKey{}, apiKeyUser{owner: userID, name: name, kind: keyKind})
 }
 
 // ViaAPIKey reports whether the caller authenticated with an API key.
 func ViaAPIKey(ctx context.Context) bool {
 	_, ok := ctx.Value(apiKeyUserContextKey{}).(apiKeyUser)
 	return ok
+}
+
+// APIKeyKind identifies whether this API-key request is an AI agent or service integration.
+func APIKeyKind(ctx context.Context) string {
+	key, _ := ctx.Value(apiKeyUserContextKey{}).(apiKeyUser)
+	return key.kind
 }
 
 // UserID returns the Clerk user id of the caller: the API key's owner, or the

@@ -11,23 +11,23 @@ import (
 	"github.com/tracklines/backend/internal/httpx"
 )
 
-var ErrUnknownAssignee = errors.New("assignee must be you or one of your agents (an active API key name)")
+var ErrUnknownAssignee = errors.New("assignee must be you or an active AI key")
 
-// Assignee is someone the owner can hand a ticket to: themself or one of their agents.
+// Assignee is a person or AI agent the owner can assign a ticket to.
 type Assignee struct {
 	ID    string `json:"id"`    // value stored in tickets.assigned_to
-	Label string `json:"label"` // "You" or the agent's key name
+	Label string `json:"label"` // "You" or the AI agent's key name
+	Kind  string `json:"kind"`  // "person" or "ai"
 }
 
-// validAssignee is true for the owner or an active API key name of theirs ($2 = owner, $3 = assignee).
-const validAssignee = `($3::text = $2 OR EXISTS (SELECT 1 FROM api_keys k WHERE k.owner_clerk_id = $2 AND k.name = $3 AND k.revoked_at IS NULL))`
-
-// Assign sets (or with nil clears) a ticket's assignee, regardless of who held it — the owner's override
-// of claim/release.
+// Assign lets the owner assign to themself or an active AI agent key, or clear assignment.
 func (s Store) Assign(ctx context.Context, owner, id string, assignee *string) (*Ticket, error) {
 	t, err := boards.ScanTicket(s.DB.QueryRow(ctx, `UPDATE tickets t SET assigned_to = $3, updated_at = now()
 		FROM projects p WHERE t.id = $1 AND p.id = t.project_id AND p.owner_clerk_id = $2
-		AND ($3::text IS NULL OR `+validAssignee+`) RETURNING `+boards.TicketCols, id, owner, assignee))
+		AND ($3::text IS NULL OR $3::text = $2 OR EXISTS (
+			SELECT 1 FROM api_keys k WHERE k.owner_clerk_id = $2 AND k.name = $3
+			AND k.kind = 'ai' AND k.revoked_at IS NULL
+		)) RETURNING `+boards.TicketCols, id, owner, assignee))
 	if err == nil {
 		return &t, nil
 	}
@@ -42,16 +42,17 @@ func (s Store) Assign(ctx context.Context, owner, id string, assignee *string) (
 	return nil, ErrUnknownAssignee
 }
 
-// Assignees lists who the owner can assign to: themself, then each active agent key (by name).
+// Assignees lists the owner and active AI agent keys (server/service keys are excluded).
 func (s Store) Assignees(ctx context.Context, owner string) ([]Assignee, error) {
-	rows, err := s.DB.Query(ctx, `SELECT DISTINCT name FROM api_keys WHERE owner_clerk_id = $1 AND revoked_at IS NULL ORDER BY name`, owner)
+	rows, err := s.DB.Query(ctx, `SELECT DISTINCT name FROM api_keys
+		WHERE owner_clerk_id = $1 AND kind = 'ai' AND revoked_at IS NULL ORDER BY name`, owner)
 	if err != nil {
 		return nil, err
 	}
 	names, err := pgx.CollectRows(rows, pgx.RowTo[string])
-	out := []Assignee{{ID: owner, Label: "You"}}
+	out := []Assignee{{ID: owner, Label: "You", Kind: "person"}}
 	for _, n := range names {
-		out = append(out, Assignee{ID: n, Label: n})
+		out = append(out, Assignee{ID: n, Label: n, Kind: "ai"})
 	}
 	return out, err
 }

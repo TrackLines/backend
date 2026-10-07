@@ -41,8 +41,8 @@ func TestKeys(t *testing.T) {
 	}
 	s := Store{DB: db}
 
-	plain, k, err := s.Create(ctx, "k1", "codex")
-	if err != nil || !strings.HasPrefix(plain, Prefix) || len(plain) < 40 || k.Prefix != plain[:10] {
+	plain, k, err := s.Create(ctx, "k1", "codex", KindAI)
+	if err != nil || !strings.HasPrefix(plain, Prefix) || len(plain) < 40 || k.Prefix != plain[:10] || k.Kind != KindAI {
 		t.Fatalf("create: %q %+v %v", plain, k, err)
 	}
 	var stored int
@@ -86,7 +86,7 @@ func TestKeys(t *testing.T) {
 		t.Fatalf("key managing keys: %d, want 403", code)
 	}
 
-	if list, _ := s.List(ctx, "k1"); len(list) != 1 || list[0].Name != "codex" {
+	if list, _ := s.List(ctx, "k1"); len(list) != 1 || list[0].Name != "codex" || list[0].Kind != KindAI {
 		t.Fatalf("list: %+v", list)
 	}
 	if err := s.Revoke(ctx, k.ID, "k2"); !errors.Is(err, ErrNotFound) {

@@ -33,6 +33,7 @@ func TestAssign(t *testing.T) {
 		INSERT INTO users (clerk_id, email) VALUES ('as1', 'a@b.c'), ('as2', 'd@e.f');
 		INSERT INTO api_keys (owner_clerk_id, name, prefix, hash) VALUES
 			('as1', 'codex', 'tl_a', 'h-as1-codex'), ('as1', 'gone', 'tl_b', 'h-as1-gone'), ('as2', 'stranger', 'tl_c', 'h-as2');
+		INSERT INTO api_keys (owner_clerk_id, name, kind, prefix, hash) VALUES ('as1', 'deploy', 'service', 'tl_d', 'h-as1-deploy');
 		UPDATE api_keys SET revoked_at = now() WHERE hash = 'h-as1-gone'`); err != nil {
 		t.Fatal(err)
 	}
@@ -42,7 +43,7 @@ func TestAssign(t *testing.T) {
 	s := Store{DB: db}
 	str := func(v string) *string { return &v }
 
-	if list, _ := s.Assignees(ctx, "as1"); len(list) != 2 || list[0].Label != "You" || list[1].ID != "codex" {
+	if list, _ := s.Assignees(ctx, "as1"); len(list) != 2 || list[0].Label != "You" || list[0].Kind != "person" || list[1].ID != "codex" || list[1].Kind != "ai" {
 		t.Fatalf("assignees: %+v", list)
 	}
 	for _, who := range []string{"as1", "codex"} {
@@ -55,7 +56,7 @@ func TestAssign(t *testing.T) {
 	if _, err := s.Assign(ctx, "as1", tid, str("as1")); err != nil {
 		t.Fatal(err)
 	}
-	for _, bad := range []string{"gone", "stranger", "as2", "anyone"} {
+	for _, bad := range []string{"gone", "deploy", "stranger", "as2", "anyone"} {
 		if _, err := s.Assign(ctx, "as1", tid, str(bad)); !errors.Is(err, ErrUnknownAssignee) {
 			t.Fatalf("%s: %v", bad, err)
 		}

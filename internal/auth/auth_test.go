@@ -30,3 +30,14 @@ func TestRequired(t *testing.T) {
 		t.Fatalf("optional anon: got %d", rec.Code)
 	}
 }
+
+func TestAPIKeyKind(t *testing.T) {
+	ctx := WithAPIKeyUser(t.Context(), "owner", "deploy", "service")
+	if !ViaAPIKey(ctx) || APIKeyKind(ctx) != "service" || ActorID(ctx) != "deploy" {
+		t.Fatalf("service key context: via=%v kind=%q actor=%q", ViaAPIKey(ctx), APIKeyKind(ctx), ActorID(ctx))
+	}
+	legacy := WithAPIKeyUser(t.Context(), "owner", "codex")
+	if APIKeyKind(legacy) != "ai" {
+		t.Fatalf("legacy key kind = %q, want ai", APIKeyKind(legacy))
+	}
+}

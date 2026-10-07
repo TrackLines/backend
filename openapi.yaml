@@ -14,8 +14,8 @@ info:
     management requires a Clerk session. Stripe webhooks use Stripe-Signature.
     IDs are UUIDs. Error responses are plain-text messages.
 servers:
-  - url: https://tracklin.es/api
-    description: Production same-origin API proxy
+  - url: https://api.tracklin.es/api
+    description: Production backend API
   - url: http://localhost:8080/api
     description: Local API
 security:
@@ -38,7 +38,7 @@ tags:
   - name: Roadmaps
     description: Project roadmaps and linked ticket progress.
   - name: API keys
-    description: Manage agent API keys with a Clerk session.
+    description: Manage AI agent and server/service API keys with a Clerk session.
   - name: Billing
     description: Stripe subscription and webhook operations.
   - name: System
@@ -417,6 +417,7 @@ paths:
       tags: [Tickets]
       operationId: claimTicket
       summary: Assign an unassigned ticket to the caller
+      description: AI keys and signed-in people may claim tickets. Server/service keys cannot claim work.
       parameters:
         - $ref: '#/components/parameters/TicketId'
       responses:
@@ -426,6 +427,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Ticket' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: Server/service API keys cannot claim tickets. }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { description: Ticket is already assigned or blocked by another ticket. }
 
@@ -434,11 +436,13 @@ paths:
       tags: [Tickets]
       operationId: releaseTicket
       summary: Clear the caller's assignment from a ticket
+      description: AI keys and signed-in people may release ticket assignments. Server/service keys cannot.
       parameters:
         - $ref: '#/components/parameters/TicketId'
       responses:
         '204': { description: Assignment cleared. }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: Server/service API keys cannot release ticket assignments. }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { description: Ticket is not assigned to the caller. }
 
@@ -447,7 +451,7 @@ paths:
       tags: [Tickets]
       operationId: assignTicket
       summary: Assign or unassign a ticket
-      description: Set `assignee` to the caller's ID or an agent name; set it to null to unassign.
+      description: Set `assignee` to the caller's ID or active AI key name; set it to null to unassign. Server/service keys cannot be assignees.
       parameters:
         - $ref: '#/components/parameters/TicketId'
       requestBody:
@@ -473,7 +477,8 @@ paths:
     get:
       tags: [Tickets]
       operationId: listAssignees
-      summary: List people and agents available for assignment
+      summary: List people and AI keys available for assignment
+      description: Service/API keys are excluded. AI key labels include their AI type in the user interface.
       responses:
         '200':
           description: Assignable identities.
@@ -486,6 +491,7 @@ paths:
                   properties:
                     id: { type: string }
                     label: { type: string }
+                    kind: { type: string, enum: [person, ai] }
         '401': { $ref: '#/components/responses/Unauthorized' }
 
   /tickets/{ticketId}/backlog:
@@ -876,7 +882,7 @@ paths:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/NameInput' }
+            schema: { $ref: '#/components/schemas/CreateApiKeyInput' }
       responses:
         '201':
           description: Key created; save the returned `key` securely now.
@@ -1358,9 +1364,16 @@ components:
       properties:
         id: { type: string, format: uuid }
         name: { type: string }
+        kind: { type: string, enum: [ai, service], description: AI keys can be assigned tickets; service keys are for servers and integrations. }
         prefix: { type: string }
         created_at: { type: string, format: date-time }
         last_used_at: { type: [string, 'null'], format: date-time }
+    CreateApiKeyInput:
+      type: object
+      required: [name, kind]
+      properties:
+        name: { type: string }
+        kind: { type: string, enum: [ai, service] }
     CreatedApiKey:
       allOf:
         - $ref: '#/components/schemas/ApiKey'

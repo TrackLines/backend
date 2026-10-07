@@ -178,6 +178,10 @@ func (h System) CreateBacklog(w http.ResponseWriter, r *http.Request) {
 // Claim assigns a ticket to the authenticated caller (the API key's agent name, or
 // the Clerk user ID). The database update makes competing claims mutually exclusive.
 func (h System) Claim(w http.ResponseWriter, r *http.Request) {
+	if auth.ViaAPIKey(r.Context()) && auth.APIKeyKind(r.Context()) != "ai" {
+		http.Error(w, "only AI keys can claim tickets", http.StatusForbidden)
+		return
+	}
 	user, _ := auth.UserID(r.Context())
 	t, err := h.store.Claim(r.Context(), user, auth.ActorID(r.Context()), r.PathValue("id"))
 	if err != nil {
@@ -189,6 +193,10 @@ func (h System) Claim(w http.ResponseWriter, r *http.Request) {
 
 // Release clears the current caller's assignment.
 func (h System) Release(w http.ResponseWriter, r *http.Request) {
+	if auth.ViaAPIKey(r.Context()) && auth.APIKeyKind(r.Context()) != "ai" {
+		http.Error(w, "only AI keys can release tickets", http.StatusForbidden)
+		return
+	}
 	user, _ := auth.UserID(r.Context())
 	if err := h.store.Release(r.Context(), user, auth.ActorID(r.Context()), r.PathValue("id")); err != nil {
 		writeErr(w, err)

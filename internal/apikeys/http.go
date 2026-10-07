@@ -29,7 +29,7 @@ func Middleware(db *pgxpool.Pool) func(http.Handler) http.Handler {
 				next.ServeHTTP(w, r)
 				return
 			}
-			owner, name, err := s.Owner(r.Context(), key)
+			owner, name, kind, err := s.Owner(r.Context(), key)
 			if err != nil {
 				if !errors.Is(err, ErrNotFound) {
 					logs.Errorf("apikeys: lookup: %v", err)
@@ -37,7 +37,7 @@ func Middleware(db *pgxpool.Pool) func(http.Handler) http.Handler {
 				http.Error(w, "invalid api key", http.StatusUnauthorized)
 				return
 			}
-			next.ServeHTTP(w, r.WithContext(auth.WithAPIKeyUser(r.Context(), owner, name)))
+			next.ServeHTTP(w, r.WithContext(auth.WithAPIKeyUser(r.Context(), owner, name, kind)))
 		})
 	}
 }
@@ -57,6 +57,7 @@ func (h System) List(w http.ResponseWriter, r *http.Request) {
 func (h System) Create(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Name string `json:"name"`
+		Kind string `json:"kind"`
 	}
 	if !httpx.Decode(w, r, &in) {
 		return
@@ -65,8 +66,12 @@ func (h System) Create(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "name is required (e.g. the agent using it)", http.StatusBadRequest)
 		return
 	}
+	if in.Kind != KindAI && in.Kind != KindService {
+		http.Error(w, "kind must be ai or service", http.StatusBadRequest)
+		return
+	}
 	user, _ := auth.UserID(r.Context())
-	plain, k, err := h.store.Create(r.Context(), user, in.Name)
+	plain, k, err := h.store.Create(r.Context(), user, in.Name, in.Kind)
 	if err != nil {
 		logs.Errorf("apikeys: create: %v", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
