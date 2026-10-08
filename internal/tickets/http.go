@@ -3,6 +3,7 @@ package tickets
 import (
 	"errors"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -39,6 +40,10 @@ func (in *ticketInput) valid(w http.ResponseWriter) bool {
 		http.Error(w, "title is required", http.StatusBadRequest)
 		return false
 	}
+	if !slices.Contains([]string{"", "low", "medium", "high", "urgent"}, in.Priority) {
+		http.Error(w, "priority must be low, medium, high or urgent", http.StatusBadRequest)
+		return false
+	}
 	if in.Labels != nil {
 		labels, err := NormalizeLabels(*in.Labels)
 		if err != nil {
@@ -48,6 +53,15 @@ func (in *ticketInput) valid(w http.ResponseWriter) bool {
 		in.Labels = &labels
 	}
 	return true
+}
+
+// applyPriority sets the priority sent with a create (the insert always starts at medium), like BugFixes create.
+func (h System) applyPriority(r *http.Request, user string, in ticketInput, t *Ticket) error {
+	if in.Priority == "" {
+		return nil
+	}
+	t.Priority = in.Priority
+	return h.store.Update(r.Context(), user, t.ID, "", t.Title, t.Description, in.Priority)
 }
 
 // applyLabels stores labels sent with a create/update (validated by valid); t may be nil.
@@ -93,6 +107,9 @@ func (h System) Create(w http.ResponseWriter, r *http.Request) {
 	t, err := h.store.CreateAs(r.Context(), user, auth.ActorID(r.Context()), r.PathValue("id"), in.createType(), in.Title, in.Description)
 	if err == nil {
 		err = h.applyLabels(r, user, t.ID, in, t)
+	}
+	if err == nil {
+		err = h.applyPriority(r, user, in, t)
 	}
 	if err != nil {
 		writeErr(w, err)
@@ -205,6 +222,9 @@ func (h System) CreateBacklog(w http.ResponseWriter, r *http.Request) {
 	t, err := h.store.CreateBacklogAs(r.Context(), user, auth.ActorID(r.Context()), r.PathValue("id"), in.createType(), in.Title, in.Description)
 	if err == nil {
 		err = h.applyLabels(r, user, t.ID, in, t)
+	}
+	if err == nil {
+		err = h.applyPriority(r, user, in, t)
 	}
 	if err != nil {
 		writeErr(w, err)

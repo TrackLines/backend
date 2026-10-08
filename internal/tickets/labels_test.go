@@ -92,6 +92,20 @@ func TestLabels(t *testing.T) {
 		t.Fatalf("no labels should be [], got %s", rec.Body)
 	}
 
+	// priority on create is stored (board + backlog); unknown priorities are rejected
+	if rec := do("POST", "/", pid, `{"title":"p","priority":"urgent"}`, h.CreateBacklog); rec.Code != 201 || !strings.Contains(rec.Body.String(), `"priority":"urgent"`) {
+		t.Fatalf("backlog priority: %d %s", rec.Code, rec.Body)
+	}
+	if bl, _ := s.Backlog(ctx, "lb1", pid, ""); bl[len(bl)-1].Priority != "urgent" {
+		t.Fatalf("priority not stored: %+v", bl[len(bl)-1])
+	}
+	if rec := do("POST", "/", col, `{"title":"p","priority":"high"}`, h.Create); rec.Code != 201 || !strings.Contains(rec.Body.String(), `"priority":"high"`) {
+		t.Fatalf("board priority: %d %s", rec.Code, rec.Body)
+	}
+	if rec := do("POST", "/", col, `{"title":"p","priority":"meh"}`, h.Create); rec.Code != 400 {
+		t.Fatalf("bad priority: %d", rec.Code)
+	}
+
 	// PATCH without labels leaves them; with labels replaces; PUT [] clears
 	do("PATCH", "/", id, `{"title":"b2"}`, h.Update)
 	if d, _ := s.Get(ctx, "lb1", id); len(d.Labels) != 1 {

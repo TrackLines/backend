@@ -1191,7 +1191,7 @@ components:
           description: Initial ticket description.
         priority:
           type: string
-          description: Currently not applied to storage; the database defaults to medium. If supplied, the create response echoes this value.
+          description: Defaults to medium.
           enum: [low, medium, high, urgent]
         labels: { $ref: '#/components/schemas/Labels' }
     CreateBacklogTicket:
@@ -1207,6 +1207,10 @@ components:
           minLength: 1
         description:
           type: string
+        priority:
+          type: string
+          enum: [low, medium, high, urgent]
+          default: medium
         labels: { $ref: '#/components/schemas/Labels' }
     Project:
       type: object
