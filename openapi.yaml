@@ -473,6 +473,57 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /tickets/{ticketId}/labels:
+    put:
+      tags: [Tickets]
+      operationId: setTicketLabels
+      summary: Replace a ticket's labels
+      parameters:
+        - $ref: '#/components/parameters/TicketId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [labels]
+              properties:
+                labels: { $ref: '#/components/schemas/Labels' }
+      responses:
+        '200':
+          description: Normalised labels as stored.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  labels: { type: array, items: { type: string } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /projects/{projectId}/labels:
+    get:
+      tags: [Projects]
+      operationId: listProjectLabels
+      summary: Labels in use in a project, most used first
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      responses:
+        '200':
+          description: Labels with ticket counts.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    label: { type: string }
+                    count: { type: integer }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /assignees:
     get:
       tags: [Tickets]
@@ -1062,6 +1113,11 @@ components:
       required: [name]
       properties:
         name: { type: string, minLength: 1 }
+    Labels:
+      type: array
+      maxItems: 20
+      items: { type: string, maxLength: 50 }
+      description: Free-form labels. Trimmed; blanks and case-insensitive duplicates dropped (first spelling wins). Omit to leave unchanged; [] clears.
     TicketInput:
       type: object
       required: [title]
@@ -1076,6 +1132,7 @@ components:
           type: string
           enum: [low, medium, high, urgent]
           default: medium
+        labels: { $ref: '#/components/schemas/Labels' }
     CreateBugfixTicket:
       type: object
       required: [board_id, column_id, title]
@@ -1096,6 +1153,7 @@ components:
           type: string
           description: Currently not applied to storage; the database defaults to medium. If supplied, the create response echoes this value.
           enum: [low, medium, high, urgent]
+        labels: { $ref: '#/components/schemas/Labels' }
     CreateBacklogTicket:
       type: object
       required: [title]
@@ -1109,6 +1167,7 @@ components:
           minLength: 1
         description:
           type: string
+        labels: { $ref: '#/components/schemas/Labels' }
     Project:
       type: object
       required: [id, name, description, created_at, updated_at]
@@ -1136,7 +1195,7 @@ components:
         updated_at: { type: string, format: date-time }
     Ticket:
       type: object
-      description: Custom labels are not currently supported. Agent origin is recorded in created_by and rendered in the ticket UI; assignment is shown in assigned_to.
+      description: Agent origin is recorded in created_by and rendered in the ticket UI; assignment is shown in assigned_to.
       required: [id, project_id, column_id, title, description, created_by, type, priority, position, blocked]
       properties:
         id: { type: string, format: uuid }
@@ -1151,6 +1210,7 @@ components:
         priority: { type: string, enum: [low, medium, high, urgent] }
         position: { type: integer }
         blocked: { type: boolean }
+        labels: { type: array, items: { type: string }, description: 'Free-form labels, sorted case-insensitively.' }
     Column:
       type: object
       properties:
