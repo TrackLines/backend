@@ -526,8 +526,16 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [tickets, counts]
+                required: [tickets, counts, labels]
                 properties:
+                  labels:
+                    type: array
+                    description: Labels in the whole backlog (no filters applied), most used first, for a label filter.
+                    items:
+                      type: object
+                      properties:
+                        label: { type: string }
+                        count: { type: integer }
                   tickets:
                     type: array
                     items: { $ref: '#/components/schemas/Ticket' }

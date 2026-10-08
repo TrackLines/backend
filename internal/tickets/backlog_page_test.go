@@ -73,6 +73,11 @@ func TestPageBacklog(t *testing.T) {
 	if !slices.Equal(titles(p1), []string{"bug1", "feature2"}) || p1.Counts["all"] != 5 || p1.Counts["bug"] != 3 || p1.Counts["feature"] != 1 || p1.Counts["task"] != 1 {
 		t.Fatalf("page 1: %v %v", titles(p1), p1.Counts)
 	}
+	// labels: whole backlog, merged case-insensitively (UI + ui), board-only labels excluded
+	_ = s.SetLabels(ctx, "bp1", blocker.ID, []string{"board-only"})
+	if bl, _ := s.PageBacklog(ctx, "bp1", pid, "task", []string{"nope"}, 1, 2); len(bl.Labels) != 1 || bl.Labels[0].Count != 2 {
+		t.Fatalf("labels: %+v", bl.Labels)
+	}
 	if p3, _ := s.PageBacklog(ctx, "bp1", pid, "", nil, 3, 2); !slices.Equal(titles(p3), []string{"bug0"}) { // blocked sorts last
 		t.Fatalf("page 3: %v", titles(p3))
 	}

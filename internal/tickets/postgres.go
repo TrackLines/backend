@@ -109,6 +109,7 @@ func (s Store) Backlog(ctx context.Context, owner, projectID, typ string) ([]Tic
 type BacklogPage struct {
 	Tickets []Ticket       `json:"tickets"`
 	Counts  map[string]int `json:"counts"` // all, bug, feature, task: label filter applied, type filter not
+	Labels  []LabelCount   `json:"labels"` // labels in the whole backlog (no filters), for the label filter
 }
 
 const MaxPerPage = 100
@@ -143,6 +144,21 @@ func (s Store) PageBacklog(ctx context.Context, owner, projectID, typ string, la
 		return nil
 	}); err != nil {
 		return nil, err
+	}
+
+	rows, err = s.DB.Query(ctx, `SELECT min(l.label), count(*) FROM ticket_labels l JOIN tickets t ON t.id = l.ticket_id
+		WHERE t.project_id = $1 AND t.board_id IS NULL GROUP BY lower(l.label) ORDER BY count(*) DESC, lower(min(l.label))`, projectID)
+	if err != nil {
+		return nil, err
+	}
+	if out.Labels, err = pgx.CollectRows(rows, func(row pgx.CollectableRow) (LabelCount, error) {
+		var c LabelCount
+		return c, row.Scan(&c.Label, &c.Count)
+	}); err != nil {
+		return nil, err
+	}
+	if out.Labels == nil {
+		out.Labels = []LabelCount{}
 	}
 
 	rows, err = s.DB.Query(ctx, `SELECT `+boards.TicketCols+` FROM tickets t
