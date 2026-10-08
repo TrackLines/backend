@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/bugfixes/go-bugfixes/logs"
+	bm "github.com/bugfixes/go-bugfixes/middleware"
 	goFlags "github.com/flags-gg/go-flags"
 	"github.com/jackc/pgx/v5/pgxpool"
 	ConfigBuilder "github.com/keloran/go-config"
@@ -21,7 +22,6 @@ import (
 	"github.com/tracklines/backend/internal/columns"
 	"github.com/tracklines/backend/internal/comments"
 	"github.com/tracklines/backend/internal/config"
-	"github.com/tracklines/backend/internal/middleware"
 	"github.com/tracklines/backend/internal/projects"
 	"github.com/tracklines/backend/internal/roadmaps"
 	"github.com/tracklines/backend/internal/sprints"
@@ -141,10 +141,12 @@ func (s *Service) Start() error {
 
 	// Every request: API key (tl_…) or bf_ key or optional Clerk auth + users row for signed-in callers, then
 	// recovery/request id/logging (bugfixes) and CORS.
-	handler := apikeys.Middleware(s.DB)(bugfixesTickets.Middleware(s.DB)(auth.Optional(users.Ensure(s.DB)(middleware.Wrap(middleware.CORS([]string{
-		"http://localhost:3000",
-		"https://tracklin.es",
-	})(mux))))))
+	cors := bm.NewMiddleware()
+	cors.AddAllowedOrigins("http://localhost:3000", "https://tracklin.es")
+	cors.AddAllowedMethods(http.MethodGet, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete, http.MethodOptions)
+	cors.AddAllowedHeaders("Authorization", "X-Requested-With") // Accept, Content-Type are library defaults
+	handler := apikeys.Middleware(s.DB)(bugfixesTickets.Middleware(s.DB)(auth.Optional(users.Ensure(s.DB)(
+		bm.Recoverer(bm.RequestID(bm.Logger(cors.CORS(mux))))))))
 	// overdue sprints close themselves (manual close is POST /api/sprints/{id}/close)
 	go sprints.Store{DB: s.DB}.RunAutoClose(context.Background(), time.Minute)
 	return s.serve(handler)
