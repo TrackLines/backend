@@ -502,6 +502,46 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /projects/{projectId}/backlog/page:
+    get:
+      tags: [Tickets]
+      operationId: pageBacklog
+      summary: One page of the backlog, filtered and ordered by the server
+      description: Ready tickets first, then blocked ones; then by position. `counts` are per type with the label filter applied but not the type filter, for type tabs. The unpaged list stays at /projects/{projectId}/backlog.
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - { name: type, in: query, schema: { type: string, enum: [bug, feature, task] } }
+        - name: label
+          in: query
+          description: Repeatable; a ticket matches if it has any of them (case-insensitive).
+          schema: { type: array, items: { type: string } }
+          style: form
+          explode: true
+        - { name: page, in: query, schema: { type: integer, minimum: 1, default: 1 } }
+        - { name: per_page, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 25 } }
+      responses:
+        '200':
+          description: The page and per-type counts.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [tickets, counts]
+                properties:
+                  tickets:
+                    type: array
+                    items: { $ref: '#/components/schemas/Ticket' }
+                  counts:
+                    type: object
+                    properties:
+                      all: { type: integer }
+                      bug: { type: integer }
+                      feature: { type: integer }
+                      task: { type: integer }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /projects/{projectId}/labels:
     get:
       tags: [Projects]

@@ -102,6 +102,7 @@ func (s *Service) Start() error {
 
 	// Backlog — project tickets not on any board/sprint yet (e.g. triaged bugs)
 	mux.Handle("GET /api/projects/{id}/backlog", signedIn(t.Backlog))
+	mux.Handle("GET /api/projects/{id}/backlog/page", signedIn(t.PageBacklog)) // paged + filtered, for the project page
 	mux.Handle("POST /api/projects/{id}/backlog", signedIn(t.CreateBacklog))
 	mux.Handle("GET /api/projects/{id}/labels", signedIn(t.ProjectLabels)) // labels in use, for suggestions
 

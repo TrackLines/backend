@@ -3,6 +3,7 @@ package tickets
 import (
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/bugfixes/go-bugfixes/logs"
@@ -155,6 +156,43 @@ func (h System) Backlog(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.JSON(w, http.StatusOK, out)
+}
+
+// PageBacklog: GET /api/projects/{id}/backlog/page?type=&label=a&label=b&page=1&per_page=25.
+func (h System) PageBacklog(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	page, ok := intParam(w, q.Get("page"), "page", 1, 0)
+	if !ok {
+		return
+	}
+	perPage, ok := intParam(w, q.Get("per_page"), "per_page", 25, MaxPerPage)
+	if !ok {
+		return
+	}
+	user, _ := auth.UserID(r.Context())
+	out, err := h.store.PageBacklog(r.Context(), user, r.PathValue("id"), q.Get("type"), q["label"], page, perPage)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, out)
+}
+
+// intParam parses an optional positive query int (def when empty, max 0 = unbounded); writes a 400 if bad.
+func intParam(w http.ResponseWriter, raw, name string, def, max int) (int, bool) {
+	if raw == "" {
+		return def, true
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 1 || (max > 0 && n > max) {
+		msg := name + " must be a positive integer"
+		if max > 0 {
+			msg += " up to " + strconv.Itoa(max)
+		}
+		http.Error(w, msg, http.StatusBadRequest)
+		return 0, false
+	}
+	return n, true
 }
 
 // CreateBacklog adds a ticket to project {id}'s backlog.

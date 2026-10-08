@@ -3,6 +3,7 @@ package tickets
 import (
 	"context"
 	"errors"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -102,6 +103,62 @@ func (s Store) Backlog(ctx context.Context, owner, projectID, typ string) ([]Tic
 		out = []Ticket{}
 	}
 	return out, err
+}
+
+// BacklogPage is one page of a project's backlog plus how many tickets match each type tab.
+type BacklogPage struct {
+	Tickets []Ticket       `json:"tickets"`
+	Counts  map[string]int `json:"counts"` // all, bug, feature, task: label filter applied, type filter not
+}
+
+const MaxPerPage = 100
+
+// PageBacklog returns page (1-based) of the backlog filtered by typ ("" = all) and labels (any match,
+// case-insensitive), ready tickets before blocked ones. Backlog stays the unpaged list.
+func (s Store) PageBacklog(ctx context.Context, owner, projectID, typ string, labels []string, page, perPage int) (*BacklogPage, error) {
+	if typ != "" && !ValidType(typ) {
+		return nil, ErrInvalidType
+	}
+	var ok bool
+	if err := s.DB.QueryRow(ctx, `SELECT true FROM projects WHERE id = $1 AND owner_clerk_id = $2`, projectID, owner).Scan(&ok); err != nil {
+		return nil, notFound(err)
+	}
+	lower := make([]string, len(labels))
+	for i, l := range labels {
+		lower[i] = strings.ToLower(l)
+	}
+	const where = `t.project_id = $1 AND t.board_id IS NULL AND (cardinality($2::text[]) = 0 OR EXISTS (
+		SELECT 1 FROM ticket_labels l WHERE l.ticket_id = t.id AND lower(l.label) = ANY($2)))`
+
+	out := &BacklogPage{Counts: map[string]int{"all": 0, "bug": 0, "feature": 0, "task": 0}}
+	rows, err := s.DB.Query(ctx, `SELECT t.type::text, count(*) FROM tickets t WHERE `+where+` GROUP BY 1`, projectID, lower)
+	if err != nil {
+		return nil, err
+	}
+	var typed string
+	var n int
+	if _, err := pgx.ForEachRow(rows, []any{&typed, &n}, func() error {
+		out.Counts[typed] = n
+		out.Counts["all"] += n
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+
+	rows, err = s.DB.Query(ctx, `SELECT `+boards.TicketCols+` FROM tickets t
+		WHERE `+where+` AND ($3 = '' OR t.type::text = $3)
+		ORDER BY `+boards.TicketBlockedSQL+`, t.position, t.created_at LIMIT $4 OFFSET $5`,
+		projectID, lower, typ, perPage, (page-1)*perPage)
+	if err != nil {
+		return nil, err
+	}
+	if out.Tickets, err = pgx.CollectRows(rows, func(row pgx.CollectableRow) (Ticket, error) { return boards.ScanTicket(row) }); err != nil {
+		return nil, err
+	}
+	if out.Tickets == nil {
+		out.Tickets = []Ticket{}
+	}
+	return out, nil
 }
 
 // Update edits a ticket; typ "" keeps the current type; priority "" keeps the current priority.
