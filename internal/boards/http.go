@@ -41,8 +41,8 @@ func (h System) Create(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "name is required", http.StatusBadRequest)
 		return
 	}
-	user, _ := auth.UserID(r.Context())
-	b, err := h.store.Create(r.Context(), user, r.PathValue("id"), in.Name, in.Description)
+	org := auth.OrgID(r.Context())
+	b, err := h.store.Create(r.Context(), org, r.PathValue("id"), in.Name, in.Description)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -51,8 +51,8 @@ func (h System) Create(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h System) Get(w http.ResponseWriter, r *http.Request) {
-	user, _ := auth.UserID(r.Context())
-	b, err := h.store.Get(r.Context(), r.PathValue("id"), user)
+	org := auth.OrgID(r.Context())
+	b, err := h.store.Get(r.Context(), r.PathValue("id"), org)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -61,8 +61,8 @@ func (h System) Get(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h System) Delete(w http.ResponseWriter, r *http.Request) {
-	user, _ := auth.UserID(r.Context())
-	if err := h.store.Delete(r.Context(), r.PathValue("id"), user); err != nil {
+	org := auth.OrgID(r.Context())
+	if err := h.store.Delete(r.Context(), r.PathValue("id"), org); err != nil {
 		writeErr(w, err)
 		return
 	}

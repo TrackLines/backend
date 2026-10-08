@@ -37,6 +37,7 @@ func TestItemTickets(t *testing.T) {
 	}
 	defer db.Close()
 	if _, err := db.Exec(ctx, `DELETE FROM users WHERE clerk_id IN ('rl1', 'rl2');
+		DELETE FROM roadmaps WHERE owner_clerk_id IN ('rl1', 'rl2'); DELETE FROM boards WHERE owner_clerk_id IN ('rl1', 'rl2'); DELETE FROM projects WHERE owner_clerk_id IN ('rl1', 'rl2'); -- org-owned rows no longer cascade from users
 		INSERT INTO users (clerk_id, email) VALUES ('rl1', 'a@b.c'), ('rl2', 'd@e.f')`); err != nil {
 		t.Fatal(err)
 	}

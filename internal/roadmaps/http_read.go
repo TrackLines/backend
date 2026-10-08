@@ -29,11 +29,11 @@ func writeErr(w http.ResponseWriter, err error) {
 	}
 }
 
-// canRead: public → anyone, login_only → any signed-in user, team → owner only (team members are post-v1).
+// canRead: public → anyone, login_only → any signed-in user, team → members of the owning org (org).
 // Returns 0 when allowed, else the status to send.
-func canRead(r *Roadmap, user string, signedIn bool) int {
+func canRead(r *Roadmap, org string, signedIn bool) int {
 	switch {
-	case r.Visibility == Public, r.OwnerClerkID == user && signedIn:
+	case r.Visibility == Public, org != "" && r.OwnerClerkID == org && signedIn:
 		return 0
 	case !signedIn:
 		return http.StatusUnauthorized
@@ -50,12 +50,13 @@ func (h System) Get(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	user, ok := auth.UserID(r.Context())
-	if status := canRead(rm, user, ok); status != 0 {
+	_, ok := auth.UserID(r.Context())
+	org := auth.OrgID(r.Context())
+	if status := canRead(rm, org, ok); status != 0 {
 		http.Error(w, http.StatusText(status), status)
 		return
 	}
-	if !ok || rm.OwnerClerkID != user {
+	if !ok || rm.OwnerClerkID != org {
 		redactTickets(rm) // public/login-only readers see progress counts, never ticket titles or ids
 	}
 	httpx.JSON(w, http.StatusOK, rm)
@@ -64,8 +65,7 @@ func (h System) Get(w http.ResponseWriter, r *http.Request) {
 // list returns the caller's own roadmaps. Public roadmaps are deliberately never listed:
 // they're reachable only via their shared /r/<id> link.
 func (h System) List(w http.ResponseWriter, r *http.Request) {
-	user, _ := auth.UserID(r.Context())
-	out, err := h.store.ListByOwner(r.Context(), user)
+	out, err := h.store.ListByOwner(r.Context(), auth.OrgID(r.Context()))
 	if err != nil {
 		writeErr(w, err)
 		return

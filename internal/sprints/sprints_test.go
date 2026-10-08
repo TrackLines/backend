@@ -34,6 +34,7 @@ func TestSprints(t *testing.T) {
 	}
 	defer db.Close()
 	if _, err := db.Exec(ctx, `DELETE FROM users WHERE clerk_id IN ('s1', 's2');
+		DELETE FROM roadmaps WHERE owner_clerk_id IN ('s1', 's2'); DELETE FROM boards WHERE owner_clerk_id IN ('s1', 's2'); DELETE FROM projects WHERE owner_clerk_id IN ('s1', 's2'); -- org-owned rows no longer cascade from users
 		INSERT INTO users (clerk_id, email) VALUES ('s1', 'a@b.c'), ('s2', 'd@e.f')`); err != nil {
 		t.Fatal(err)
 	}

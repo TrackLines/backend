@@ -44,8 +44,8 @@ func (h System) Create(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "name is required", http.StatusBadRequest)
 		return
 	}
-	user, _ := auth.UserID(r.Context())
-	col, err := h.store.Create(r.Context(), user, r.PathValue("boardID"), in.Name)
+	org := auth.OrgID(r.Context())
+	col, err := h.store.Create(r.Context(), org, r.PathValue("boardID"), in.Name)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -65,8 +65,8 @@ func (h System) Rename(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "name is required", http.StatusBadRequest)
 		return
 	}
-	user, _ := auth.UserID(r.Context())
-	if err := h.store.Rename(r.Context(), user, r.PathValue("id"), in.Name); err != nil {
+	org := auth.OrgID(r.Context())
+	if err := h.store.Rename(r.Context(), org, r.PathValue("id"), in.Name); err != nil {
 		writeErr(w, err)
 		return
 	}
@@ -74,8 +74,8 @@ func (h System) Rename(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h System) Delete(w http.ResponseWriter, r *http.Request) {
-	user, _ := auth.UserID(r.Context())
-	if err := h.store.Delete(r.Context(), user, r.PathValue("id")); err != nil {
+	org := auth.OrgID(r.Context())
+	if err := h.store.Delete(r.Context(), org, r.PathValue("id")); err != nil {
 		writeErr(w, err)
 		return
 	}
@@ -89,8 +89,8 @@ func (h System) Reorder(w http.ResponseWriter, r *http.Request) {
 	if !httpx.Decode(w, r, &in) {
 		return
 	}
-	user, _ := auth.UserID(r.Context())
-	if err := h.store.Reorder(r.Context(), user, r.PathValue("boardID"), in.ColumnIDs); err != nil {
+	org := auth.OrgID(r.Context())
+	if err := h.store.Reorder(r.Context(), org, r.PathValue("boardID"), in.ColumnIDs); err != nil {
 		writeErr(w, err)
 		return
 	}

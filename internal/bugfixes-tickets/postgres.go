@@ -32,16 +32,15 @@ type Store struct{ DB *pgxpool.Pool }
 
 // Owner resolves a bugfixes key to its owner + name, stamping last_used_at.
 // Lookup is by sha256 hash (same pattern as apikeys.Owner).
-func (s Store) Owner(ctx context.Context, plain string) (string, string, string, error) {
+func (s Store) Owner(ctx context.Context, plain string) (owner, org, name, kind string, err error) {
 	h := sha256.Sum256([]byte(plain))
-	var owner, name, kind string
-	err := s.DB.QueryRow(ctx, `
+	err = s.DB.QueryRow(ctx, `
 		UPDATE api_keys SET last_used_at = now()
 		WHERE hash = $1 AND revoked_at IS NULL
-		RETURNING owner_clerk_id, name, kind
-	`, h[:]).Scan(&owner, &name, &kind)
+		RETURNING owner_clerk_id, COALESCE(org_id, ''), name, kind
+	`, h[:]).Scan(&owner, &org, &name, &kind)
 	if err != nil {
-		return "", "", "", ErrNotFound
+		return "", "", "", "", ErrNotFound
 	}
-	return owner, name, kind, nil
+	return owner, org, name, kind, nil
 }

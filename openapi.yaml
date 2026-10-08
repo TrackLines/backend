@@ -9,9 +9,12 @@ info:
     board ticket by moving it to the board's last (Done) column.
 
     Most private endpoints accept a Clerk session token or a TrackLines (`tl_…`)
-    or BugFixes (`bf_…`) agent API key as a Bearer token. Agent keys act as
-    their owner's identity and attribute writes to the key's name. API-key
-    management requires a Clerk session. Stripe webhooks use Stripe-Signature.
+    or BugFixes (`bf_…`) agent API key as a Bearer token. Projects, boards and
+    roadmaps belong to a Clerk organization: a session sees its active
+    organization's data, and a request without an active organization gets
+    403. API keys act inside the organization they were created in, as their
+    creator, and attribute writes to the key's name. API-key management
+    requires a Clerk session. Stripe webhooks use Stripe-Signature.
     IDs are UUIDs. Error responses are plain-text messages.
 servers:
   - url: https://api.tracklin.es/api

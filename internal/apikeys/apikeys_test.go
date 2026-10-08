@@ -36,12 +36,13 @@ func TestKeys(t *testing.T) {
 	}
 	defer db.Close()
 	if _, err := db.Exec(ctx, `DELETE FROM users WHERE clerk_id IN ('k1', 'k2');
+		DELETE FROM roadmaps WHERE owner_clerk_id IN ('k1', 'k2'); DELETE FROM boards WHERE owner_clerk_id IN ('k1', 'k2'); DELETE FROM projects WHERE owner_clerk_id IN ('k1', 'k2'); -- org-owned rows no longer cascade from users
 		INSERT INTO users (clerk_id, email) VALUES ('k1', 'a@b.c'), ('k2', 'd@e.f')`); err != nil {
 		t.Fatal(err)
 	}
 	s := Store{DB: db}
 
-	plain, k, err := s.Create(ctx, "k1", "codex", KindAI)
+	plain, k, err := s.Create(ctx, "k1", "o1", "codex", KindAI)
 	if err != nil || !strings.HasPrefix(plain, Prefix) || len(plain) < 40 || k.Prefix != plain[:10] || k.Kind != KindAI {
 		t.Fatalf("create: %q %+v %v", plain, k, err)
 	}
@@ -86,7 +87,7 @@ func TestKeys(t *testing.T) {
 		t.Fatalf("key managing keys: %d, want 403", code)
 	}
 
-	if list, _ := s.List(ctx, "k1"); len(list) != 1 || list[0].Name != "codex" || list[0].Kind != KindAI {
+	if list, _ := s.List(ctx, "k1", "o1"); len(list) != 1 || list[0].Name != "codex" || list[0].Kind != KindAI {
 		t.Fatalf("list: %+v", list)
 	}
 	if err := s.Revoke(ctx, k.ID, "k2"); !errors.Is(err, ErrNotFound) {
@@ -98,7 +99,7 @@ func TestKeys(t *testing.T) {
 	if code := call(h, "Bearer "+plain); code != http.StatusUnauthorized {
 		t.Fatalf("revoked key: %d", code)
 	}
-	if list, _ := s.List(ctx, "k1"); len(list) != 0 {
+	if list, _ := s.List(ctx, "k1", "o1"); len(list) != 0 {
 		t.Fatalf("revoked key still listed: %+v", list)
 	}
 }

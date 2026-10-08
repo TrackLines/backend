@@ -29,8 +29,8 @@ func writeErr(w http.ResponseWriter, err error) {
 
 // List returns ticket {id}'s conversation, oldest first.
 func (h System) List(w http.ResponseWriter, r *http.Request) {
-	user, _ := auth.UserID(r.Context())
-	out, err := h.store.List(r.Context(), user, r.PathValue("id"))
+	org := auth.OrgID(r.Context())
+	out, err := h.store.List(r.Context(), org, r.PathValue("id"))
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -47,8 +47,8 @@ func (h System) Create(w http.ResponseWriter, r *http.Request) {
 	if !httpx.Decode(w, r, &in) {
 		return
 	}
-	user, _ := auth.UserID(r.Context())
-	c, err := h.store.Create(r.Context(), user, auth.ActorID(r.Context()), r.PathValue("id"), in.Body, in.ParentID)
+	org := auth.OrgID(r.Context())
+	c, err := h.store.Create(r.Context(), org, auth.ActorID(r.Context()), r.PathValue("id"), in.Body, in.ParentID)
 	if err != nil {
 		writeErr(w, err)
 		return

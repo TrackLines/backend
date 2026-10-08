@@ -39,10 +39,11 @@ func TestCreate(t *testing.T) {
 	key := "bf_test_key_for_create"
 	h := sha256.Sum256([]byte(key))
 	if _, err := db.Exec(ctx, `DELETE FROM users WHERE clerk_id IN ('bf1', 'bf2');
+		DELETE FROM roadmaps WHERE owner_clerk_id IN ('bf1', 'bf2'); DELETE FROM boards WHERE owner_clerk_id IN ('bf1', 'bf2'); DELETE FROM projects WHERE owner_clerk_id IN ('bf1', 'bf2'); -- org-owned rows no longer cascade from users
 		INSERT INTO users (clerk_id, email) VALUES ('bf1', 'a@b.c'), ('bf2', 'd@e.f')`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec(ctx, `INSERT INTO api_keys (owner_clerk_id, name, prefix, hash) VALUES ('bf1', 'bugfixes', 'bf_test', $1)`, h[:]); err != nil {
+	if _, err := db.Exec(ctx, `INSERT INTO api_keys (owner_clerk_id, org_id, name, prefix, hash) VALUES ('bf1', 'bf1', 'bugfixes', 'bf_test', $1)`, h[:]); err != nil {
 		t.Fatal(err)
 	}
 	board := func(owner string) (string, string) {

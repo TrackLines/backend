@@ -36,7 +36,7 @@ func Middleware(db *pgxpool.Pool) func(http.Handler) http.Handler {
 				next.ServeHTTP(w, r)
 				return
 			}
-			owner, name, kind, err := s.Owner(r.Context(), key)
+			owner, org, name, kind, err := s.Owner(r.Context(), key)
 			if err != nil {
 				if !errors.Is(err, ErrNotFound) {
 					logs.Errorf("bugfixes-tickets: key lookup: %v", err)
@@ -44,7 +44,7 @@ func Middleware(db *pgxpool.Pool) func(http.Handler) http.Handler {
 				http.Error(w, "invalid bugfixes api key", http.StatusUnauthorized)
 				return
 			}
-			next.ServeHTTP(w, r.WithContext(auth.WithAPIKeyUser(r.Context(), owner, name, kind)))
+			next.ServeHTTP(w, r.WithContext(auth.WithAPIKey(r.Context(), owner, org, name, kind)))
 		})
 	}
 }
@@ -77,7 +77,7 @@ func (h System) Create(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	owner, _ := auth.UserID(r.Context())
+	owner := auth.OrgID(r.Context()) // the key's org owns the board
 	agent := auth.ActorID(r.Context())
 	if owner == "" || agent == "" {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)

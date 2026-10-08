@@ -75,6 +75,7 @@ func TestStore(t *testing.T) {
 	}
 	defer db.Close()
 	if _, err := db.Exec(ctx, `DELETE FROM users WHERE clerk_id IN ('a1', 'a2');
+		DELETE FROM roadmaps WHERE owner_clerk_id IN ('a1', 'a2'); DELETE FROM boards WHERE owner_clerk_id IN ('a1', 'a2'); DELETE FROM projects WHERE owner_clerk_id IN ('a1', 'a2'); -- org-owned rows no longer cascade from users
 		INSERT INTO users (clerk_id, email) VALUES ('a1', 'a@b.c'), ('a2', 'd@e.f')`); err != nil {
 		t.Fatal(err)
 	}
@@ -135,7 +136,7 @@ func TestDoneLock(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	if _, err := db.Exec(ctx, `DELETE FROM users WHERE clerk_id = 'd1'; INSERT INTO users (clerk_id, email) VALUES ('d1', 'a@b.c')`); err != nil {
+	if _, err := db.Exec(ctx, `DELETE FROM users WHERE clerk_id = 'd1'; DELETE FROM projects WHERE owner_clerk_id = 'd1'; DELETE FROM boards WHERE owner_clerk_id = 'd1'; INSERT INTO users (clerk_id, email) VALUES ('d1', 'a@b.c')`); err != nil {
 		t.Fatal(err)
 	}
 	var pid, bid, todo, done, ticket string

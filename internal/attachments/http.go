@@ -36,8 +36,8 @@ func writeErr(w http.ResponseWriter, err error) {
 
 // List returns ticket {id}'s attachments.
 func (h System) List(w http.ResponseWriter, r *http.Request) {
-	user, _ := auth.UserID(r.Context())
-	out, err := h.store.List(r.Context(), user, r.PathValue("id"))
+	org := auth.OrgID(r.Context())
+	out, err := h.store.List(r.Context(), org, r.PathValue("id"))
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -51,8 +51,8 @@ func (h System) Create(w http.ResponseWriter, r *http.Request) {
 	if !httpx.Decode(w, r, &in) {
 		return
 	}
-	user, _ := auth.UserID(r.Context())
-	a, err := h.store.Create(r.Context(), user, auth.ActorID(r.Context()), r.PathValue("id"), in)
+	org := auth.OrgID(r.Context())
+	a, err := h.store.Create(r.Context(), org, auth.ActorID(r.Context()), r.PathValue("id"), in)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -63,8 +63,8 @@ func (h System) Create(w http.ResponseWriter, r *http.Request) {
 // Delete removes attachment {id} and its file on UploadThing. The record goes first; a failed
 // storage delete is logged (orphaned file) rather than leaving a dangling attachment.
 func (h System) Delete(w http.ResponseWriter, r *http.Request) {
-	user, _ := auth.UserID(r.Context())
-	key, err := h.store.Delete(r.Context(), user, r.PathValue("id"))
+	org := auth.OrgID(r.Context())
+	key, err := h.store.Delete(r.Context(), org, r.PathValue("id"))
 	if err != nil {
 		writeErr(w, err)
 		return

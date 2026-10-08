@@ -49,14 +49,14 @@ func scan(row pgx.Row) (Key, error) {
 }
 
 // Create mints a key for owner. The plaintext is returned once and never stored.
-func (s Store) Create(ctx context.Context, owner, name, kind string) (string, *Key, error) {
+func (s Store) Create(ctx context.Context, owner, org, name, kind string) (string, *Key, error) {
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {
 		return "", nil, err
 	}
 	plain := Prefix + base64.RawURLEncoding.EncodeToString(b)
-	k, err := scan(s.DB.QueryRow(ctx, `INSERT INTO api_keys (owner_clerk_id, name, kind, prefix, hash)
-		VALUES ($1, $2, $3, $4, $5) RETURNING `+cols, owner, name, kind, plain[:10], hash(plain)))
+	k, err := scan(s.DB.QueryRow(ctx, `INSERT INTO api_keys (owner_clerk_id, org_id, name, kind, prefix, hash)
+		VALUES ($1, $2, $3, $4, $5, $6) RETURNING `+cols, owner, org, name, kind, plain[:10], hash(plain)))
 	if err != nil {
 		return "", nil, err
 	}
@@ -64,9 +64,10 @@ func (s Store) Create(ctx context.Context, owner, name, kind string) (string, *K
 }
 
 // List returns the owner's active keys.
-func (s Store) List(ctx context.Context, owner string) ([]Key, error) {
+// List is owner's live keys in org (the org they act in).
+func (s Store) List(ctx context.Context, owner, org string) ([]Key, error) {
 	rows, err := s.DB.Query(ctx, `SELECT `+cols+` FROM api_keys
-		WHERE owner_clerk_id = $1 AND revoked_at IS NULL ORDER BY created_at`, owner)
+		WHERE owner_clerk_id = $1 AND org_id = $2 AND revoked_at IS NULL ORDER BY created_at`, owner, org)
 	if err != nil {
 		return nil, err
 	}
@@ -95,12 +96,12 @@ func (s Store) Revoke(ctx context.Context, id, owner string) error {
 
 // Owner resolves an active key to its owner and stamps last_used_at.
 // ponytail: one UPDATE per API request; batch the stamp if key traffic ever gets heavy.
-func (s Store) Owner(ctx context.Context, plain string) (string, string, string, error) {
-	var owner, name, kind string
-	err := s.DB.QueryRow(ctx, `UPDATE api_keys SET last_used_at = now()
-		WHERE hash = $1 AND revoked_at IS NULL RETURNING owner_clerk_id, name, kind`, hash(plain)).Scan(&owner, &name, &kind)
+// Owner looks up a live key: its owner, the org it acts in ("" for pre-org keys), name and kind.
+func (s Store) Owner(ctx context.Context, plain string) (owner, org, name, kind string, err error) {
+	err = s.DB.QueryRow(ctx, `UPDATE api_keys SET last_used_at = now()
+		WHERE hash = $1 AND revoked_at IS NULL RETURNING owner_clerk_id, COALESCE(org_id, ''), name, kind`, hash(plain)).Scan(&owner, &org, &name, &kind)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return "", "", "", ErrNotFound
+		return "", "", "", "", ErrNotFound
 	}
-	return owner, name, kind, err
+	return owner, org, name, kind, err
 }

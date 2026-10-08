@@ -103,13 +103,13 @@ func (h System) Create(w http.ResponseWriter, r *http.Request) {
 	if !httpx.Decode(w, r, &in) || !in.valid(w) {
 		return
 	}
-	user, _ := auth.UserID(r.Context())
-	t, err := h.store.CreateAs(r.Context(), user, auth.ActorID(r.Context()), r.PathValue("id"), in.createType(), in.Title, in.Description)
+	org := auth.OrgID(r.Context())
+	t, err := h.store.CreateAs(r.Context(), org, auth.ActorID(r.Context()), r.PathValue("id"), in.createType(), in.Title, in.Description)
 	if err == nil {
-		err = h.applyLabels(r, user, t.ID, in, t)
+		err = h.applyLabels(r, org, t.ID, in, t)
 	}
 	if err == nil {
-		err = h.applyPriority(r, user, in, t)
+		err = h.applyPriority(r, org, in, t)
 	}
 	if err != nil {
 		writeErr(w, err)
@@ -123,10 +123,10 @@ func (h System) Update(w http.ResponseWriter, r *http.Request) {
 	if !httpx.Decode(w, r, &in) || !in.valid(w) {
 		return
 	}
-	user, _ := auth.UserID(r.Context())
-	err := h.store.Update(r.Context(), user, r.PathValue("id"), in.Type, in.Title, in.Description, in.Priority)
+	org := auth.OrgID(r.Context())
+	err := h.store.Update(r.Context(), org, r.PathValue("id"), in.Type, in.Title, in.Description, in.Priority)
 	if err == nil {
-		err = h.applyLabels(r, user, r.PathValue("id"), in, nil)
+		err = h.applyLabels(r, org, r.PathValue("id"), in, nil)
 	}
 	if err != nil {
 		writeErr(w, err)
@@ -136,8 +136,8 @@ func (h System) Update(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h System) Delete(w http.ResponseWriter, r *http.Request) {
-	user, _ := auth.UserID(r.Context())
-	if err := h.store.Delete(r.Context(), user, r.PathValue("id")); err != nil {
+	org := auth.OrgID(r.Context())
+	if err := h.store.Delete(r.Context(), org, r.PathValue("id")); err != nil {
 		writeErr(w, err)
 		return
 	}
@@ -156,8 +156,8 @@ func (h System) Move(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "column_id is required", http.StatusBadRequest)
 		return
 	}
-	user, _ := auth.UserID(r.Context())
-	if err := h.store.Move(r.Context(), user, r.PathValue("id"), in.ColumnID, in.Position); err != nil {
+	org := auth.OrgID(r.Context())
+	if err := h.store.Move(r.Context(), org, r.PathValue("id"), in.ColumnID, in.Position); err != nil {
 		writeErr(w, err)
 		return
 	}
@@ -166,8 +166,8 @@ func (h System) Move(w http.ResponseWriter, r *http.Request) {
 
 // Backlog lists project {id}'s backlog (?type=bug|feature|task to filter).
 func (h System) Backlog(w http.ResponseWriter, r *http.Request) {
-	user, _ := auth.UserID(r.Context())
-	out, err := h.store.Backlog(r.Context(), user, r.PathValue("id"), r.URL.Query().Get("type"))
+	org := auth.OrgID(r.Context())
+	out, err := h.store.Backlog(r.Context(), org, r.PathValue("id"), r.URL.Query().Get("type"))
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -186,8 +186,8 @@ func (h System) PageBacklog(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	user, _ := auth.UserID(r.Context())
-	out, err := h.store.PageBacklog(r.Context(), user, r.PathValue("id"), q.Get("type"), q["label"], page, perPage)
+	org := auth.OrgID(r.Context())
+	out, err := h.store.PageBacklog(r.Context(), org, r.PathValue("id"), q.Get("type"), q["label"], page, perPage)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -218,13 +218,13 @@ func (h System) CreateBacklog(w http.ResponseWriter, r *http.Request) {
 	if !httpx.Decode(w, r, &in) || !in.valid(w) {
 		return
 	}
-	user, _ := auth.UserID(r.Context())
-	t, err := h.store.CreateBacklogAs(r.Context(), user, auth.ActorID(r.Context()), r.PathValue("id"), in.createType(), in.Title, in.Description)
+	org := auth.OrgID(r.Context())
+	t, err := h.store.CreateBacklogAs(r.Context(), org, auth.ActorID(r.Context()), r.PathValue("id"), in.createType(), in.Title, in.Description)
 	if err == nil {
-		err = h.applyLabels(r, user, t.ID, in, t)
+		err = h.applyLabels(r, org, t.ID, in, t)
 	}
 	if err == nil {
-		err = h.applyPriority(r, user, in, t)
+		err = h.applyPriority(r, org, in, t)
 	}
 	if err != nil {
 		writeErr(w, err)
@@ -240,8 +240,8 @@ func (h System) Claim(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "only AI keys can claim tickets", http.StatusForbidden)
 		return
 	}
-	user, _ := auth.UserID(r.Context())
-	t, err := h.store.Claim(r.Context(), user, auth.ActorID(r.Context()), r.PathValue("id"))
+	org := auth.OrgID(r.Context())
+	t, err := h.store.Claim(r.Context(), org, auth.ActorID(r.Context()), r.PathValue("id"))
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -255,8 +255,8 @@ func (h System) Release(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "only AI keys can release tickets", http.StatusForbidden)
 		return
 	}
-	user, _ := auth.UserID(r.Context())
-	if err := h.store.Release(r.Context(), user, auth.ActorID(r.Context()), r.PathValue("id")); err != nil {
+	org := auth.OrgID(r.Context())
+	if err := h.store.Release(r.Context(), org, auth.ActorID(r.Context()), r.PathValue("id")); err != nil {
 		writeErr(w, err)
 		return
 	}
@@ -265,8 +265,8 @@ func (h System) Release(w http.ResponseWriter, r *http.Request) {
 
 // ToBacklog sends ticket {id} back to its project's backlog.
 func (h System) ToBacklog(w http.ResponseWriter, r *http.Request) {
-	user, _ := auth.UserID(r.Context())
-	if err := h.store.ToBacklog(r.Context(), user, r.PathValue("id")); err != nil {
+	org := auth.OrgID(r.Context())
+	if err := h.store.ToBacklog(r.Context(), org, r.PathValue("id")); err != nil {
 		writeErr(w, err)
 		return
 	}
@@ -275,8 +275,8 @@ func (h System) ToBacklog(w http.ResponseWriter, r *http.Request) {
 
 // Get returns ticket {id} with its context (project, board, column, sprint) so it can be linked to.
 func (h System) Get(w http.ResponseWriter, r *http.Request) {
-	user, _ := auth.UserID(r.Context())
-	d, err := h.store.Get(r.Context(), user, r.PathValue("id"))
+	org := auth.OrgID(r.Context())
+	d, err := h.store.Get(r.Context(), org, r.PathValue("id"))
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -292,8 +292,8 @@ func (h System) SetBlockedBy(w http.ResponseWriter, r *http.Request) {
 	if !httpx.Decode(w, r, &in) {
 		return
 	}
-	user, _ := auth.UserID(r.Context())
-	if err := h.store.SetBlockedBy(r.Context(), user, r.PathValue("id"), in.TicketIDs); err != nil {
+	org := auth.OrgID(r.Context())
+	if err := h.store.SetBlockedBy(r.Context(), org, r.PathValue("id"), in.TicketIDs); err != nil {
 		writeErr(w, err)
 		return
 	}
@@ -308,8 +308,8 @@ func (h System) SetParent(w http.ResponseWriter, r *http.Request) {
 	if !httpx.Decode(w, r, &in) {
 		return
 	}
-	user, _ := auth.UserID(r.Context())
-	if err := h.store.SetParent(r.Context(), user, r.PathValue("id"), in.ParentID); err != nil {
+	org := auth.OrgID(r.Context())
+	if err := h.store.SetParent(r.Context(), org, r.PathValue("id"), in.ParentID); err != nil {
 		writeErr(w, err)
 		return
 	}

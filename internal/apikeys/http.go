@@ -29,7 +29,7 @@ func Middleware(db *pgxpool.Pool) func(http.Handler) http.Handler {
 				next.ServeHTTP(w, r)
 				return
 			}
-			owner, name, kind, err := s.Owner(r.Context(), key)
+			owner, org, name, kind, err := s.Owner(r.Context(), key)
 			if err != nil {
 				if !errors.Is(err, ErrNotFound) {
 					logs.Errorf("apikeys: lookup: %v", err)
@@ -37,14 +37,14 @@ func Middleware(db *pgxpool.Pool) func(http.Handler) http.Handler {
 				http.Error(w, "invalid api key", http.StatusUnauthorized)
 				return
 			}
-			next.ServeHTTP(w, r.WithContext(auth.WithAPIKeyUser(r.Context(), owner, name, kind)))
+			next.ServeHTTP(w, r.WithContext(auth.WithAPIKey(r.Context(), owner, org, name, kind)))
 		})
 	}
 }
 
 func (h System) List(w http.ResponseWriter, r *http.Request) {
 	user, _ := auth.UserID(r.Context())
-	out, err := h.store.List(r.Context(), user)
+	out, err := h.store.List(r.Context(), user, auth.OrgID(r.Context()))
 	if err != nil {
 		logs.Errorf("apikeys: list: %v", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -71,7 +71,7 @@ func (h System) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	user, _ := auth.UserID(r.Context())
-	plain, k, err := h.store.Create(r.Context(), user, in.Name, in.Kind)
+	plain, k, err := h.store.Create(r.Context(), user, auth.OrgID(r.Context()), in.Name, in.Kind)
 	if err != nil {
 		logs.Errorf("apikeys: create: %v", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)

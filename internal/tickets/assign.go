@@ -20,14 +20,16 @@ type Assignee struct {
 	Kind  string `json:"kind"`  // "person" or "ai"
 }
 
-// Assign lets the owner assign to themself or an active AI agent key, or clear assignment.
-func (s Store) Assign(ctx context.Context, owner, id string, assignee *string) (*Ticket, error) {
+// Assign lets user (in org) assign a ticket to themself or to one of the org's active AI agent keys,
+// or clear assignment.
+// ponytail: other org members aren't assignable yet; that needs the member list from Clerk (T-037).
+func (s Store) Assign(ctx context.Context, org, user, id string, assignee *string) (*Ticket, error) {
 	t, err := boards.ScanTicket(s.DB.QueryRow(ctx, `UPDATE tickets t SET assigned_to = $3, updated_at = now()
 		FROM projects p WHERE t.id = $1 AND p.id = t.project_id AND p.owner_clerk_id = $2
-		AND ($3::text IS NULL OR $3::text = $2 OR EXISTS (
-			SELECT 1 FROM api_keys k WHERE k.owner_clerk_id = $2 AND k.name = $3
+		AND ($3::text IS NULL OR $3::text = $4 OR EXISTS (
+			SELECT 1 FROM api_keys k WHERE k.org_id = $2 AND k.name = $3
 			AND k.kind = 'ai' AND k.revoked_at IS NULL
-		)) RETURNING `+boards.TicketCols, id, owner, assignee))
+		)) RETURNING `+boards.TicketCols, id, org, assignee, user))
 	if err == nil {
 		return &t, nil
 	}
@@ -36,21 +38,21 @@ func (s Store) Assign(ctx context.Context, owner, id string, assignee *string) (
 	}
 	var ok bool
 	if err := s.DB.QueryRow(ctx, `SELECT true FROM tickets t JOIN projects p ON p.id = t.project_id
-		WHERE t.id = $1 AND p.owner_clerk_id = $2`, id, owner).Scan(&ok); err != nil {
+		WHERE t.id = $1 AND p.owner_clerk_id = $2`, id, org).Scan(&ok); err != nil {
 		return nil, notFound(err)
 	}
 	return nil, ErrUnknownAssignee
 }
 
-// Assignees lists the owner and active AI agent keys (server/service keys are excluded).
-func (s Store) Assignees(ctx context.Context, owner string) ([]Assignee, error) {
+// Assignees lists user and org's active AI agent keys (server/service keys are excluded).
+func (s Store) Assignees(ctx context.Context, org, user string) ([]Assignee, error) {
 	rows, err := s.DB.Query(ctx, `SELECT DISTINCT name FROM api_keys
-		WHERE owner_clerk_id = $1 AND kind = 'ai' AND revoked_at IS NULL ORDER BY name`, owner)
+		WHERE org_id = $1 AND kind = 'ai' AND revoked_at IS NULL ORDER BY name`, org)
 	if err != nil {
 		return nil, err
 	}
 	names, err := pgx.CollectRows(rows, pgx.RowTo[string])
-	out := []Assignee{{ID: owner, Label: "You", Kind: "person"}}
+	out := []Assignee{{ID: user, Label: "You", Kind: "person"}}
 	for _, n := range names {
 		out = append(out, Assignee{ID: n, Label: n, Kind: "ai"})
 	}
@@ -66,7 +68,7 @@ func (h System) Assign(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	user, _ := auth.UserID(r.Context())
-	t, err := h.store.Assign(r.Context(), user, r.PathValue("id"), in.Assignee)
+	t, err := h.store.Assign(r.Context(), auth.OrgID(r.Context()), user, r.PathValue("id"), in.Assignee)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -77,7 +79,7 @@ func (h System) Assign(w http.ResponseWriter, r *http.Request) {
 // Assignees: GET /api/assignees.
 func (h System) Assignees(w http.ResponseWriter, r *http.Request) {
 	user, _ := auth.UserID(r.Context())
-	out, err := h.store.Assignees(r.Context(), user)
+	out, err := h.store.Assignees(r.Context(), auth.OrgID(r.Context()), user)
 	if err != nil {
 		writeErr(w, err)
 		return

@@ -93,8 +93,8 @@ func (h System) SetLabels(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	user, _ := auth.UserID(r.Context())
-	if err := h.store.SetLabels(r.Context(), user, r.PathValue("id"), labels); err != nil {
+	org := auth.OrgID(r.Context())
+	if err := h.store.SetLabels(r.Context(), org, r.PathValue("id"), labels); err != nil {
 		writeErr(w, err)
 		return
 	}
@@ -103,8 +103,8 @@ func (h System) SetLabels(w http.ResponseWriter, r *http.Request) {
 
 // ProjectLabels: GET /api/projects/{id}/labels.
 func (h System) ProjectLabels(w http.ResponseWriter, r *http.Request) {
-	user, _ := auth.UserID(r.Context())
-	out, err := h.store.ProjectLabels(r.Context(), user, r.PathValue("id"))
+	org := auth.OrgID(r.Context())
+	out, err := h.store.ProjectLabels(r.Context(), org, r.PathValue("id"))
 	if err != nil {
 		writeErr(w, err)
 		return

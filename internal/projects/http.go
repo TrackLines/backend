@@ -48,8 +48,8 @@ func (in *projectInput) valid(w http.ResponseWriter) bool {
 }
 
 func (h System) List(w http.ResponseWriter, r *http.Request) {
-	user, _ := auth.UserID(r.Context())
-	out, err := h.store.List(r.Context(), user)
+	org := auth.OrgID(r.Context())
+	out, err := h.store.List(r.Context(), org)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -68,7 +68,8 @@ func (h System) Create(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	p, err := h.store.Create(r.Context(), user, in.Name, in.Description, limit)
+	// ponytail: the free tier counts the org's projects but checks the creator's subscription; per-org billing later
+	p, err := h.store.Create(r.Context(), auth.OrgID(r.Context()), in.Name, in.Description, limit)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -77,8 +78,8 @@ func (h System) Create(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h System) Get(w http.ResponseWriter, r *http.Request) {
-	user, _ := auth.UserID(r.Context())
-	p, err := h.store.Get(r.Context(), r.PathValue("id"), user)
+	org := auth.OrgID(r.Context())
+	p, err := h.store.Get(r.Context(), r.PathValue("id"), org)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -91,8 +92,8 @@ func (h System) Update(w http.ResponseWriter, r *http.Request) {
 	if !httpx.Decode(w, r, &in) || !in.valid(w) {
 		return
 	}
-	user, _ := auth.UserID(r.Context())
-	if err := h.store.Update(r.Context(), r.PathValue("id"), user, in.Name, in.Description); err != nil {
+	org := auth.OrgID(r.Context())
+	if err := h.store.Update(r.Context(), r.PathValue("id"), org, in.Name, in.Description); err != nil {
 		writeErr(w, err)
 		return
 	}
@@ -100,8 +101,8 @@ func (h System) Update(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h System) Delete(w http.ResponseWriter, r *http.Request) {
-	user, _ := auth.UserID(r.Context())
-	if err := h.store.Delete(r.Context(), r.PathValue("id"), user); err != nil {
+	org := auth.OrgID(r.Context())
+	if err := h.store.Delete(r.Context(), r.PathValue("id"), org); err != nil {
 		writeErr(w, err)
 		return
 	}

@@ -39,8 +39,8 @@ func (h System) Start(w http.ResponseWriter, r *http.Request) {
 	if !httpx.Decode(w, r, &in) {
 		return
 	}
-	user, _ := auth.UserID(r.Context())
-	sp, err := h.store.Start(r.Context(), user, r.PathValue("id"), in.LengthDays)
+	org := auth.OrgID(r.Context())
+	sp, err := h.store.Start(r.Context(), org, r.PathValue("id"), in.LengthDays)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -50,8 +50,8 @@ func (h System) Start(w http.ResponseWriter, r *http.Request) {
 
 // List returns board {id}'s sprints, newest first.
 func (h System) List(w http.ResponseWriter, r *http.Request) {
-	user, _ := auth.UserID(r.Context())
-	out, err := h.store.List(r.Context(), user, r.PathValue("id"))
+	org := auth.OrgID(r.Context())
+	out, err := h.store.List(r.Context(), org, r.PathValue("id"))
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -61,8 +61,8 @@ func (h System) List(w http.ResponseWriter, r *http.Request) {
 
 // Close closes open sprint {id} and returns the next sprint it opened.
 func (h System) Close(w http.ResponseWriter, r *http.Request) {
-	user, _ := auth.UserID(r.Context())
-	next, err := h.store.Close(r.Context(), user, r.PathValue("id"))
+	org := auth.OrgID(r.Context())
+	next, err := h.store.Close(r.Context(), org, r.PathValue("id"))
 	if err != nil {
 		writeErr(w, err)
 		return
