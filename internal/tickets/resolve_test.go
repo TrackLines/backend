@@ -65,8 +65,8 @@ func TestResolve(t *testing.T) {
 	if err := s.Resolve(ctx, "rs1", solo); err != nil {
 		t.Fatal("repeat:", err)
 	}
-	if d, _ := s.Get(ctx, "rs1", solo); !d.Done || d.ResolvedAt == nil {
-		t.Fatalf("resolved detail: %+v", d)
+	if d, _ := s.Get(ctx, "rs1", solo); !d.Done || d.ResolvedAt == nil || d.DoneAt == nil || d.CreatedAt == "" || d.UpdatedAt == "" {
+		t.Fatalf("resolved detail (with dates): %+v", d)
 	}
 	if page, _ := s.PageBacklog(ctx, "rs1", pid, "", nil, 1, 100); len(page.Tickets) != 0 || page.Counts["all"] != 0 {
 		t.Fatalf("backlog still shows it: %+v", page)
@@ -124,7 +124,7 @@ func TestResolve(t *testing.T) {
 	if err := s.Move(ctx, "rs1", solo, todo, 0); err != nil {
 		t.Fatal(err)
 	}
-	if d, _ := s.Get(ctx, "rs1", solo); d.Done || d.ResolvedAt != nil {
+	if d, _ := s.Get(ctx, "rs1", solo); d.Done || d.ResolvedAt != nil || d.DoneAt != nil {
 		t.Fatalf("reopened: %+v", d)
 	}
 }

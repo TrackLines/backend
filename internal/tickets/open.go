@@ -24,6 +24,8 @@ type OpenTicket struct {
 	BoardName  *string  `json:"board_name"`
 	ColumnID   *string  `json:"column_id"`
 	ColumnName *string  `json:"column_name"`
+	CreatedAt  string   `json:"created_at"`
+	UpdatedAt  string   `json:"updated_at"`
 }
 
 // OpenFilter narrows OpenTickets: Assignee "unassigned", or an actor id for "mine"; "" = anyone.
@@ -42,7 +44,8 @@ func (s Store) OpenTickets(ctx context.Context, owner, projectID string, f OpenF
 	}
 	rows, err := s.DB.Query(ctx, `SELECT t.id, t.title, t.type::text, t.priority::text, t.estimate,
 			ARRAY(SELECT l.label FROM ticket_labels l WHERE l.ticket_id = t.id ORDER BY lower(l.label)),
-			t.assigned_to, `+boards.TicketBlockedSQL+`, t.board_id::text, b.name, t.column_id::text, c.name
+			t.assigned_to, `+boards.TicketBlockedSQL+`, t.board_id::text, b.name, t.column_id::text, c.name,
+			to_char(t.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'), to_char(t.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')
 		FROM tickets t
 		LEFT JOIN boards b ON b.id = t.board_id
 		LEFT JOIN columns c ON c.id = t.column_id
@@ -58,7 +61,7 @@ func (s Store) OpenTickets(ctx context.Context, owner, projectID string, f OpenF
 	out, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (OpenTicket, error) {
 		var t OpenTicket
 		return t, row.Scan(&t.ID, &t.Title, &t.Type, &t.Priority, &t.Estimate, &t.Labels, &t.AssignedTo, &t.Blocked,
-			&t.BoardID, &t.BoardName, &t.ColumnID, &t.ColumnName)
+			&t.BoardID, &t.BoardName, &t.ColumnID, &t.ColumnName, &t.CreatedAt, &t.UpdatedAt)
 	})
 	if out == nil {
 		out = []OpenTicket{}

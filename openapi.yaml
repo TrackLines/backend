@@ -1991,6 +1991,9 @@ components:
         blocked: { type: boolean }
         labels: { type: array, items: { type: string }, description: 'Free-form labels, sorted case-insensitively.' }
         resolved_at: { type: [string, 'null'], format: date-time, description: "Set when the ticket was resolved in the backlog (POST /tickets/{id}/resolve); it then counts as done." }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        done_at: { type: [string, 'null'], format: date-time, description: "When it reached its board's Done column or was resolved; null while open." }
     Column:
       type: object
       properties:

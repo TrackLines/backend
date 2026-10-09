@@ -67,6 +67,9 @@ func TestOpenTickets(t *testing.T) {
 	if err != nil || ids(all) != "backlog urgent, board high, backlog high, board medium" {
 		t.Fatalf("all: %s %v", ids(all), err)
 	}
+	if all[0].CreatedAt == "" || all[0].UpdatedAt == "" {
+		t.Fatalf("open tickets need dates: %+v", all[0])
+	}
 	if all[1].BoardName == nil || *all[1].BoardName != "Backend" || *all[1].ColumnName != "To do" || all[0].BoardID != nil {
 		t.Fatalf("where: %+v %+v", all[0], all[1])
 	}
