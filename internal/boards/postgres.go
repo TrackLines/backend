@@ -99,6 +99,20 @@ type Board struct {
 	UpdatedAt    string   `json:"updated_at"`
 	Sprint       *Sprint  `json:"sprint,omitempty"` // open sprint, if the board runs sprints
 	Columns      []Column `json:"columns,omitempty"`
+	Stats        *Stats   `json:"stats,omitempty"` // ListByProject only
+}
+
+// Stats summarises a board for its project page. It counts the tickets the board shows:
+// the open sprint's, or all of them if it has never run one. In progress = neither the first
+// column nor done; Urgent = open urgent tickets.
+type Stats struct {
+	Open         int     `json:"open"`
+	InProgress   int     `json:"in_progress"`
+	Done         int     `json:"done"`
+	Urgent       int     `json:"urgent"`
+	Active       string  `json:"active"` // latest ticket change, or the board's own
+	SprintNumber *int    `json:"sprint_number"`
+	SprintEndsAt *string `json:"sprint_ends_at"`
 }
 
 type Store struct{ DB *pgxpool.Pool }
@@ -152,11 +166,31 @@ func (s Store) Create(ctx context.Context, owner, projectID, name, desc string) 
 
 // ListByProject lists a project's boards (without columns); callers check ownership.
 func (s Store) ListByProject(ctx context.Context, projectID string) ([]Board, error) {
-	rows, err := s.DB.Query(ctx, `SELECT `+cols+` FROM boards WHERE project_id = $1 ORDER BY created_at`, projectID)
+	rows, err := s.DB.Query(ctx, `SELECT boards.id, boards.project_id, boards.owner_clerk_id, boards.name, boards.description,
+		to_char(boards.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
+		to_char(boards.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
+		count(t.tid) FILTER (WHERE NOT t.done),
+		count(t.tid) FILTER (WHERE NOT t.done AND t.column_id <> (
+			SELECT fc.id FROM columns fc WHERE fc.board_id = boards.id ORDER BY fc.position LIMIT 1)),
+		count(t.tid) FILTER (WHERE t.done),
+		count(t.tid) FILTER (WHERE t.priority = 'urgent' AND NOT t.done),
+		to_char(greatest(boards.updated_at, max(t.changed)) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
+		sp.number, to_char(sp.ends_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')
+		FROM boards
+		LEFT JOIN sprints sp ON sp.board_id = boards.id AND sp.closed_at IS NULL
+		LEFT JOIN LATERAL (SELECT t.id AS tid, t.column_id, t.priority, t.updated_at AS changed, `+TicketDoneSQL+` AS done
+			FROM tickets t WHERE t.board_id = boards.id AND t.sprint_id IS NOT DISTINCT FROM sp.id) t ON true
+		WHERE boards.project_id = $1 GROUP BY boards.id, sp.id ORDER BY boards.created_at`, projectID)
 	if err != nil {
 		return nil, err
 	}
-	out, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (Board, error) { return scan(row) })
+	out, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (Board, error) {
+		b, st := Board{}, Stats{}
+		err := row.Scan(&b.ID, &b.ProjectID, &b.OwnerClerkID, &b.Name, &b.Description, &b.CreatedAt, &b.UpdatedAt,
+			&st.Open, &st.InProgress, &st.Done, &st.Urgent, &st.Active, &st.SprintNumber, &st.SprintEndsAt)
+		b.Stats = &st
+		return b, err
+	})
 	if out == nil {
 		out = []Board{}
 	}

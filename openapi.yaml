@@ -1259,6 +1259,17 @@ components:
         description: { type: string }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+        stats:
+          description: Only on a project's boards. Counts the tickets the board shows (the open sprint's, or all if it has never run one). in_progress = neither the first column nor done; urgent = open urgent tickets.
+          type: object
+          properties:
+            open: { type: integer }
+            in_progress: { type: integer }
+            done: { type: integer }
+            urgent: { type: integer }
+            active: { type: string, format: date-time, description: "Latest ticket change, or the board's own update" }
+            sprint_number: { type: [integer, 'null'] }
+            sprint_ends_at: { type: [string, 'null'], format: date-time }
     Ticket:
       type: object
       description: Agent origin is recorded in created_by and rendered in the ticket UI; assignment is shown in assigned_to.

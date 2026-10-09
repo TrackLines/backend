@@ -71,6 +71,27 @@ func TestStore(t *testing.T) {
 	if ts := full.Columns[1].Tickets; len(ts) != 2 || ts[0].Title != "t1" {
 		t.Fatalf("tickets: %+v", ts)
 	}
+	// stats: 2 in progress (column 1), plus an urgent ticket in To do and one in Done
+	if _, err := db.Exec(ctx, `INSERT INTO tickets (project_id, board_id, column_id, title, position, priority)
+		VALUES ($3, $1, $2, 'todo', 0, 'urgent'), ($3, $1, $4, 'shipped', 0, 'urgent')`, b.ID, full.Columns[0].ID, pid, full.Columns[2].ID); err != nil {
+		t.Fatal(err)
+	}
+	list, _ = s.ListByProject(ctx, pid)
+	if st := list[0].Stats; st == nil || st.Active == "" || st.SprintNumber != nil ||
+		st.Open != 3 || st.InProgress != 2 || st.Done != 1 || st.Urgent != 1 {
+		t.Fatalf("stats: %+v", st)
+	}
+	if st := list[1].Stats; st == nil || st.Open+st.Done+st.Urgent != 0 {
+		t.Fatalf("empty board stats: %+v", st)
+	}
+	// an open sprint: only its tickets count (none yet)
+	if _, err := db.Exec(ctx, `INSERT INTO sprints (board_id, number, length_days, ends_at) VALUES ($1, 4, 14, now() + interval '14 days')`, b.ID); err != nil {
+		t.Fatal(err)
+	}
+	list, _ = s.ListByProject(ctx, pid)
+	if st := list[0].Stats; st.SprintNumber == nil || *st.SprintNumber != 4 || st.SprintEndsAt == nil || st.Open != 0 || st.Done != 0 {
+		t.Fatalf("sprint stats: %+v", st)
+	}
 	if err := s.Delete(ctx, b.ID, "b2"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("non-owner delete: %v", err)
 	}
