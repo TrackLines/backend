@@ -92,6 +92,12 @@ func TestMCP(t *testing.T) {
 	if res := call("claim_ticket", map[string]any{"ticket_id": tk.ID}); res.IsError || !strings.Contains(text(res), `"assigned_to":"claude"`) {
 		t.Fatalf("claim as the key's agent: %s", text(res))
 	}
+	if res := call("list_open_tickets", map[string]any{"project_id": pid, "assignee": "me"}); res.IsError || !strings.Contains(text(res), tk.ID) {
+		t.Fatalf("list_open_tickets mine: %s", text(res))
+	}
+	if res := call("list_open_tickets", map[string]any{"project_id": pid, "assignee": "unassigned", "blocked": "exclude"}); res.IsError || strings.Contains(text(res), tk.ID) {
+		t.Fatalf("list_open_tickets claimable: %s", text(res))
+	}
 	// update with only a title keeps the description
 	if res := call("update_ticket", map[string]any{"ticket_id": tk.ID, "title": "Fixed", "priority": "high"}); res.IsError {
 		t.Fatalf("update: %s", text(res))

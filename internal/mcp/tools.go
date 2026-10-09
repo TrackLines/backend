@@ -37,6 +37,14 @@ var tools = []tool{
 			"page":     map[string]any{"type": "integer", "minimum": 1},
 			"per_page": map[string]any{"type": "integer", "minimum": 1, "maximum": 100}},
 		required: []string{"project_id"}, readOnly: true},
+	{name: "list_open_tickets", title: "List open tickets", description: "The way to find what to work on next: every ticket in a project that isn't done, across all boards and the backlog, " +
+		"without descriptions, already in pick order (priority urgent→low, then on a board before the backlog, then oldest). " +
+		"Use assignee=unassigned and blocked=exclude for claimable work, or assignee=me for what you hold; then get_ticket for details.",
+		method: "GET", path: "/api/projects/{project_id}/open-tickets", query: []string{"assignee", "blocked"},
+		props: map[string]any{"project_id": id("Project"),
+			"assignee": map[string]any{"type": "string", "enum": []string{"unassigned", "me"}, "description": "unassigned, or me (the caller's agent name / user id); omit for everyone"},
+			"blocked":  map[string]any{"type": "string", "enum": []string{"exclude"}, "description": "exclude leaves out tickets waiting on unfinished work"}},
+		required: []string{"project_id"}, readOnly: true},
 	{name: "get_ticket", title: "Get ticket", description: "A ticket with where it lives (project, board, column, sprint), its blockers, sub-tickets and parent.",
 		method: "GET", path: "/api/tickets/{ticket_id}", props: map[string]any{"ticket_id": id("Ticket")}, required: []string{"ticket_id"}, readOnly: true},
 	{name: "list_comments", title: "List comments", description: "A ticket's comments, oldest first.",

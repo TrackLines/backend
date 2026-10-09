@@ -306,7 +306,7 @@ paths:
         '403': { description: The caller is an API key or does not own the invited verified email address. }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { description: Clerk invitation or organization membership is not accepted yet. }
-        '410': { description: Invitation expired, revoked, or already accepted by another user. }
+        '410': { description: "Invitation expired, revoked, or already accepted by another user." }
         '502': { description: Clerk could not verify the invitation or recipient. }
   /teams/{teamId}/leaders/{userId}:
     parameters:
@@ -985,6 +985,51 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /projects/{projectId}/open-tickets:
+    parameters:
+      - $ref: '#/components/parameters/ProjectId'
+    get:
+      tags: [Tickets]
+      operationId: listOpenTickets
+      summary: Tickets that aren't done, across boards and backlog, in pick order
+      description: >-
+        Every ticket in the project that isn't in its board's Done column, plus the backlog, without descriptions.
+        Ordered the way work is picked: priority (urgent first), then on a board before in the backlog, then oldest.
+        The MCP tool list_open_tickets maps to this.
+      parameters:
+        - name: assignee
+          in: query
+          schema: { type: string, enum: [unassigned, me] }
+          description: unassigned, or me (the caller's agent name or user id). Omit for everyone.
+        - name: blocked
+          in: query
+          schema: { type: string, enum: [exclude] }
+          description: exclude leaves out tickets waiting on unfinished work.
+      responses:
+        '200':
+          description: Open tickets.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id: { type: string, format: uuid }
+                    title: { type: string }
+                    type: { type: string, enum: [bug, feature, task] }
+                    priority: { type: string, enum: [low, medium, high, urgent] }
+                    estimate: { type: [string, 'null'] }
+                    labels: { type: array, items: { type: string } }
+                    assigned_to: { type: [string, 'null'] }
+                    blocked: { type: boolean }
+                    board_id: { type: [string, 'null'], format: uuid, description: Null in the backlog. }
+                    board_name: { type: [string, 'null'] }
+                    column_id: { type: [string, 'null'], format: uuid }
+                    column_name: { type: [string, 'null'] }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
   /projects/{projectId}/backlog/page:
     get:
       tags: [Tickets]
@@ -1716,13 +1761,13 @@ components:
       type: object
       required: [id, org_id, email_address, scope, invited_by, status, expires_at, created_at]
       properties:
-        id: { type: string, format: uuid, description: TrackLines invitation id used by inspect, revoke, and accept routes. }
+        id: { type: string, format: uuid, description: "TrackLines invitation id used by inspect, revoke, and accept routes." }
         org_id: { type: string }
         email_address: { type: string, format: email }
         scope: { type: string, enum: [organization, team, project] }
         target_id: { type: string, format: uuid }
         invited_by: { type: string }
-        accept_url: { type: string, format: uri, description: Clerk-hosted invitation URL, returned by create and list/get. }
+        accept_url: { type: string, format: uri, description: "Clerk-hosted invitation URL, returned by create and list/get." }
         status: { type: string, enum: [pending, accepted, revoked, expired] }
         expires_at: { type: string, format: date-time }
         accepted_by: { type: string }
