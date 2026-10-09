@@ -67,5 +67,8 @@ func Build() (*ConfigBuilder.Config, error) {
 // Get returns the typed project config; Build must have succeeded first.
 func Get(cfg *ConfigBuilder.Config) *Project {
 	p, _ := ConfigBuilder.GetProjectConfig[Project](cfg)
+	if p == nil {
+		return &Project{} // nothing configured: optional integrations stay off
+	}
 	return p
 }

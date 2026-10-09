@@ -22,6 +22,7 @@ import (
 	"github.com/tracklines/backend/internal/columns"
 	"github.com/tracklines/backend/internal/comments"
 	"github.com/tracklines/backend/internal/config"
+	"github.com/tracklines/backend/internal/mcp"
 	"github.com/tracklines/backend/internal/organizations"
 	"github.com/tracklines/backend/internal/projects"
 	"github.com/tracklines/backend/internal/roadmaps"
@@ -48,6 +49,13 @@ func New(cfg *ConfigBuilder.Config, db *pgxpool.Pool, vk valkey.Client, fl *goFl
 }
 
 func (s *Service) Start() error {
+	// overdue sprints close themselves (manual close is POST /api/sprints/{id}/close)
+	go sprints.Store{DB: s.DB}.RunAutoClose(context.Background(), time.Minute)
+	return s.serve(s.Handler())
+}
+
+// Handler is the whole API: routes plus the auth, logging and CORS middleware.
+func (s *Service) Handler() http.Handler {
 	mux := http.NewServeMux()
 	signedIn := func(h http.HandlerFunc) http.Handler { return auth.Required(h) }
 	o := organizations.NewSystem(s.DB)
@@ -170,11 +178,14 @@ func (s *Service) Start() error {
 	cors.AddAllowedOrigins("http://localhost:3000", "https://tracklin.es")
 	cors.AddAllowedMethods(http.MethodGet, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete, http.MethodOptions)
 	cors.AddAllowedHeaders("Authorization", "X-Requested-With") // Accept, Content-Type are library defaults
-	handler := apikeys.Middleware(s.DB)(bugfixesTickets.Middleware(s.DB)(auth.Optional(users.Ensure(s.DB)(
+	var handler, mcpHandler http.Handler
+	// MCP (Streamable HTTP) for bots: same auth as REST (tl_ key or Clerk session); each tool calls a REST route
+	// in-process through handler, so MCP and REST can't drift apart
+	mux.Handle("/mcp", auth.Required(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { mcpHandler.ServeHTTP(w, r) })))
+	handler = apikeys.Middleware(s.DB)(bugfixesTickets.Middleware(s.DB)(auth.Optional(users.Ensure(s.DB)(
 		bm.Recoverer(bm.RequestID(bm.Logger(cors.CORS(mux))))))))
-	// overdue sprints close themselves (manual close is POST /api/sprints/{id}/close)
-	go sprints.Store{DB: s.DB}.RunAutoClose(context.Background(), time.Minute)
-	return s.serve(handler)
+	mcpHandler = mcp.Handler(handler, "1.0.0")
+	return handler
 }
 
 func (s *Service) health(w http.ResponseWriter, r *http.Request) {

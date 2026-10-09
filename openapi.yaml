@@ -74,6 +74,26 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { description: No active organization in the caller's session or API key. }
         '502': { description: The identity provider could not return organization membership. }
+  /mcp:
+    post:
+      tags: [MCP]
+      operationId: mcp
+      summary: Model Context Protocol endpoint for bots
+      description: >-
+        MCP over Streamable HTTP (stateless; responses are application/json). Send JSON-RPC MCP messages
+        (initialize, tools/list, tools/call). Authenticate like the REST API (tl_ API key or Clerk session).
+        Each tool calls the matching REST route with the caller's credentials, so results, permissions and
+        errors are the same as REST; a failed call is a tool result with isError and the REST status in its text.
+        GET and DELETE return 405 (no sessions or server-initiated streams).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, description: A JSON-RPC 2.0 MCP message. }
+      responses:
+        '200': { description: JSON-RPC response., content: { application/json: { schema: { type: object } } } }
+        '202': { description: Notification accepted. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
   /organizations/me:
     get:
       tags: [Organizations]
