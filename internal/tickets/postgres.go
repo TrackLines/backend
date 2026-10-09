@@ -93,7 +93,7 @@ func (s Store) Backlog(ctx context.Context, owner, projectID, typ string) ([]Tic
 		return nil, notFound(err)
 	}
 	rows, err := s.DB.Query(ctx, `SELECT `+boards.TicketCols+` FROM tickets t
-		WHERE t.project_id = $1 AND t.board_id IS NULL AND ($2 = '' OR t.type::text = $2)
+		WHERE t.project_id = $1 AND t.board_id IS NULL AND t.resolved_at IS NULL AND ($2 = '' OR t.type::text = $2)
 		ORDER BY t.position, t.created_at`, projectID, typ)
 	if err != nil {
 		return nil, err
@@ -128,7 +128,7 @@ func (s Store) PageBacklog(ctx context.Context, owner, projectID, typ string, la
 	for i, l := range labels {
 		lower[i] = strings.ToLower(l)
 	}
-	const where = `t.project_id = $1 AND t.board_id IS NULL AND (cardinality($2::text[]) = 0 OR EXISTS (
+	const where = `t.project_id = $1 AND t.board_id IS NULL AND t.resolved_at IS NULL AND (cardinality($2::text[]) = 0 OR EXISTS (
 		SELECT 1 FROM ticket_labels l WHERE l.ticket_id = t.id AND lower(l.label) = ANY($2)))`
 
 	out := &BacklogPage{Counts: map[string]int{"all": 0, "bug": 0, "feature": 0, "task": 0}}
@@ -147,7 +147,7 @@ func (s Store) PageBacklog(ctx context.Context, owner, projectID, typ string, la
 	}
 
 	rows, err = s.DB.Query(ctx, `SELECT min(l.label), count(*) FROM ticket_labels l JOIN tickets t ON t.id = l.ticket_id
-		WHERE t.project_id = $1 AND t.board_id IS NULL GROUP BY lower(l.label) ORDER BY count(*) DESC, lower(min(l.label))`, projectID)
+		WHERE t.project_id = $1 AND t.board_id IS NULL AND t.resolved_at IS NULL GROUP BY lower(l.label) ORDER BY count(*) DESC, lower(min(l.label))`, projectID)
 	if err != nil {
 		return nil, err
 	}
@@ -263,7 +263,16 @@ func exec(tag pgconn.CommandTag, err error) error {
 // Move puts ticket id at position pos (clamped) in toColumn. The column's board must be in
 // the ticket's project; the ticket can come from another column, another board or the
 // backlog, and joins the target board's open sprint. Same column = reorder.
+// Move places a ticket in a column (reopening it if it was resolved), then completes its parent
+// if that was the parent's last unfinished sub-ticket.
 func (s Store) Move(ctx context.Context, owner, id, toColumn string, pos int) error {
+	if err := s.move(ctx, owner, id, toColumn, pos); err != nil {
+		return err
+	}
+	return s.completeParent(ctx, owner, id)
+}
+
+func (s Store) move(ctx context.Context, owner, id, toColumn string, pos int) error {
 	return pgx.BeginFunc(ctx, s.DB, func(tx pgx.Tx) error {
 		var boardID string
 		var from, fromSprint, sprint *string
@@ -283,7 +292,7 @@ func (s Store) Move(ctx context.Context, owner, id, toColumn string, pos int) er
 		pos = max(0, min(pos, len(ids)))
 		ids = append(ids[:pos], append([]string{id}, ids[pos:]...)...)
 		// an estimate only survives a move to a board on the same scale
-		if _, err := tx.Exec(ctx, `UPDATE tickets t SET board_id = $2, column_id = $3, sprint_id = $4, updated_at = now(),
+		if _, err := tx.Exec(ctx, `UPDATE tickets t SET board_id = $2, column_id = $3, sprint_id = $4, resolved_at = NULL, updated_at = now(),
 				estimate = CASE WHEN (SELECT estimate_scale FROM boards WHERE id = t.board_id) =
 					(SELECT estimate_scale FROM boards WHERE id = $2) THEN t.estimate END,
 				-- into Done stamps the time (kept when already done); anywhere else clears it.

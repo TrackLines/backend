@@ -1127,6 +1127,25 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '502': { description: Could not load organization members from Clerk. }
 
+  /tickets/{ticketId}/resolve:
+    post:
+      tags: [Tickets]
+      operationId: resolveTicket
+      summary: Close a backlog ticket in place
+      description: >-
+        Marks a backlog ticket resolved without putting it on a board. A resolved ticket counts as done everywhere
+        (blockers, sub-ticket progress, the done flag), leaves backlog pages and open-ticket lists, keeps its links
+        and stays readable by id. Resolving again is a no-op; moving it onto a board reopens it. If it was the last
+        unfinished sub-ticket of its parent, the parent is completed too (resolved if it's in the backlog, moved to
+        its board's Done column if it's on a board), and so on up the chain. A ticket on a board is finished by
+        moving it to the board's last column instead (409). MCP tool resolve_ticket.
+      parameters:
+        - $ref: '#/components/parameters/TicketId'
+      responses:
+        '204': { description: Resolved. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: The ticket is on a board; move it to the board's Done column instead. }
   /tickets/{ticketId}/backlog:
     post:
       tags: [Tickets]
@@ -1971,6 +1990,7 @@ components:
         position: { type: integer }
         blocked: { type: boolean }
         labels: { type: array, items: { type: string }, description: 'Free-form labels, sorted case-insensitively.' }
+        resolved_at: { type: [string, 'null'], format: date-time, description: "Set when the ticket was resolved in the backlog (POST /tickets/{id}/resolve); it then counts as done." }
     Column:
       type: object
       properties:

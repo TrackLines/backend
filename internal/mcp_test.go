@@ -2,6 +2,7 @@ package internal
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -112,6 +113,16 @@ func TestMCP(t *testing.T) {
 	}
 	if res := call("move_ticket", map[string]any{"ticket_id": tk.ID, "column_id": b.Columns[2].ID, "position": 0}); res.IsError {
 		t.Fatalf("move: %s", text(res))
+	}
+	if res := call("create_backlog_ticket", map[string]any{"project_id": pid, "title": "Later"}); !res.IsError {
+		var later struct{ ID string }
+		_ = json.Unmarshal([]byte(text(res)), &later)
+		if res := call("resolve_ticket", map[string]any{"ticket_id": later.ID}); res.IsError {
+			t.Fatalf("resolve_ticket: %s", text(res))
+		}
+	}
+	if res := call("resolve_ticket", map[string]any{"ticket_id": tk.ID}); !res.IsError || !strings.Contains(text(res), "409") {
+		t.Fatalf("resolving a board ticket should be refused: %s", text(res))
 	}
 	// errors come back as tool errors with the REST status, and org scoping holds
 	if res := call("get_ticket", map[string]any{"ticket_id": "00000000-0000-0000-0000-000000000000"}); !res.IsError || !strings.Contains(text(res), "404") {

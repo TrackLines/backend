@@ -108,6 +108,9 @@ func writeErr(w http.ResponseWriter, err error) {
 	case errors.Is(err, ErrInvalidType):
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
+	case errors.Is(err, ErrOnBoard):
+		http.Error(w, err.Error(), http.StatusConflict)
+		return
 	case errors.Is(err, ErrAlreadyAssigned):
 		http.Error(w, err.Error(), http.StatusConflict)
 		return

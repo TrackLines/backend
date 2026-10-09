@@ -25,14 +25,16 @@ type Ticket struct {
 	Priority    string   `json:"priority"`
 	Estimate    *string  `json:"estimate"` // on the board's scale; null = not estimated
 	Position    int      `json:"position"`
-	Blocked     bool     `json:"blocked"` // a ticket it depends on isn't done yet
-	Labels      []string `json:"labels"`  // free-form, sorted case-insensitively
+	Blocked     bool     `json:"blocked"`     // a ticket it depends on isn't done yet
+	Labels      []string `json:"labels"`      // free-form, sorted case-insensitively
+	ResolvedAt  *string  `json:"resolved_at"` // closed in the backlog without a board; counts as done
 }
 
 // TicketCols + ScanTicket read a ticket row; shared with the tickets package. The last column
 // is "blocked": some ticket it depends on isn't done yet.
 var TicketCols = `t.id, t.created_by, t.assigned_to, t.project_id, t.column_id, t.sprint_id, t.type::text, t.title, t.description, t.priority::text, t.estimate, t.position, ` + TicketBlockedSQL +
-	`, ARRAY(SELECT l.label FROM ticket_labels l WHERE l.ticket_id = t.id ORDER BY lower(l.label))`
+	`, ARRAY(SELECT l.label FROM ticket_labels l WHERE l.ticket_id = t.id ORDER BY lower(l.label)),
+	to_char(t.resolved_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')`
 
 func ScanTicket(row pgx.Row) (Ticket, error) {
 	var t Ticket
@@ -40,14 +42,14 @@ func ScanTicket(row pgx.Row) (Ticket, error) {
 	return t, err
 }
 
-// TicketDoneSQL is true when ticket t sits in its board's last column ("done") — the same rule
-// sprint carry-over uses. Done tickets are locked against new attachments.
+// TicketDoneSQL is true when ticket t sits in its board's last column ("done"), the same rule
+// sprint carry-over uses, or was resolved in the backlog. Done tickets are locked against new attachments.
 var TicketDoneSQL = DoneSQL("t")
 
 // DoneSQL is TicketDoneSQL for a ticket table alias other than t.
 func DoneSQL(a string) string {
-	return `(` + a + `.column_id IS NOT NULL AND ` + a + `.column_id = (
-	SELECT dc.id FROM columns dc WHERE dc.board_id = ` + a + `.board_id ORDER BY dc.position DESC LIMIT 1))`
+	return `(` + a + `.resolved_at IS NOT NULL OR (` + a + `.column_id IS NOT NULL AND ` + a + `.column_id = (
+	SELECT dc.id FROM columns dc WHERE dc.board_id = ` + a + `.board_id ORDER BY dc.position DESC LIMIT 1)))`
 }
 
 // TicketBlockedSQL is true while any ticket that t depends on (ticket_dependencies) isn't done.
@@ -56,7 +58,7 @@ var TicketBlockedSQL = `EXISTS (SELECT 1 FROM ticket_dependencies td JOIN ticket
 
 // TicketDest lists scan targets matching TicketCols, for queries that select extra columns after them.
 func TicketDest(t *Ticket) []any {
-	return []any{&t.ID, &t.CreatedBy, &t.AssignedTo, &t.ProjectID, &t.ColumnID, &t.SprintID, &t.Type, &t.Title, &t.Description, &t.Priority, &t.Estimate, &t.Position, &t.Blocked, &t.Labels}
+	return []any{&t.ID, &t.CreatedBy, &t.AssignedTo, &t.ProjectID, &t.ColumnID, &t.SprintID, &t.Type, &t.Title, &t.Description, &t.Priority, &t.Estimate, &t.Position, &t.Blocked, &t.Labels, &t.ResolvedAt}
 }
 
 // Sprint is a board's time box; only the open one is shown on the board.

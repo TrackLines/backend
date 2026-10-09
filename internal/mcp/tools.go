@@ -87,6 +87,9 @@ var tools = []tool{
 		props: map[string]any{"ticket_id": id("Ticket"), "column_id": id("Destination column"), "position": position}, required: []string{"ticket_id", "column_id"}},
 	{name: "send_to_backlog", title: "Send to backlog", description: "Take a ticket off its board and put it at the bottom of the project backlog (clears its estimate).",
 		method: "POST", path: "/api/tickets/{ticket_id}/backlog", props: map[string]any{"ticket_id": id("Ticket")}, required: []string{"ticket_id"}},
+	{name: "resolve_ticket", title: "Resolve ticket", description: "Close a backlog ticket in place, without putting it on a board (a board ticket is finished by moving it to the board's last column). " +
+		"It counts as done, leaves the backlog and open-ticket lists, and stays readable by id. If it was the last unfinished sub-ticket, its parent is completed too.",
+		method: "POST", path: "/api/tickets/{ticket_id}/resolve", props: map[string]any{"ticket_id": id("Ticket")}, required: []string{"ticket_id"}},
 	{name: "set_labels", title: "Set labels", description: "Replace a ticket's labels.",
 		method: "PUT", path: "/api/tickets/{ticket_id}/labels", body: []string{"labels"},
 		props: map[string]any{"ticket_id": id("Ticket"), "labels": labels}, required: []string{"ticket_id", "labels"}},
