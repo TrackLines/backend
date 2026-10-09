@@ -51,6 +51,9 @@ func TestTeamAndProjectMembershipsStayWithinOrganization(t *testing.T) {
 	if _, err = db.Exec(ctx, `INSERT INTO team_members(team_id,user_clerk_id) VALUES ($1,'user-a'),($1,'user-b')`, teamA); err != nil {
 		t.Fatal(err)
 	}
+	if _, err = db.Exec(ctx, `INSERT INTO org_admins(org_id,user_clerk_id,granted_by) VALUES ('team-org-a','user-a','test') ON CONFLICT DO NOTHING`); err != nil {
+		t.Fatal(err)
+	}
 	if _, err = db.Exec(ctx, `INSERT INTO project_teams(project_id,team_id,org_id) VALUES ($1,$2,'team-org-a')`, projectA, teamA); err != nil {
 		t.Fatal(err)
 	}
@@ -74,6 +77,16 @@ func TestTeamAndProjectMembershipsStayWithinOrganization(t *testing.T) {
 	add = add.WithContext(auth.WithAPIKey(add.Context(), "user-a", "team-org-a", "test", "ai"))
 	w = httptest.NewRecorder()
 	h.AddMember(w, add)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("API key should not change team membership: %d %s", w.Code, w.Body.String())
+	}
+	claims := &clerk.SessionClaims{RegisteredClaims: clerk.RegisteredClaims{Subject: "user-a"}, Claims: clerk.Claims{ActiveOrganizationID: "team-org-a"}}
+	add = httptest.NewRequest(http.MethodPut, "/api/teams/"+teamA+"/members/user-c", nil)
+	add.SetPathValue("id", teamA)
+	add.SetPathValue("userID", "user-c")
+	add = add.WithContext(clerk.ContextWithSessionClaims(add.Context(), claims))
+	w = httptest.NewRecorder()
+	h.AddMember(w, add)
 	if w.Code != http.StatusNoContent {
 		t.Fatalf("add org member: %d %s", w.Code, w.Body.String())
 	}
@@ -82,7 +95,7 @@ func TestTeamAndProjectMembershipsStayWithinOrganization(t *testing.T) {
 	add = httptest.NewRequest(http.MethodPut, "/api/teams/"+teamA+"/members/outsider", nil)
 	add.SetPathValue("id", teamA)
 	add.SetPathValue("userID", "outsider")
-	add = add.WithContext(auth.WithAPIKey(add.Context(), "user-a", "team-org-a", "test", "ai"))
+	add = add.WithContext(clerk.ContextWithSessionClaims(add.Context(), claims))
 	w = httptest.NewRecorder()
 	h.AddMember(w, add)
 	if w.Code != http.StatusUnprocessableEntity {

@@ -137,4 +137,56 @@ func TestAdmins(t *testing.T) {
 	if code := grant(session("u6")); code != 204 {
 		t.Fatalf("admin grant: %d", code)
 	}
+
+	// A team leader can manage only the board assigned to their team; ordinary members and
+	// API keys cannot manage the board workflow.
+	if _, err := db.Exec(ctx, `INSERT INTO users(clerk_id,email) VALUES ('u6','u6@example.test'),('leader','leader@example.test'),('member','member@example.test') ON CONFLICT (clerk_id) DO NOTHING`); err != nil {
+		t.Fatal(err)
+	}
+	var projectID, boardID, teamID, columnID string
+	if err := db.QueryRow(ctx, `INSERT INTO projects(owner_clerk_id,name) VALUES ('org_creator','RBAC test') RETURNING id`).Scan(&projectID); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(ctx, `INSERT INTO boards(owner_clerk_id,name,project_id) VALUES ('org_creator','RBAC test', $1) RETURNING id`, projectID).Scan(&boardID); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(ctx, `INSERT INTO teams(org_id,name) VALUES ('org_creator','RBAC test') RETURNING id`).Scan(&teamID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(ctx, `INSERT INTO team_members(team_id,user_clerk_id,leader) VALUES ($1,'leader',true)`, teamID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(ctx, `UPDATE boards SET team_id=$1 WHERE id=$2`, teamID, boardID); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(ctx, `INSERT INTO columns(board_id,name,position) VALUES ($1,'Todo',0) RETURNING id`, boardID).Scan(&columnID); err != nil {
+		t.Fatal(err)
+	}
+	manager := func(user string, apiKey bool, resource string, id string) int {
+		r := httptest.NewRequest("PATCH", "/", nil)
+		if apiKey {
+			r = r.WithContext(auth.WithAPIKey(r.Context(), user, "org_creator", "test", "ai"))
+		} else {
+			r = r.WithContext(session(user))
+		}
+		w := httptest.NewRecorder()
+		if resource == "board" {
+			a.RequireResourceBoardManager(w, r, "board", id)
+		} else {
+			a.RequireResourceBoardManager(w, r, resource, id)
+		}
+		return w.Code
+	}
+	if code := manager("leader", false, "board", boardID); code != 200 {
+		t.Fatalf("team leader board access: %d", code)
+	}
+	if code := manager("leader", false, "column", columnID); code != 200 {
+		t.Fatalf("team leader column access: %d", code)
+	}
+	if code := manager("member", false, "board", boardID); code != 403 {
+		t.Fatalf("ordinary member board access: %d", code)
+	}
+	if code := manager("leader", true, "board", boardID); code != 403 {
+		t.Fatalf("API key board access: %d", code)
+	}
 }

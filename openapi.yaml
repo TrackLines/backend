@@ -74,6 +74,52 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { description: No active organization in the caller's session or API key. }
         '502': { description: The identity provider could not return organization membership. }
+  /board-templates:
+    get:
+      tags: [Boards]
+      operationId: listBoardTemplates
+      summary: Board templates (built-ins, then the organization's own)
+      responses:
+        '200': { description: Templates, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/BoardTemplate' } } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      tags: [Boards]
+      operationId: createBoardTemplate
+      summary: Save an organization board template
+      description: Org admins only, signed in with a Clerk session. Send a full template, or {name, from_board_id} to copy an existing board's columns, WIP limits, style and estimate scale.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string, minLength: 1, maxLength: 80 }
+                from_board_id: { type: string, format: uuid }
+                style: { type: string, enum: [sprints, kanban] }
+                estimate_scale: { $ref: '#/components/schemas/EstimateScale' }
+                columns: { $ref: '#/components/schemas/BoardTemplate/properties/columns' }
+      responses:
+        '201': { description: Template saved., content: { application/json: { schema: { $ref: '#/components/schemas/BoardTemplate' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { description: Requires a signed-in organization admin. }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /board-templates/{templateId}:
+    parameters:
+      - name: templateId
+        in: path
+        required: true
+        schema: { type: string }
+    delete:
+      tags: [Boards]
+      operationId: deleteBoardTemplate
+      summary: Delete an organization template (built-ins can't be deleted)
+      responses:
+        '204': { description: Deleted. }
+        '400': { description: Built-in templates can't be deleted. }
+        '403': { description: Requires a signed-in organization admin. }
+        '404': { $ref: '#/components/responses/NotFound' }
   /mcp:
     post:
       tags: [MCP]
@@ -230,6 +276,7 @@ paths:
       responses:
         '201': { description: Team created, content: { application/json: { schema: { $ref: '#/components/schemas/Team' } } } }
         '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { description: Requires a signed-in organization admin. }
   /teams/{teamId}:
     parameters:
       - name: teamId
@@ -247,6 +294,7 @@ paths:
             schema: { $ref: '#/components/schemas/TeamInput' }
       responses:
         '204': { description: Team updated. }
+        '403': { description: Requires a signed-in organization admin. }
         '404': { $ref: '#/components/responses/NotFound' }
     delete:
       tags: [Teams]
@@ -254,6 +302,7 @@ paths:
       summary: Delete a team
       responses:
         '204': { description: Team and its memberships deleted. }
+        '403': { description: Requires a signed-in organization admin. }
         '404': { $ref: '#/components/responses/NotFound' }
   /teams/{teamId}/members:
     get:
@@ -284,6 +333,7 @@ paths:
       summary: Add an active organization member to a team
       responses:
         '204': { description: Membership recorded. }
+        '403': { description: Requires a signed-in organization admin. }
         '422': { description: User is not an active member of the organization. }
         '502': { description: Could not verify membership with the identity provider. }
         '404': { $ref: '#/components/responses/NotFound' }
@@ -293,6 +343,7 @@ paths:
       summary: Remove a member from a team
       responses:
         '204': { description: Membership removed. }
+        '403': { description: Requires a signed-in organization admin. }
         '404': { $ref: '#/components/responses/NotFound' }
   /projects/{projectId}/teams:
     get:
@@ -322,6 +373,7 @@ paths:
       summary: Link a same-organization team to a project
       responses:
         '204': { description: Team linked. }
+        '403': { description: Requires a signed-in organization admin. }
         '404': { $ref: '#/components/responses/NotFound' }
     delete:
       tags: [Teams]
@@ -329,6 +381,7 @@ paths:
       summary: Unlink a team from a project
       responses:
         '204': { description: Team unlinked. }
+        '403': { description: Requires a signed-in organization admin. }
   /projects:
     get:
       tags: [Projects]
@@ -412,7 +465,7 @@ paths:
     post:
       tags: [Boards]
       operationId: createBoard
-      summary: Create a team board with default columns
+      summary: Create a team board, optionally from a template
       requestBody:
         required: true
         content:
@@ -426,6 +479,7 @@ paths:
               schema: { $ref: '#/components/schemas/Board' }
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: Requires a signed-in organization admin. }
         '404': { $ref: '#/components/responses/NotFound' }
 
   /projects/{projectId}/backlog:
@@ -549,8 +603,9 @@ paths:
       summary: Rename a board or change its settings
       description: >-
         Provide any of name, estimate_scale and style. Changing estimate_scale clears the estimates of tickets on the
-        board, except those in closed sprints (kept for velocity history). style kanban is refused (409) while a sprint
-        is open; kanban boards can't start sprints and show only Done tickets finished in the last 14 days.
+        board, except those in closed sprints (kept for velocity history). Switching to kanban ends the open sprint, if
+        any: it closes with no successor, keeps its done tickets, and its unfinished tickets stay on the board outside
+        any sprint. Kanban boards can't start sprints and show only Done tickets finished in the last 14 days.
       requestBody:
         required: true
         content:
@@ -566,8 +621,8 @@ paths:
         '204': { description: Board updated. }
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: Requires a signed-in organization admin or the linked team's leader. }
         '404': { $ref: '#/components/responses/NotFound' }
-        '409': { description: A sprint is open; close it before switching to kanban. }
     delete:
       tags: [Boards]
       operationId: deleteBoard
@@ -575,6 +630,7 @@ paths:
       responses:
         '204': { description: Board deleted. }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: Requires a signed-in organization admin. }
         '404': { $ref: '#/components/responses/NotFound' }
 
   /boards/{boardId}/columns:
@@ -597,6 +653,7 @@ paths:
               schema: { $ref: '#/components/schemas/Column' }
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: Requires a signed-in organization admin or the linked team's leader. }
         '404': { $ref: '#/components/responses/NotFound' }
 
   /boards/{boardId}/columns/order:
@@ -621,6 +678,7 @@ paths:
         '204': { description: Column order updated. }
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: Requires a signed-in organization admin or the linked team's leader. }
         '404': { $ref: '#/components/responses/NotFound' }
 
   /columns/{columnId}:
@@ -647,6 +705,7 @@ paths:
         '204': { description: Column updated. }
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: Requires a signed-in organization admin or the linked team's leader. }
         '404': { $ref: '#/components/responses/NotFound' }
     delete:
       tags: [Columns]
@@ -655,6 +714,7 @@ paths:
       responses:
         '204': { description: Column deleted. }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: Requires a signed-in organization admin or the linked team's leader. }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { description: Column still contains tickets. }
 
@@ -1131,9 +1191,40 @@ paths:
               schema: { $ref: '#/components/schemas/Sprint' }
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: Requires a signed-in organization admin or the linked team's leader. }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { description: "Board already has an open sprint, or is a kanban board." }
 
+  /sprints/{sprintId}:
+    get:
+      tags: [Sprints]
+      operationId: getSprint
+      summary: One sprint, read-only, with its burn data and tickets
+      description: >-
+        For a closed sprint, tickets are the ones it finished (closing moves the rest to the next sprint) and burn.total
+        is what it held when it closed; sprints closed before scope was recorded fall back to what they finished and
+        carried_over is null. burn.ends_at is the close time. For an open sprint, everything reflects now.
+      parameters:
+        - name: sprintId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: The sprint.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Sprint'
+                  - type: object
+                    properties:
+                      unit: { type: string, enum: [points, tickets] }
+                      burn: { $ref: '#/components/schemas/Velocity/properties/current' }
+                      tickets: { type: array, items: { $ref: '#/components/schemas/Ticket' } }
+                      carried_over: { type: [integer, 'null'], description: Tickets moved on to the next sprint when it closed. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
   /sprints/{sprintId}/close:
     post:
       tags: [Sprints]
@@ -1151,6 +1242,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Sprint' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: Requires a signed-in organization admin or the linked team's leader. }
         '404': { $ref: '#/components/responses/NotFound' }
 
   /roadmaps:
@@ -1539,6 +1631,27 @@ components:
       properties:
         name: { type: string, minLength: 1 }
         description: { type: string }
+        template_id: { type: string, description: "A template from GET /board-templates (built-in ids start with builtin:). Default builtin:simple (To do, In progress, Done). Unknown id: 400." }
+    BoardTemplate:
+      type: object
+      required: [id, name, builtin, style, estimate_scale, columns]
+      properties:
+        id: { type: string, description: "builtin:simple, builtin:scrum, builtin:kanban, or an org template's UUID" }
+        name: { type: string }
+        builtin: { type: boolean }
+        style: { type: string, enum: [sprints, kanban] }
+        estimate_scale: { $ref: '#/components/schemas/EstimateScale' }
+        columns:
+          type: array
+          minItems: 1
+          maxItems: 20
+          description: In board order; the last column is Done.
+          items:
+            type: object
+            required: [name]
+            properties:
+              name: { type: string, minLength: 1, maxLength: 80 }
+              wip_limit: { type: [integer, 'null'], minimum: 1, maximum: 999 }
     NameInput:
       type: object
       required: [name]

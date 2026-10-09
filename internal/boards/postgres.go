@@ -12,9 +12,6 @@ import (
 
 var ErrNotFound = errors.New("board not found")
 
-// DefaultColumns are created with every board so it's usable immediately.
-var DefaultColumns = []string{"To do", "In progress", "Done"}
-
 type Ticket struct {
 	ID          string   `json:"id"`
 	CreatedBy   string   `json:"created_by"`
@@ -143,32 +140,10 @@ func notFound(err error) error {
 	return err
 }
 
-// Create inserts a board (one per team) into the owner's project, plus DefaultColumns.
+// Create inserts a board (one per team) into the owner's project, set up like the Simple template.
 // ErrNotFound when the project isn't the owner's.
 func (s Store) Create(ctx context.Context, owner, projectID, name, desc string) (*Board, error) {
-	var b Board
-	err := pgx.BeginFunc(ctx, s.DB, func(tx pgx.Tx) error {
-		var err error
-		if b, err = scan(tx.QueryRow(ctx, `INSERT INTO boards (project_id, owner_clerk_id, name, description)
-			SELECT id, owner_clerk_id, $3, $4 FROM projects WHERE id = $1 AND owner_clerk_id = $2
-			RETURNING `+cols, projectID, owner, name, desc)); err != nil {
-			return err
-		}
-		for pos, c := range DefaultColumns {
-			var col Column
-			if err := tx.QueryRow(ctx, `INSERT INTO columns (board_id, name, position) VALUES ($1, $2, $3)
-				RETURNING id, name, position`, b.ID, c, pos).Scan(&col.ID, &col.Name, &col.Position); err != nil {
-				return err
-			}
-			col.Tickets = []Ticket{}
-			b.Columns = append(b.Columns, col)
-		}
-		return nil
-	})
-	if err != nil {
-		return nil, err
-	}
-	return &b, nil
+	return s.CreateFrom(ctx, owner, projectID, name, desc, Builtins[0])
 }
 
 // ListByProject lists a project's boards (without columns); callers check ownership.
@@ -242,21 +217,27 @@ func (s Store) SetEstimateScale(ctx context.Context, id, owner, scale string) er
 // KanbanDoneDays is how long a finished ticket stays in a kanban board's Done column.
 const KanbanDoneDays = 14
 
-var ErrSprintOpen = errors.New("close the open sprint before switching this board to kanban")
-
-// SetStyle switches the board between sprints and kanban. A board can't go kanban mid-sprint.
+// SetStyle switches the board between sprints and kanban. Going kanban ends the open sprint, if
+// any: it closes now with no successor, its done tickets stay with it (velocity history) and the
+// rest leave it, so they show on the kanban board.
 func (s Store) SetStyle(ctx context.Context, id, owner, style string) error {
 	return pgx.BeginFunc(ctx, s.DB, func(tx pgx.Tx) error {
 		if err := tx.QueryRow(ctx, `SELECT id FROM boards WHERE id = $1 AND owner_clerk_id = $2 FOR UPDATE`, id, owner).Scan(&id); err != nil {
 			return notFound(err)
 		}
-		if style == "kanban" {
-			var open bool
-			if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM sprints WHERE board_id = $1 AND closed_at IS NULL)`, id).Scan(&open); err != nil {
+		var open *string
+		if err := tx.QueryRow(ctx, `SELECT id FROM sprints WHERE board_id = $1 AND closed_at IS NULL`, id).Scan(&open); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return err
+		}
+		if style == "kanban" && open != nil {
+			if err := RecordScope(ctx, tx, *open); err != nil {
 				return err
 			}
-			if open {
-				return ErrSprintOpen
+			if _, err := tx.Exec(ctx, `UPDATE sprints SET closed_at = now() WHERE id = $1`, *open); err != nil {
+				return err
+			}
+			if _, err := tx.Exec(ctx, `UPDATE tickets t SET sprint_id = NULL WHERE t.sprint_id = $1 AND NOT `+TicketDoneSQL, *open); err != nil {
+				return err
 			}
 		}
 		_, err := tx.Exec(ctx, `UPDATE boards SET style = $2, updated_at = now() WHERE id = $1 AND style <> $2`, id, style)

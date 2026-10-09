@@ -8,13 +8,17 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/tracklines/backend/internal/auth"
 	"github.com/tracklines/backend/internal/httpx"
+	"github.com/tracklines/backend/internal/organizations"
 )
 
-type System struct{ store Store }
+type System struct {
+	store  Store
+	admins organizations.Admins
+}
 
 // NewSystem exposes the sprint handlers; routes are declared in internal/service.go.
-func NewSystem(db *pgxpool.Pool) System {
-	return System{store: Store{DB: db}}
+func NewSystem(db *pgxpool.Pool, admins organizations.Admins) System {
+	return System{store: Store{DB: db}, admins: admins}
 }
 
 func writeErr(w http.ResponseWriter, err error) {
@@ -33,6 +37,9 @@ func writeErr(w http.ResponseWriter, err error) {
 
 // Start opens a sprint on board {id}: {"length_days": 7 | 14 | any 1–365}.
 func (h System) Start(w http.ResponseWriter, r *http.Request) {
+	if !h.admins.RequireResourceBoardManager(w, r, "board", r.PathValue("id")) {
+		return
+	}
 	var in struct {
 		LengthDays int `json:"length_days"`
 	}
@@ -59,6 +66,16 @@ func (h System) List(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusOK, out)
 }
 
+// Get is sprint {id}, read-only: burn data and its tickets (a closed sprint's are what it finished).
+func (h System) Get(w http.ResponseWriter, r *http.Request) {
+	d, err := h.store.Detail(r.Context(), auth.OrgID(r.Context()), r.PathValue("id"))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, d)
+}
+
 // Velocity is what board {id} finished per closed sprint, plus the open sprint's burn data.
 func (h System) Velocity(w http.ResponseWriter, r *http.Request) {
 	v, err := h.store.Velocity(r.Context(), auth.OrgID(r.Context()), r.PathValue("id"))
@@ -71,6 +88,9 @@ func (h System) Velocity(w http.ResponseWriter, r *http.Request) {
 
 // Close closes open sprint {id} and returns the next sprint it opened.
 func (h System) Close(w http.ResponseWriter, r *http.Request) {
+	if !h.admins.RequireResourceBoardManager(w, r, "sprint", r.PathValue("id")) {
+		return
+	}
 	org := auth.OrgID(r.Context())
 	next, err := h.store.Close(r.Context(), org, r.PathValue("id"))
 	if err != nil {

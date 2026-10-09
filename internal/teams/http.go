@@ -131,6 +131,9 @@ func (h System) Members(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h System) Create(w http.ResponseWriter, r *http.Request) {
+	if _, _, ok := h.admins.RequireAdmin(w, r); !ok {
+		return
+	}
 	var in struct {
 		Name        string `json:"name"`
 		Description string `json:"description"`
@@ -153,6 +156,9 @@ func (h System) Create(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h System) Update(w http.ResponseWriter, r *http.Request) {
+	if _, _, ok := h.admins.RequireAdmin(w, r); !ok {
+		return
+	}
 	var in struct {
 		Name        string `json:"name"`
 		Description string `json:"description"`
@@ -178,6 +184,9 @@ func (h System) Update(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h System) Delete(w http.ResponseWriter, r *http.Request) {
+	if _, _, ok := h.admins.RequireAdmin(w, r); !ok {
+		return
+	}
 	tag, err := h.db.Exec(r.Context(), `DELETE FROM teams WHERE id=$1 AND org_id=$2`, r.PathValue("id"), auth.OrgID(r.Context()))
 	if err != nil {
 		http.Error(w, "internal error", 500)
@@ -193,7 +202,11 @@ func (h System) Delete(w http.ResponseWriter, r *http.Request) {
 func (h System) AddMember(w http.ResponseWriter, r *http.Request)    { h.member(w, r, true) }
 func (h System) RemoveMember(w http.ResponseWriter, r *http.Request) { h.member(w, r, false) }
 func (h System) member(w http.ResponseWriter, r *http.Request, add bool) {
-	orgID, userID := auth.OrgID(r.Context()), r.PathValue("userID")
+	orgID, _, ok := h.admins.RequireAdmin(w, r)
+	if !ok {
+		return
+	}
+	userID := r.PathValue("userID")
 	var err error
 	if add {
 		limit := int64(1)
@@ -241,6 +254,9 @@ func (h System) member(w http.ResponseWriter, r *http.Request, add bool) {
 }
 
 func (h System) AddProjectTeam(w http.ResponseWriter, r *http.Request) {
+	if _, _, ok := h.admins.RequireAdmin(w, r); !ok {
+		return
+	}
 	tag, err := h.db.Exec(r.Context(), `INSERT INTO project_teams(project_id,team_id,org_id)
 		SELECT p.id,t.id,p.owner_clerk_id FROM projects p JOIN teams t ON t.id=$2 AND t.org_id=p.owner_clerk_id
 		WHERE p.id=$1 AND p.owner_clerk_id=$3 ON CONFLICT DO NOTHING`, r.PathValue("projectID"), r.PathValue("teamID"), auth.OrgID(r.Context()))
@@ -264,6 +280,9 @@ func (h System) AddProjectTeam(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h System) RemoveProjectTeam(w http.ResponseWriter, r *http.Request) {
+	if _, _, ok := h.admins.RequireAdmin(w, r); !ok {
+		return
+	}
 	// a team off the project no longer runs that project's boards
 	err := pgx.BeginFunc(r.Context(), h.db, func(tx pgx.Tx) error {
 		tag, err := tx.Exec(r.Context(), `DELETE FROM project_teams WHERE project_id=$1 AND team_id=$2 AND org_id=$3`, r.PathValue("projectID"), r.PathValue("teamID"), auth.OrgID(r.Context()))

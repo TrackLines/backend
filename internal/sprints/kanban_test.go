@@ -41,18 +41,25 @@ func TestKanban(t *testing.T) {
 	b, _ := bs.Create(ctx, "kb1", pid, "b", "")
 	todo, doing, done := b.Columns[0].ID, b.Columns[1].ID, b.Columns[2].ID
 
-	// no switching mid-sprint
+	// a board mid-sprint can switch: the sprint ends, keeping what it finished; the rest stays on the board
 	sp, _ := s.Start(ctx, "kb1", b.ID, 7)
-	if err := bs.SetStyle(ctx, b.ID, "kb1", "kanban"); !errors.Is(err, boards.ErrSprintOpen) {
-		t.Fatal("kanban with an open sprint:", err)
-	}
-	if _, err := s.Close(ctx, "kb1", sp.ID); err != nil {
-		t.Fatal(err)
-	}
-	_, _ = db.Exec(ctx, `UPDATE sprints SET closed_at = now() WHERE board_id = $1 AND closed_at IS NULL`, b.ID) // close the follow-on sprint too
+	shipped, _ := ts.Create(ctx, "kb1", todo, "task", "shipped", "")
+	pending, _ := ts.Create(ctx, "kb1", todo, "task", "pending", "")
+	_ = ts.Move(ctx, "kb1", shipped.ID, done, 0)
 	if err := bs.SetStyle(ctx, b.ID, "kb1", "kanban"); err != nil {
-		t.Fatal(err)
+		t.Fatal("kanban mid-sprint:", err)
 	}
+	var open, scope int
+	var shippedSprint, pendingSprint *string
+	_ = db.QueryRow(ctx, `SELECT count(*) FILTER (WHERE closed_at IS NULL), max(scope_tickets) FROM sprints WHERE board_id = $1`, b.ID).Scan(&open, &scope)
+	_ = db.QueryRow(ctx, `SELECT (SELECT sprint_id::text FROM tickets WHERE id = $1), (SELECT sprint_id::text FROM tickets WHERE id = $2)`, shipped.ID, pending.ID).Scan(&shippedSprint, &pendingSprint)
+	if open != 0 || scope != 2 || shippedSprint == nil || *shippedSprint != sp.ID || pendingSprint != nil {
+		t.Fatalf("after switch: open %d scope %d shipped %v pending %v", open, scope, shippedSprint, pendingSprint)
+	}
+	if full, _ := bs.Get(ctx, b.ID, "kb1"); full.Sprint != nil || len(full.Columns[0].Tickets) != 1 || full.Columns[0].Tickets[0].ID != pending.ID {
+		t.Fatalf("kanban view: %+v", full.Columns[0].Tickets)
+	}
+	_ = ts.Delete(ctx, "kb1", pending.ID)
 	if _, err := s.Start(ctx, "kb1", b.ID, 7); !errors.Is(err, ErrKanban) {
 		t.Fatal("sprint on a kanban board:", err)
 	}

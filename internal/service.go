@@ -22,6 +22,7 @@ import (
 	"github.com/tracklines/backend/internal/columns"
 	"github.com/tracklines/backend/internal/comments"
 	"github.com/tracklines/backend/internal/config"
+	"github.com/tracklines/backend/internal/invitations"
 	"github.com/tracklines/backend/internal/mcp"
 	"github.com/tracklines/backend/internal/organizations"
 	"github.com/tracklines/backend/internal/projects"
@@ -64,6 +65,12 @@ func (s *Service) Handler() http.Handler {
 	mux.Handle("GET /api/organizations/admins", signedIn(o.ListAdmins)) // first admin is resolved from Clerk on demand
 	mux.Handle("PUT /api/organizations/admins/{userID}", signedIn(o.GrantAdmin))
 	mux.Handle("DELETE /api/organizations/admins/{userID}", signedIn(o.RevokeAdmin)) // never the last admin
+	iv := invitations.NewSystem(s.DB, o.AdminModel())
+	mux.Handle("GET /api/organizations/invitations", signedIn(iv.List))
+	mux.Handle("POST /api/organizations/invitations", signedIn(iv.Create))
+	mux.Handle("GET /api/organizations/invitations/{id}", signedIn(iv.Get))
+	mux.Handle("DELETE /api/organizations/invitations/{id}", signedIn(iv.Revoke))
+	mux.Handle("POST /api/organizations/invitations/{id}/accept", auth.Optional(http.HandlerFunc(iv.Accept)))
 	tm := teams.NewSystem(s.DB, o.AdminModel())
 	mux.Handle("GET /api/teams", signedIn(tm.List))
 	mux.Handle("POST /api/teams", signedIn(tm.Create))
@@ -91,14 +98,17 @@ func (s *Service) Handler() http.Handler {
 	mux.Handle("DELETE /api/projects/{id}", signedIn(p.Delete))
 
 	// Boards
-	b := boards.NewSystem(s.DB)
-	mux.Handle("POST /api/projects/{id}/boards", signedIn(b.Create))
+	b := boards.NewSystem(s.DB, o.AdminModel())
+	mux.Handle("POST /api/projects/{id}/boards", signedIn(b.Create))  // optional template_id
+	mux.Handle("GET /api/board-templates", signedIn(b.ListTemplates)) // built-ins + the org's own
+	mux.Handle("POST /api/board-templates", signedIn(b.CreateTemplate))
+	mux.Handle("DELETE /api/board-templates/{id}", signedIn(b.DeleteTemplate))
 	mux.Handle("GET /api/boards/{id}", signedIn(b.Get))
 	mux.Handle("PATCH /api/boards/{id}", signedIn(b.Update)) // name and estimate_scale settings
 	mux.Handle("DELETE /api/boards/{id}", signedIn(b.Delete))
 
 	// Columns
-	c := columns.NewSystem(s.DB)
+	c := columns.NewSystem(s.DB, o.AdminModel())
 	mux.Handle("POST /api/boards/{boardID}/columns", signedIn(c.Create))
 	mux.Handle("PUT /api/boards/{boardID}/columns/order", signedIn(c.Reorder))
 	mux.Handle("PATCH /api/columns/{id}", signedIn(c.Update)) // name and/or wip_limit
@@ -138,10 +148,11 @@ func (s *Service) Handler() http.Handler {
 	mux.Handle("GET /api/projects/{id}/labels", signedIn(t.ProjectLabels)) // labels in use, for suggestions
 
 	// Sprints — per team board; closing opens the next and carries unfinished tickets over
-	sp := sprints.NewSystem(s.DB)
+	sp := sprints.NewSystem(s.DB, o.AdminModel())
 	mux.Handle("GET /api/boards/{id}/sprints", signedIn(sp.List))
 	mux.Handle("POST /api/boards/{id}/sprints", signedIn(sp.Start))
 	mux.Handle("GET /api/boards/{id}/velocity", signedIn(sp.Velocity)) // per closed sprint + open sprint burn
+	mux.Handle("GET /api/sprints/{id}", signedIn(sp.Get))              // read-only: burn data and tickets
 	mux.Handle("POST /api/sprints/{id}/close", signedIn(sp.Close))
 
 	// Roadmaps — GET by id is open: public ones are readable by anyone with the link

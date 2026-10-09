@@ -9,14 +9,18 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/tracklines/backend/internal/auth"
 	"github.com/tracklines/backend/internal/httpx"
+	"github.com/tracklines/backend/internal/organizations"
 )
 
 // NewSystem exposes the column handlers; routes are declared in internal/service.go.
-func NewSystem(db *pgxpool.Pool) System {
-	return System{store: Store{DB: db}}
+func NewSystem(db *pgxpool.Pool, admins organizations.Admins) System {
+	return System{store: Store{DB: db}, admins: admins}
 }
 
-type System struct{ store Store }
+type System struct {
+	store  Store
+	admins organizations.Admins
+}
 
 func writeErr(w http.ResponseWriter, err error) {
 	switch {
@@ -33,6 +37,9 @@ func writeErr(w http.ResponseWriter, err error) {
 }
 
 func (h System) Create(w http.ResponseWriter, r *http.Request) {
+	if !h.admins.RequireResourceBoardManager(w, r, "board", r.PathValue("boardID")) {
+		return
+	}
 	var in struct {
 		Name string `json:"name"`
 	}
@@ -55,6 +62,9 @@ func (h System) Create(w http.ResponseWriter, r *http.Request) {
 
 // Update renames a column and/or sets its work-in-progress limit (0 removes it).
 func (h System) Update(w http.ResponseWriter, r *http.Request) {
+	if !h.admins.RequireResourceBoardManager(w, r, "column", r.PathValue("id")) {
+		return
+	}
 	var in struct {
 		Name     *string `json:"name"`
 		WIPLimit *int    `json:"wip_limit"`
@@ -92,6 +102,9 @@ func (h System) Update(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h System) Delete(w http.ResponseWriter, r *http.Request) {
+	if !h.admins.RequireResourceBoardManager(w, r, "column", r.PathValue("id")) {
+		return
+	}
 	org := auth.OrgID(r.Context())
 	if err := h.store.Delete(r.Context(), org, r.PathValue("id")); err != nil {
 		writeErr(w, err)
@@ -101,6 +114,9 @@ func (h System) Delete(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h System) Reorder(w http.ResponseWriter, r *http.Request) {
+	if !h.admins.RequireResourceBoardManager(w, r, "board", r.PathValue("boardID")) {
+		return
+	}
 	var in struct {
 		ColumnIDs []string `json:"column_ids"`
 	}

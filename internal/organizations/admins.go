@@ -186,6 +186,77 @@ func (a Admins) RequireAdmin(w http.ResponseWriter, r *http.Request) (org, user 
 	return org, user, true
 }
 
+// RequireBoardManager allows an org admin or a leader of the team assigned to a board.
+// It scopes leaders to one board and requires a signed-in session for either role.
+func (a Admins) RequireBoardManager(w http.ResponseWriter, r *http.Request, boardID string) bool {
+	org, user, ok := a.session(w, r)
+	if !ok {
+		return false
+	}
+	admin, err := a.IsAdmin(r.Context(), org, user)
+	if err != nil {
+		WriteErr(w, err)
+		return false
+	}
+	if admin {
+		return true
+	}
+	var exists, leader bool
+	err = a.DB.QueryRow(r.Context(), `SELECT
+		EXISTS (SELECT 1 FROM boards WHERE id::text=$1 AND owner_clerk_id=$2),
+		EXISTS (SELECT 1 FROM boards b JOIN team_members tm ON tm.team_id=b.team_id
+			WHERE b.id::text=$1 AND b.owner_clerk_id=$2 AND tm.user_clerk_id=$3 AND tm.leader)`, boardID, org, user).Scan(&exists, &leader)
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return false
+	}
+	if !exists {
+		http.NotFound(w, r)
+		return false
+	}
+	if !leader {
+		http.Error(w, "only organization admins or this board's team leaders can do this", http.StatusForbidden)
+		return false
+	}
+	return true
+}
+
+// RequireResourceBoardManager resolves a board-scoped resource before checking its manager.
+func (a Admins) RequireResourceBoardManager(w http.ResponseWriter, r *http.Request, resource string, id string) bool {
+	var boardID string
+	var err error
+	switch resource {
+	case "board":
+		boardID = id
+	case "column":
+		err = a.DB.QueryRow(r.Context(), `SELECT c.board_id::text FROM columns c JOIN boards b ON b.id=c.board_id WHERE c.id::text=$1 AND b.owner_clerk_id=$2`, id, auth.OrgID(r.Context())).Scan(&boardID)
+	case "sprint":
+		err = a.DB.QueryRow(r.Context(), `SELECT s.board_id::text FROM sprints s JOIN boards b ON b.id=s.board_id WHERE s.id::text=$1 AND b.owner_clerk_id=$2`, id, auth.OrgID(r.Context())).Scan(&boardID)
+	default:
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return false
+	}
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			http.NotFound(w, r)
+		} else {
+			http.Error(w, "internal error", http.StatusInternalServerError)
+		}
+		return false
+	}
+	return a.RequireBoardManager(w, r, boardID)
+}
+
+func (a Admins) session(w http.ResponseWriter, r *http.Request) (string, string, bool) {
+	org := auth.OrgID(r.Context())
+	user, signedIn := auth.UserID(r.Context())
+	if auth.ViaAPIKey(r.Context()) || !signedIn || org == "" {
+		http.Error(w, "sign in to do this", http.StatusForbidden)
+		return "", "", false
+	}
+	return org, user, true
+}
+
 // WriteErr maps the admin model's errors to responses.
 func WriteErr(w http.ResponseWriter, err error) {
 	switch {

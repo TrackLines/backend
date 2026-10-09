@@ -9,21 +9,23 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/tracklines/backend/internal/auth"
 	"github.com/tracklines/backend/internal/httpx"
+	"github.com/tracklines/backend/internal/organizations"
 )
 
 // NewSystem exposes the board handlers; routes are declared in internal/service.go.
-func NewSystem(db *pgxpool.Pool) System {
-	return System{store: Store{DB: db}}
+func NewSystem(db *pgxpool.Pool, admins organizations.Admins) System {
+	return System{store: Store{DB: db}, admins: admins}
 }
 
-type System struct{ store Store }
+type System struct {
+	store  Store
+	admins organizations.Admins
+}
 
 func writeErr(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, ErrNotFound):
 		http.Error(w, "not found", http.StatusNotFound)
-	case errors.Is(err, ErrSprintOpen):
-		http.Error(w, err.Error(), http.StatusConflict)
 	default:
 		logs.Errorf("boards: %v", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -32,9 +34,13 @@ func writeErr(w http.ResponseWriter, err error) {
 
 // Create adds a board to project {id} (one board per team).
 func (h System) Create(w http.ResponseWriter, r *http.Request) {
+	if _, _, ok := h.admins.RequireAdmin(w, r); !ok {
+		return
+	}
 	var in struct {
 		Name        string `json:"name"`
 		Description string `json:"description"`
+		TemplateID  string `json:"template_id"` // optional: a built-in or org template; default Simple
 	}
 	if !httpx.Decode(w, r, &in) {
 		return
@@ -44,7 +50,15 @@ func (h System) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	org := auth.OrgID(r.Context())
-	b, err := h.store.Create(r.Context(), org, r.PathValue("id"), in.Name, in.Description)
+	tpl := Builtins[0]
+	if in.TemplateID != "" {
+		var err error
+		if tpl, err = h.store.Template(r.Context(), org, in.TemplateID); err != nil {
+			http.Error(w, "template not found", http.StatusBadRequest)
+			return
+		}
+	}
+	b, err := h.store.CreateFrom(r.Context(), org, r.PathValue("id"), in.Name, in.Description, tpl)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -64,6 +78,9 @@ func (h System) Get(w http.ResponseWriter, r *http.Request) {
 
 // Update changes the board name and estimate scale. Switching scale clears open estimates.
 func (h System) Update(w http.ResponseWriter, r *http.Request) {
+	if !h.admins.RequireResourceBoardManager(w, r, "board", r.PathValue("id")) {
+		return
+	}
 	var in struct {
 		Name          *string `json:"name"`
 		EstimateScale *string `json:"estimate_scale"`
@@ -110,6 +127,9 @@ func (h System) Update(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h System) Delete(w http.ResponseWriter, r *http.Request) {
+	if _, _, ok := h.admins.RequireAdmin(w, r); !ok {
+		return
+	}
 	org := auth.OrgID(r.Context())
 	if err := h.store.Delete(r.Context(), r.PathValue("id"), org); err != nil {
 		writeErr(w, err)

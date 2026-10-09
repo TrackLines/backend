@@ -114,6 +114,9 @@ func (s Store) Close(ctx context.Context, owner, sprintID string) (*Sprint, erro
 // with the same length starting now, and carries over every ticket that isn't in the
 // board's last column ("done"), keeping its column and order.
 func closeSprint(ctx context.Context, tx pgx.Tx, id string) (Sprint, error) {
+	if err := boards.RecordScope(ctx, tx, id); err != nil {
+		return Sprint{}, err
+	}
 	if _, err := tx.Exec(ctx, `UPDATE sprints SET closed_at = now() WHERE id = $1`, id); err != nil {
 		return Sprint{}, err
 	}

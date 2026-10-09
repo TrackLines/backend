@@ -1,9 +1,12 @@
 package boards
 
 import (
+	"context"
 	"errors"
 	"slices"
 	"strconv"
+
+	"github.com/jackc/pgx/v5"
 )
 
 // Scales are the ways a board can estimate tickets, smallest first. "none" turns estimates off.
@@ -36,4 +39,23 @@ func Points(estimate *string) float64 {
 	}
 	p, _ := strconv.ParseFloat(*estimate, 64)
 	return p
+}
+
+// RecordScope stores what an open sprint holds (ticket count and estimate points) just before it
+// closes, while unfinished tickets are still in it. Past burn charts start from this.
+func RecordScope(ctx context.Context, tx pgx.Tx, sprintID string) error {
+	rows, err := tx.Query(ctx, `SELECT estimate FROM tickets WHERE sprint_id = $1`, sprintID)
+	if err != nil {
+		return err
+	}
+	estimates, err := pgx.CollectRows(rows, pgx.RowTo[*string])
+	if err != nil {
+		return err
+	}
+	points := 0.0
+	for _, e := range estimates {
+		points += Points(e)
+	}
+	_, err = tx.Exec(ctx, `UPDATE sprints SET scope_tickets = $2, scope_points = $3 WHERE id = $1`, sprintID, len(estimates), points)
+	return err
 }
