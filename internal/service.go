@@ -3,6 +3,8 @@ package internal
 import (
 	"context"
 	"errors"
+	"github.com/clerk/clerk-sdk-go/v2"
+	"github.com/clerk/clerk-sdk-go/v2/organizationmembership"
 	"net/http"
 	"os/signal"
 	"syscall"
@@ -19,6 +21,7 @@ import (
 	"github.com/tracklines/backend/internal/billing"
 	"github.com/tracklines/backend/internal/boards"
 	"github.com/tracklines/backend/internal/bugfixes-tickets"
+	"github.com/tracklines/backend/internal/clerkcache"
 	"github.com/tracklines/backend/internal/columns"
 	"github.com/tracklines/backend/internal/comments"
 	"github.com/tracklines/backend/internal/config"
@@ -26,6 +29,7 @@ import (
 	"github.com/tracklines/backend/internal/mcp"
 	"github.com/tracklines/backend/internal/organizations"
 	"github.com/tracklines/backend/internal/projects"
+	"github.com/tracklines/backend/internal/ratelimit"
 	"github.com/tracklines/backend/internal/roadmaps"
 	"github.com/tracklines/backend/internal/sprints"
 	"github.com/tracklines/backend/internal/teams"
@@ -39,7 +43,7 @@ import (
 type Service struct {
 	Config  *ConfigBuilder.Config
 	DB      *pgxpool.Pool
-	Valkey  valkey.Client
+	Valkey  valkey.Client   // optional (nil when unreachable at startup): caching only
 	Flags   *goFlags.Client // s.Flags.Is("name").Enabled()
 	Billing billing.Service
 	Port    string
@@ -59,7 +63,9 @@ func (s *Service) Start() error {
 func (s *Service) Handler() http.Handler {
 	mux := http.NewServeMux()
 	signedIn := func(h http.HandlerFunc) http.Handler { return auth.Required(h) }
-	o := organizations.NewSystem(s.DB)
+	// Clerk member lists for pickers come from Valkey for a minute; checks that guard changes ask Clerk
+	members := clerkcache.Memberships{Next: organizationmembership.NewClient(&clerk.ClientConfig{}), VK: s.Valkey, TTL: time.Minute}
+	o := organizations.NewSystem(s.DB).CachingMembers(members)
 	mux.Handle("GET /api/organizations/members", signedIn(o.Members))
 	mux.Handle("GET /api/organizations/me", signedIn(o.Me))             // the caller's admin flag and the teams they lead
 	mux.Handle("GET /api/organizations/admins", signedIn(o.ListAdmins)) // first admin is resolved from Clerk on demand
@@ -116,7 +122,7 @@ func (s *Service) Handler() http.Handler {
 	mux.Handle("DELETE /api/columns/{id}", signedIn(c.Delete))
 
 	// Tickets
-	t := tickets.NewSystem(s.DB)
+	t := tickets.NewSystem(s.DB).CachingMembers(members)
 	mux.Handle("POST /api/columns/{id}/tickets", signedIn(t.Create))
 	mux.Handle("GET /api/tickets/{id}", signedIn(t.Get)) // one ticket + where it lives (deep links)
 	mux.Handle("PATCH /api/tickets/{id}", signedIn(t.Update))
@@ -195,8 +201,8 @@ func (s *Service) Handler() http.Handler {
 	// MCP (Streamable HTTP) for bots: same auth as REST (tl_ key or Clerk session); each tool calls a REST route
 	// in-process through handler, so MCP and REST can't drift apart
 	mux.Handle("/mcp", auth.Required(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { mcpHandler.ServeHTTP(w, r) })))
-	handler = apikeys.Middleware(s.DB)(bugfixesTickets.Middleware(s.DB)(auth.Optional(users.Ensure(s.DB)(
-		bm.Recoverer(bm.RequestID(bm.Logger(cors.CORS(mux))))))))
+	handler = apikeys.Middleware(s.DB)(bugfixesTickets.Middleware(s.DB)(ratelimit.Middleware(s.Valkey, config.Get(s.Config).RateLimit, time.Now)(auth.Optional(users.Ensure(s.DB)(
+		bm.Recoverer(bm.RequestID(bm.Logger(cors.CORS(mux)))))))))
 	mcpHandler = mcp.Handler(handler, "1.0.0")
 	return handler
 }
@@ -206,10 +212,7 @@ func (s *Service) health(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "db down", http.StatusServiceUnavailable)
 		return
 	}
-	if err := s.Valkey.Do(r.Context(), s.Valkey.B().Ping().Build()).Error(); err != nil {
-		http.Error(w, "valkey down", http.StatusServiceUnavailable)
-		return
-	}
+	// Valkey only caches; the API works without it, so it doesn't fail the health check
 	_, _ = w.Write([]byte("ok"))
 }
 

@@ -53,11 +53,14 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("parse valkey url: %w", err)
 	}
+	// Valkey only caches, so the API runs without it (it isn't retried until the next restart)
 	vk, err := valkey.NewClient(vkOpt)
 	if err != nil {
-		return fmt.Errorf("connect valkey: %w", err)
+		logs.Warnf("valkey unavailable, running without the cache: %v", err)
+		vk = nil
+	} else {
+		defer vk.Close()
 	}
-	defer vk.Close()
 
 	port := strconv.Itoa(c.Local.HTTPPort)
 	if pc.RailwayPort != "" {

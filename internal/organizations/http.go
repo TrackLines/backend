@@ -33,6 +33,9 @@ func NewSystem(db *pgxpool.Pool) System {
 	return System{memberships: m, admins: Admins{DB: db, Orgs: organization.NewClient(&clerk.ClientConfig{}), Memberships: m}}
 }
 
+// CachingMembers serves the member list through l (e.g. clerkcache). Admin checks still ask Clerk directly.
+func (h System) CachingMembers(l membershipLister) System { h.memberships = l; return h }
+
 // AdminModel exposes the org-admin model to other packages (teams checks admins with it).
 func (h System) AdminModel() Admins { return h.admins }
 

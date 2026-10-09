@@ -152,8 +152,12 @@ func (h System) isOrganizationMember(ctx context.Context, org, user string) (boo
 func (h System) organizationAssignees(ctx context.Context, org, user string) ([]Assignee, error) {
 	const limit int64 = 500
 	var out []Assignee
+	source := h.memberships
+	if h.assigneeMembers != nil {
+		source = h.assigneeMembers
+	}
 	for offset := int64(0); ; offset += limit {
-		list, err := h.memberships.List(ctx, &organizationmembership.ListParams{
+		list, err := source.List(ctx, &organizationmembership.ListParams{
 			OrganizationID: org,
 			ListParams:     clerk.ListParams{Limit: ptr(limit), Offset: ptr(offset)},
 		})

@@ -21,9 +21,13 @@ func NewSystem(db *pgxpool.Pool) System {
 	return System{store: Store{DB: db}, memberships: organizationmembership.NewClient(&clerk.ClientConfig{})}
 }
 
+// CachingMembers lists assignees through l (e.g. clerkcache). Assignment checks still ask Clerk directly.
+func (h System) CachingMembers(l membershipLister) System { h.assigneeMembers = l; return h }
+
 type System struct {
-	store       Store
-	memberships membershipLister
+	store           Store
+	assigneeMembers membershipLister // nil: memberships
+	memberships     membershipLister
 }
 
 type ticketInput struct {
