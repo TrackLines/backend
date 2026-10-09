@@ -101,7 +101,8 @@ func (h System) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	if in.TargetID != nil {
 		exists, err := h.targetExists(r.Context(), org, in.Scope, *in.TargetID)
-		if err != nil {			http.Error(w, "internal error", http.StatusInternalServerError)
+		if err != nil {
+			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
 		if !exists {
@@ -196,6 +197,51 @@ func (h System) List(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusOK, out)
 }
 
+// Mine lists pending invitations addressed to the signed-in user's verified email addresses.
+// It does not require an active organization because invitees may not be members yet.
+func (h System) Mine(w http.ResponseWriter, r *http.Request) {
+	if auth.ViaAPIKey(r.Context()) {
+		http.Error(w, "invitations require a signed-in session", http.StatusForbidden)
+		return
+	}
+	userID, ok := auth.UserID(r.Context())
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	emails, err := h.verifiedEmails(r.Context(), userID)
+	if err != nil {
+		writeClerkErr(w, "load invitation recipient", err)
+		return
+	}
+	if len(emails) == 0 {
+		httpx.JSON(w, http.StatusOK, []Invitation{})
+		return
+	}
+	rows, err := h.db.Query(r.Context(), `SELECT id::text,org_id,email_address,scope,target_id::text,invited_by,accept_url,status,expires_at,accepted_user_clerk_id,accepted_at,created_at
+		FROM invitations WHERE lower(email_address)=ANY($1) AND status='pending' AND expires_at>now()
+		ORDER BY created_at DESC,id`, emails)
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+	out := make([]Invitation, 0)
+	for rows.Next() {
+		var item Invitation
+		if err := rows.Scan(&item.ID, &item.OrgID, &item.EmailAddress, &item.Scope, &item.TargetID, &item.InvitedBy, &item.AcceptURL, &item.Status, &item.ExpiresAt, &item.AcceptedBy, &item.AcceptedAt, &item.CreatedAt); err != nil {
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		out = append(out, item)
+	}
+	if err := rows.Err(); err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, out)
+}
+
 func (h System) Get(w http.ResponseWriter, r *http.Request) {
 	org, _, ok := h.admins.RequireAdmin(w, r)
 	if !ok {
@@ -266,7 +312,7 @@ func (h System) Accept(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invitation is no longer pending", http.StatusGone)
 		return
 	}
-	verified, err := h.hasVerifiedEmail(r.Context(), userID, inv.Email)
+	verified, err := h.hasVerifiedEmail(r.Context(), userID, inv.EmailAddress)
 	if err != nil {
 		writeClerkErr(w, "load invitation recipient", err)
 		return
@@ -280,11 +326,15 @@ func (h System) Accept(w http.ResponseWriter, r *http.Request) {
 		writeClerkErr(w, "inspect organization invitation", err)
 		return
 	}
+	if clerkInvite.Status == "revoked" || clerkInvite.Status == "expired" {
+		http.Error(w, "Clerk invitation is no longer valid", http.StatusGone)
+		return
+	}
 	if clerkInvite.Status != "accepted" {
 		http.Error(w, "accept the organization invitation through Clerk before completing this invitation", http.StatusConflict)
 		return
 	}
-	if clerkInvite.OrganizationID != inv.OrgID || !strings.EqualFold(clerkInvite.EmailAddress, inv.Email) {
+	if clerkInvite.OrganizationID != inv.OrgID || !strings.EqualFold(clerkInvite.EmailAddress, inv.EmailAddress) {
 		http.Error(w, "invitation details do not match", http.StatusConflict)
 		return
 	}
@@ -330,10 +380,19 @@ func (h System) Accept(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		case "project":
-			_, err := tx.Exec(r.Context(), `INSERT INTO project_members(project_id,user_clerk_id,invited_by)
-				SELECT $1,$2,$3 WHERE EXISTS(SELECT 1 FROM projects WHERE id=$1 AND owner_clerk_id=$4) ON CONFLICT DO NOTHING`, locked.targetID, userID, locked.invitedBy, locked.OrgID)
+			tag, err := tx.Exec(r.Context(), `INSERT INTO project_members(project_id,user_clerk_id,invited_by)
+				SELECT $1,$2,$3 WHERE EXISTS(SELECT 1 FROM projects WHERE id=$1 AND owner_clerk_id=$4) ON CONFLICT DO NOTHING`, locked.targetID, userID, locked.InvitedBy, locked.OrgID)
 			if err != nil {
 				return err
+			}
+			if tag.RowsAffected() == 0 {
+				var exists bool
+				if err := tx.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM projects WHERE id::text=$1 AND owner_clerk_id=$2)`, locked.targetID, locked.OrgID).Scan(&exists); err != nil {
+					return err
+				}
+				if !exists {
+					return pgx.ErrNoRows
+				}
 			}
 		}
 		_, err = tx.Exec(r.Context(), `UPDATE invitations SET status='accepted',accepted_user_clerk_id=$2,accepted_at=now() WHERE id=$1`, locked.ID, userID)
@@ -356,13 +415,13 @@ func (h System) Accept(w http.ResponseWriter, r *http.Request) {
 
 type dbInvitation struct {
 	Invitation
-	clerkID   string
+	clerkID    string
 	acceptedBy string
-	targetID  string
+	targetID   string
 }
 
 var (
-	errInvitationConsumed   = errors.New("invitation already accepted by another user")
+	errInvitationConsumed    = errors.New("invitation already accepted by another user")
 	errInvitationUnavailable = errors.New("invitation unavailable")
 )
 
@@ -407,16 +466,30 @@ func (h System) targetExists(ctx context.Context, org, scope, id string) (bool, 
 }
 
 func (h System) hasVerifiedEmail(ctx context.Context, userID, email string) (bool, error) {
-	person, err := h.users.Get(ctx, userID)
+	emails, err := h.verifiedEmails(ctx, userID)
 	if err != nil {
 		return false, err
 	}
-	for _, address := range person.EmailAddresses {
-		if address != nil && strings.EqualFold(address.EmailAddress, email) && address.Verification != nil && address.Verification.Status == "verified" {
+	for _, address := range emails {
+		if strings.EqualFold(address, email) {
 			return true, nil
 		}
 	}
 	return false, nil
+}
+
+func (h System) verifiedEmails(ctx context.Context, userID string) ([]string, error) {
+	person, err := h.users.Get(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	emails := make([]string, 0, len(person.EmailAddresses))
+	for _, address := range person.EmailAddresses {
+		if address != nil && address.EmailAddress != "" && address.Verification != nil && address.Verification.Status == "verified" {
+			emails = append(emails, strings.ToLower(address.EmailAddress))
+		}
+	}
+	return emails, nil
 }
 
 func hasMembership(list *clerk.OrganizationMembershipList, userID string) bool {

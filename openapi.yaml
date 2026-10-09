@@ -201,6 +201,113 @@ paths:
         '204': { description: Removed. }
         '403': { description: Not a signed-in org admin. }
         '409': { description: That is the organization's last admin. }
+  /invitations:
+    get:
+      tags: [Organizations]
+      operationId: listMyInvitations
+      summary: List pending invitations sent to the caller
+      description: Uses the caller's verified Clerk email addresses and does not require an active organization.
+      responses:
+        '200':
+          description: Pending invitations addressed to the caller.
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/Invitation' } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: API keys cannot inspect or accept invitations. }
+        '502': { description: Clerk could not load the caller's verified email addresses. }
+  /organizations/invitations:
+    get:
+      tags: [Organizations]
+      operationId: listOrganizationInvitations
+      summary: List invitations created for the active organization
+      description: Org admins only. Pending, accepted, and revoked TrackLines invitations are returned newest first; expired pending invitations are reported as expired.
+      responses:
+        '200':
+          description: Organization invitations.
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/Invitation' } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: Requires a signed-in organization admin. }
+    post:
+      tags: [Organizations]
+      operationId: createOrganizationInvitation
+      summary: Invite an email address to an organization, team, or project
+      description: >-
+        Org admins only. Clerk sends an organization invitation with the org:member role. For team or project
+        scope, the recipient must accept through Clerk and then call the accept operation below with a signed-in
+        session using the invited, verified email address. Team invites create ordinary team membership; project
+        invites create project membership. Organization members retain read access to all organization projects.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/InvitationInput' }
+      responses:
+        '201':
+          description: Invitation created. accept_url is the Clerk-hosted invitation link.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Invitation' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: Requires a signed-in organization admin. }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: The email address is already an organization member. }
+        '502': { description: Clerk could not create or validate the invitation. }
+  /organizations/invitations/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [Organizations]
+      operationId: getOrganizationInvitation
+      summary: Inspect an organization invitation
+      responses:
+        '200':
+          description: Invitation details.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Invitation' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: Requires a signed-in organization admin. }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [Organizations]
+      operationId: revokeOrganizationInvitation
+      summary: Revoke a pending invitation
+      responses:
+        '204': { description: Invitation revoked in Clerk and TrackLines. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: Requires a signed-in organization admin. }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Only pending invitations can be revoked. }
+        '502': { description: Clerk could not revoke the invitation. }
+  /organizations/invitations/{id}/accept:
+    post:
+      tags: [Organizations]
+      operationId: acceptOrganizationInvitation
+      summary: Complete an accepted Clerk invitation in TrackLines
+      description: >-
+        The invitee must first accept the Clerk invitation. This endpoint then verifies the Clerk invitation,
+        active organization membership, and a verified matching email. Team and project invitations create the
+        corresponding local membership; team invitations never assign team leader authority. API keys are refused.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '204': { description: Invitation accepted and local membership applied. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: The caller is an API key or does not own the invited verified email address. }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Clerk invitation or organization membership is not accepted yet. }
+        '410': { description: Invitation expired, revoked, or already accepted by another user. }
+        '502': { description: Clerk could not verify the invitation or recipient. }
   /teams/{teamId}/leaders/{userId}:
     parameters:
       - name: teamId
@@ -1597,6 +1704,29 @@ components:
       properties:
         user_id: { type: string }
         granted_by: { type: string, description: "clerk:creator, clerk:admin-role, clerk:earliest-member, or the user id of the admin who granted it" }
+        created_at: { type: string, format: date-time }
+    InvitationInput:
+      type: object
+      required: [email_address, scope]
+      properties:
+        email_address: { type: string, format: email }
+        scope: { type: string, enum: [organization, team, project] }
+        target_id: { type: string, format: uuid, description: Required for team and project scopes; omit for organization scope. }
+    Invitation:
+      type: object
+      required: [id, org_id, email_address, scope, invited_by, status, expires_at, created_at]
+      properties:
+        id: { type: string, format: uuid, description: TrackLines invitation id used by inspect, revoke, and accept routes. }
+        org_id: { type: string }
+        email_address: { type: string, format: email }
+        scope: { type: string, enum: [organization, team, project] }
+        target_id: { type: string, format: uuid }
+        invited_by: { type: string }
+        accept_url: { type: string, format: uri, description: Clerk-hosted invitation URL, returned by create and list/get. }
+        status: { type: string, enum: [pending, accepted, revoked, expired] }
+        expires_at: { type: string, format: date-time }
+        accepted_by: { type: string }
+        accepted_at: { type: string, format: date-time }
         created_at: { type: string, format: date-time }
     TeamMember:
       type: object

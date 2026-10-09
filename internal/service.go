@@ -66,6 +66,7 @@ func (s *Service) Handler() http.Handler {
 	mux.Handle("PUT /api/organizations/admins/{userID}", signedIn(o.GrantAdmin))
 	mux.Handle("DELETE /api/organizations/admins/{userID}", signedIn(o.RevokeAdmin)) // never the last admin
 	iv := invitations.NewSystem(s.DB, o.AdminModel())
+	mux.Handle("GET /api/invitations", auth.Optional(http.HandlerFunc(iv.Mine))) // invitations addressed to the signed-in user's verified emails
 	mux.Handle("GET /api/organizations/invitations", signedIn(iv.List))
 	mux.Handle("POST /api/organizations/invitations", signedIn(iv.Create))
 	mux.Handle("GET /api/organizations/invitations/{id}", signedIn(iv.Get))
