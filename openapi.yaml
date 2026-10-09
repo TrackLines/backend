@@ -261,6 +261,26 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/NotFound'
+    patch:
+      tags: [Boards]
+      operationId: updateBoard
+      summary: Rename a board or change its settings
+      description: Provide name, estimate_scale, or both. Changing estimate_scale clears the estimates of tickets on the board, except those in closed sprints (kept for velocity history).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              minProperties: 1
+              properties:
+                name: { type: string, minLength: 1 }
+                estimate_scale: { $ref: '#/components/schemas/EstimateScale' }
+      responses:
+        '204': { description: Board updated. }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
     delete:
       tags: [Boards]
       operationId: deleteBoard
@@ -1169,6 +1189,10 @@ components:
       maxItems: 20
       items: { type: string, maxLength: 50 }
       description: Free-form labels. Trimmed; blanks and case-insensitive duplicates dropped (first spelling wins). Omit to leave unchanged; [] clears.
+    EstimateScale:
+      type: string
+      enum: [none, fibonacci, tshirt, powers, linear]
+      description: 'How a board estimates tickets. fibonacci 1,2,3,5,8,13,21; tshirt XS,S,M,L,XL; powers 1,2,4,8,16; linear 1-5; none turns estimates off.'
     TicketInput:
       type: object
       required: [title]
@@ -1184,6 +1208,9 @@ components:
           enum: [low, medium, high, urgent]
           default: medium
         labels: { $ref: '#/components/schemas/Labels' }
+        estimate:
+          type: string
+          description: A value on the board's estimate_scale (400 otherwise). Omitted = unchanged; empty string clears. Not allowed on backlog tickets.
     CreateBugfixTicket:
       type: object
       required: [board_id, column_id, title]
@@ -1257,6 +1284,7 @@ components:
         owner_clerk_id: { type: string }
         name: { type: string }
         description: { type: string }
+        estimate_scale: { $ref: '#/components/schemas/EstimateScale' }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
         stats:
@@ -1285,6 +1313,7 @@ components:
         created_by: { type: string }
         assigned_to: { type: [string, 'null'] }
         priority: { type: string, enum: [low, medium, high, urgent] }
+        estimate: { type: [string, 'null'], description: "On the board's estimate_scale. Cleared when the ticket moves to the backlog or to a board with another scale." }
         position: { type: integer }
         blocked: { type: boolean }
         labels: { type: array, items: { type: string }, description: 'Free-form labels, sorted case-insensitively.' }
@@ -1388,6 +1417,8 @@ components:
         priority: { type: string, enum: [low, medium, high, urgent] }
         board_id: { type: [string, 'null'], format: uuid }
         board_name: { type: [string, 'null'] }
+        estimate: { type: [string, 'null'] }
+        estimate_scale: { $ref: '#/components/schemas/EstimateScale' }
         column_id: { type: [string, 'null'], format: uuid }
         column_name: { type: [string, 'null'] }
         done: { type: boolean }
@@ -1532,6 +1563,7 @@ components:
         owner_clerk_id: { type: string }
         name: { type: string }
         description: { type: string }
+        estimate_scale: { $ref: '#/components/schemas/EstimateScale' }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
         sprint: { $ref: '#/components/schemas/Sprint' }

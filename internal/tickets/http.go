@@ -10,6 +10,7 @@ import (
 	"github.com/bugfixes/go-bugfixes/logs"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/tracklines/backend/internal/auth"
+	"github.com/tracklines/backend/internal/boards"
 	"github.com/tracklines/backend/internal/httpx"
 )
 
@@ -26,6 +27,7 @@ type ticketInput struct {
 	Description string    `json:"description"`
 	Priority    string    `json:"priority"` // low | medium | high | urgent; defaults to medium on create
 	Labels      *[]string `json:"labels"`   // optional; omitted = unchanged, [] clears
+	Estimate    *string   `json:"estimate"` // on the board's scale; omitted = unchanged, "" clears
 }
 
 func (in ticketInput) createType() string {
@@ -64,6 +66,20 @@ func (h System) applyPriority(r *http.Request, user string, in ticketInput, t *T
 	return h.store.Update(r.Context(), user, t.ID, "", t.Title, t.Description, in.Priority)
 }
 
+// applyEstimate stores an estimate sent with a create/update (checked against the board's scale); t may be nil.
+func (h System) applyEstimate(r *http.Request, user, id string, in ticketInput, t *Ticket) error {
+	if in.Estimate == nil {
+		return nil
+	}
+	if err := h.store.SetEstimate(r.Context(), user, id, *in.Estimate); err != nil {
+		return err
+	}
+	if t != nil && *in.Estimate != "" {
+		t.Estimate = in.Estimate
+	}
+	return nil
+}
+
 // applyLabels stores labels sent with a create/update (validated by valid); t may be nil.
 func (h System) applyLabels(r *http.Request, user, id string, in ticketInput, t *Ticket) error {
 	if in.Labels == nil {
@@ -90,7 +106,7 @@ func writeErr(w http.ResponseWriter, err error) {
 		http.Error(w, err.Error(), http.StatusConflict)
 		return
 	case errors.Is(err, ErrSelfBlock), errors.Is(err, ErrOtherProject), errors.Is(err, ErrCycle), errors.Is(err, ErrUnknownAssignee), errors.Is(err, ErrBadLabels),
-		errors.Is(err, ErrSelfParent), errors.Is(err, ErrParentLoop):
+		errors.Is(err, ErrSelfParent), errors.Is(err, ErrParentLoop), errors.Is(err, boards.ErrBadEstimate):
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -111,6 +127,9 @@ func (h System) Create(w http.ResponseWriter, r *http.Request) {
 	if err == nil {
 		err = h.applyPriority(r, org, in, t)
 	}
+	if err == nil {
+		err = h.applyEstimate(r, org, t.ID, in, t)
+	}
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -127,6 +146,9 @@ func (h System) Update(w http.ResponseWriter, r *http.Request) {
 	err := h.store.Update(r.Context(), org, r.PathValue("id"), in.Type, in.Title, in.Description, in.Priority)
 	if err == nil {
 		err = h.applyLabels(r, org, r.PathValue("id"), in, nil)
+	}
+	if err == nil {
+		err = h.applyEstimate(r, org, r.PathValue("id"), in, nil)
 	}
 	if err != nil {
 		writeErr(w, err)
@@ -216,6 +238,10 @@ func intParam(w http.ResponseWriter, raw, name string, def, max int) (int, bool)
 func (h System) CreateBacklog(w http.ResponseWriter, r *http.Request) {
 	var in ticketInput
 	if !httpx.Decode(w, r, &in) || !in.valid(w) {
+		return
+	}
+	if in.Estimate != nil && *in.Estimate != "" {
+		http.Error(w, "backlog tickets can't be estimated; estimates follow the board's scale", http.StatusBadRequest)
 		return
 	}
 	org := auth.OrgID(r.Context())

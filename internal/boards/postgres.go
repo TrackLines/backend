@@ -25,6 +25,7 @@ type Ticket struct {
 	Title       string   `json:"title"`
 	Description string   `json:"description"`
 	Priority    string   `json:"priority"`
+	Estimate    *string  `json:"estimate"` // on the board's scale; null = not estimated
 	Position    int      `json:"position"`
 	Blocked     bool     `json:"blocked"` // a ticket it depends on isn't done yet
 	Labels      []string `json:"labels"`  // free-form, sorted case-insensitively
@@ -32,7 +33,7 @@ type Ticket struct {
 
 // TicketCols + ScanTicket read a ticket row; shared with the tickets package. The last column
 // is "blocked": some ticket it depends on isn't done yet.
-var TicketCols = `t.id, t.created_by, t.assigned_to, t.project_id, t.column_id, t.sprint_id, t.type::text, t.title, t.description, t.priority::text, t.position, ` + TicketBlockedSQL +
+var TicketCols = `t.id, t.created_by, t.assigned_to, t.project_id, t.column_id, t.sprint_id, t.type::text, t.title, t.description, t.priority::text, t.estimate, t.position, ` + TicketBlockedSQL +
 	`, ARRAY(SELECT l.label FROM ticket_labels l WHERE l.ticket_id = t.id ORDER BY lower(l.label))`
 
 func ScanTicket(row pgx.Row) (Ticket, error) {
@@ -57,7 +58,7 @@ var TicketBlockedSQL = `EXISTS (SELECT 1 FROM ticket_dependencies td JOIN ticket
 
 // TicketDest lists scan targets matching TicketCols, for queries that select extra columns after them.
 func TicketDest(t *Ticket) []any {
-	return []any{&t.ID, &t.CreatedBy, &t.AssignedTo, &t.ProjectID, &t.ColumnID, &t.SprintID, &t.Type, &t.Title, &t.Description, &t.Priority, &t.Position, &t.Blocked, &t.Labels}
+	return []any{&t.ID, &t.CreatedBy, &t.AssignedTo, &t.ProjectID, &t.ColumnID, &t.SprintID, &t.Type, &t.Title, &t.Description, &t.Priority, &t.Estimate, &t.Position, &t.Blocked, &t.Labels}
 }
 
 // Sprint is a board's time box; only the open one is shown on the board.
@@ -90,16 +91,17 @@ type Column struct {
 }
 
 type Board struct {
-	ID           string   `json:"id"`
-	ProjectID    string   `json:"project_id"`
-	OwnerClerkID string   `json:"owner_clerk_id"`
-	Name         string   `json:"name"`
-	Description  string   `json:"description"`
-	CreatedAt    string   `json:"created_at"`
-	UpdatedAt    string   `json:"updated_at"`
-	Sprint       *Sprint  `json:"sprint,omitempty"` // open sprint, if the board runs sprints
-	Columns      []Column `json:"columns,omitempty"`
-	Stats        *Stats   `json:"stats,omitempty"` // ListByProject only
+	ID            string   `json:"id"`
+	ProjectID     string   `json:"project_id"`
+	OwnerClerkID  string   `json:"owner_clerk_id"`
+	Name          string   `json:"name"`
+	Description   string   `json:"description"`
+	EstimateScale string   `json:"estimate_scale"` // a key of Scales
+	CreatedAt     string   `json:"created_at"`
+	UpdatedAt     string   `json:"updated_at"`
+	Sprint        *Sprint  `json:"sprint,omitempty"` // open sprint, if the board runs sprints
+	Columns       []Column `json:"columns,omitempty"`
+	Stats         *Stats   `json:"stats,omitempty"` // ListByProject only
 }
 
 // Stats summarises a board for its project page. It counts the tickets the board shows:
@@ -117,13 +119,13 @@ type Stats struct {
 
 type Store struct{ DB *pgxpool.Pool }
 
-const cols = `id, project_id, owner_clerk_id, name, description,
+const cols = `id, project_id, owner_clerk_id, name, description, estimate_scale,
 	to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
 	to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')`
 
 func scan(row pgx.Row) (Board, error) {
 	var b Board
-	err := row.Scan(&b.ID, &b.ProjectID, &b.OwnerClerkID, &b.Name, &b.Description, &b.CreatedAt, &b.UpdatedAt)
+	err := row.Scan(&b.ID, &b.ProjectID, &b.OwnerClerkID, &b.Name, &b.Description, &b.EstimateScale, &b.CreatedAt, &b.UpdatedAt)
 	return b, notFound(err)
 }
 
@@ -166,7 +168,7 @@ func (s Store) Create(ctx context.Context, owner, projectID, name, desc string) 
 
 // ListByProject lists a project's boards (without columns); callers check ownership.
 func (s Store) ListByProject(ctx context.Context, projectID string) ([]Board, error) {
-	rows, err := s.DB.Query(ctx, `SELECT boards.id, boards.project_id, boards.owner_clerk_id, boards.name, boards.description,
+	rows, err := s.DB.Query(ctx, `SELECT boards.id, boards.project_id, boards.owner_clerk_id, boards.name, boards.description, boards.estimate_scale,
 		to_char(boards.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
 		to_char(boards.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
 		count(t.tid) FILTER (WHERE NOT t.done),
@@ -186,7 +188,7 @@ func (s Store) ListByProject(ctx context.Context, projectID string) ([]Board, er
 	}
 	out, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (Board, error) {
 		b, st := Board{}, Stats{}
-		err := row.Scan(&b.ID, &b.ProjectID, &b.OwnerClerkID, &b.Name, &b.Description, &b.CreatedAt, &b.UpdatedAt,
+		err := row.Scan(&b.ID, &b.ProjectID, &b.OwnerClerkID, &b.Name, &b.Description, &b.EstimateScale, &b.CreatedAt, &b.UpdatedAt,
 			&st.Open, &st.InProgress, &st.Done, &st.Urgent, &st.Active, &st.SprintNumber, &st.SprintEndsAt)
 		b.Stats = &st
 		return b, err
@@ -195,6 +197,41 @@ func (s Store) ListByProject(ctx context.Context, projectID string) ([]Board, er
 		out = []Board{}
 	}
 	return out, err
+}
+
+// UpdateSettings changes the board name and/or estimate scale. Estimates on the old scale mean
+// nothing on the new one, so they're cleared, except on closed sprints' tickets, which velocity reads.
+func (s Store) UpdateSettings(ctx context.Context, id, owner, name string, scale *string) error {
+	return pgx.BeginFunc(ctx, s.DB, func(tx pgx.Tx) error {
+		var old string
+		if err := tx.QueryRow(ctx, `SELECT estimate_scale FROM boards WHERE id = $1 AND owner_clerk_id = $2 FOR UPDATE`, id, owner).Scan(&old); err != nil {
+			return notFound(err)
+		}
+		updatedScale := old
+		if scale != nil {
+			updatedScale = *scale
+		}
+		if name == "" && old == updatedScale {
+			return nil
+		}
+		if _, err := tx.Exec(ctx, `UPDATE boards SET name = COALESCE(NULLIF($3, ''), name), estimate_scale = $4, updated_at = now()
+			WHERE id = $1 AND owner_clerk_id = $2`, id, owner, name, updatedScale); err != nil {
+			return err
+		}
+		if scale != nil && old != updatedScale {
+			if _, err := tx.Exec(ctx, `UPDATE tickets t SET estimate = NULL, updated_at = now() WHERE t.board_id = $1 AND t.estimate IS NOT NULL
+				AND NOT EXISTS (SELECT 1 FROM sprints sp WHERE sp.id = t.sprint_id AND sp.closed_at IS NOT NULL)`, id); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+// SetEstimateScale changes how the board estimates. Estimates on the old scale mean nothing on
+// the new one, so they're cleared, except on closed sprints' tickets, which velocity history reads.
+func (s Store) SetEstimateScale(ctx context.Context, id, owner, scale string) error {
+	return s.UpdateSettings(ctx, id, owner, "", &scale)
 }
 
 // Get returns the board with ordered columns and tickets if owner holds it.

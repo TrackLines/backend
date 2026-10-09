@@ -187,6 +187,21 @@ func (s Store) Update(ctx context.Context, owner, id, typ, title, desc, priority
 		FROM projects p WHERE t.id = $1 AND p.id = t.project_id AND p.owner_clerk_id = $2`, id, owner, title, desc, typ, priority))
 }
 
+// SetEstimate sets ("" clears) the ticket's estimate; it must be on its board's scale, so a
+// backlog ticket (no board) can only be cleared.
+func (s Store) SetEstimate(ctx context.Context, owner, id, estimate string) error {
+	var scale string
+	if err := s.DB.QueryRow(ctx, `SELECT COALESCE(b.estimate_scale, 'none') FROM tickets t
+		JOIN projects p ON p.id = t.project_id AND p.owner_clerk_id = $2
+		LEFT JOIN boards b ON b.id = t.board_id WHERE t.id = $1`, id, owner).Scan(&scale); err != nil {
+		return notFound(err)
+	}
+	if !boards.ValidEstimate(scale, estimate) {
+		return boards.ErrBadEstimate
+	}
+	return exec(s.DB.Exec(ctx, `UPDATE tickets SET estimate = NULLIF($2, ''), updated_at = now() WHERE id = $1`, id, estimate))
+}
+
 // Claim assigns an unassigned ticket to actor atomically and returns the updated ticket.
 func (s Store) Claim(ctx context.Context, owner, actor, id string) (*Ticket, error) {
 	t, err := boards.ScanTicket(s.DB.QueryRow(ctx, `UPDATE tickets t SET assigned_to = $3, updated_at = now()
@@ -267,8 +282,11 @@ func (s Store) Move(ctx context.Context, owner, id, toColumn string, pos int) er
 		}
 		pos = max(0, min(pos, len(ids)))
 		ids = append(ids[:pos], append([]string{id}, ids[pos:]...)...)
-		if _, err := tx.Exec(ctx, `UPDATE tickets SET board_id = $2, column_id = $3, sprint_id = $4, updated_at = now()
-			WHERE id = $1`, id, boardID, toColumn, sprint); err != nil {
+		// an estimate only survives a move to a board on the same scale
+		if _, err := tx.Exec(ctx, `UPDATE tickets t SET board_id = $2, column_id = $3, sprint_id = $4, updated_at = now(),
+				estimate = CASE WHEN (SELECT estimate_scale FROM boards WHERE id = t.board_id) =
+					(SELECT estimate_scale FROM boards WHERE id = $2) THEN t.estimate END
+			WHERE t.id = $1`, id, boardID, toColumn, sprint); err != nil {
 			return err
 		}
 		if err := renumber(ctx, tx, ids); err != nil {
@@ -281,7 +299,8 @@ func (s Store) Move(ctx context.Context, owner, id, toColumn string, pos int) er
 	})
 }
 
-// ToBacklog takes a ticket off its board/sprint and appends it to the project backlog.
+// ToBacklog takes a ticket off its board/sprint and appends it to the project backlog. Its estimate
+// goes too: the backlog has no scale.
 func (s Store) ToBacklog(ctx context.Context, owner, id string) error {
 	return pgx.BeginFunc(ctx, s.DB, func(tx pgx.Tx) error {
 		var from, fromSprint *string
@@ -294,7 +313,7 @@ func (s Store) ToBacklog(ctx context.Context, owner, id string) error {
 		if from == nil {
 			return nil // already in the backlog
 		}
-		if _, err := tx.Exec(ctx, `UPDATE tickets t SET board_id = NULL, column_id = NULL, sprint_id = NULL, updated_at = now(),
+		if _, err := tx.Exec(ctx, `UPDATE tickets t SET board_id = NULL, column_id = NULL, sprint_id = NULL, estimate = NULL, updated_at = now(),
 				position = COALESCE((SELECT max(position) + 1 FROM tickets x WHERE x.project_id = t.project_id AND x.board_id IS NULL), 0)
 			WHERE t.id = $1`, id); err != nil {
 			return err
@@ -345,16 +364,17 @@ func renumber(ctx context.Context, tx pgx.Tx, ids []string) error {
 // sprint are nil for backlog tickets.
 type Detail struct {
 	Ticket
-	ProjectName  string  `json:"project_name"`
-	BoardID      *string `json:"board_id"`
-	BoardName    *string `json:"board_name"`
-	ColumnName   *string `json:"column_name"`
-	SprintNumber *int    `json:"sprint_number"`
-	Done         bool    `json:"done"` // in the board's last column: locked for attachments
-	BlockedBy    []Dep   `json:"blocked_by"`
-	Blocks       []Dep   `json:"blocks"`
-	Parent       *Dep    `json:"parent"`   // the ticket this one is a sub-ticket of, if any
-	Children     []Child `json:"children"` // immediate sub-tickets, with done status
+	ProjectName   string  `json:"project_name"`
+	BoardID       *string `json:"board_id"`
+	BoardName     *string `json:"board_name"`
+	EstimateScale string  `json:"estimate_scale"` // the board's; "none" in the backlog
+	ColumnName    *string `json:"column_name"`
+	SprintNumber  *int    `json:"sprint_number"`
+	Done          bool    `json:"done"` // in the board's last column: locked for attachments
+	BlockedBy     []Dep   `json:"blocked_by"`
+	Blocks        []Dep   `json:"blocks"`
+	Parent        *Dep    `json:"parent"`   // the ticket this one is a sub-ticket of, if any
+	Children      []Child `json:"children"` // immediate sub-tickets, with done status
 }
 
 type Child struct {
@@ -409,8 +429,8 @@ func (s Store) SetParent(ctx context.Context, owner, id string, parentID *string
 func (s Store) Get(ctx context.Context, owner, id string) (*Detail, error) {
 	var d Detail
 	var parentID *string
-	dest := append(boards.TicketDest(&d.Ticket), &d.ProjectName, &d.BoardID, &d.BoardName, &d.ColumnName, &d.SprintNumber, &d.Done, &parentID)
-	err := s.DB.QueryRow(ctx, `SELECT `+boards.TicketCols+`, p.name, t.board_id, b.name, c.name, sp.number, `+boards.TicketDoneSQL+`, t.parent_id
+	dest := append(boards.TicketDest(&d.Ticket), &d.ProjectName, &d.BoardID, &d.BoardName, &d.EstimateScale, &d.ColumnName, &d.SprintNumber, &d.Done, &parentID)
+	err := s.DB.QueryRow(ctx, `SELECT `+boards.TicketCols+`, p.name, t.board_id, b.name, COALESCE(b.estimate_scale, 'none'), c.name, sp.number, `+boards.TicketDoneSQL+`, t.parent_id
 		FROM tickets t JOIN projects p ON p.id = t.project_id AND p.owner_clerk_id = $2
 		LEFT JOIN boards b ON b.id = t.board_id
 		LEFT JOIN columns c ON c.id = t.column_id

@@ -64,6 +64,7 @@ func (s *Service) Start() error {
 	b := boards.NewSystem(s.DB)
 	mux.Handle("POST /api/projects/{id}/boards", signedIn(b.Create))
 	mux.Handle("GET /api/boards/{id}", signedIn(b.Get))
+	mux.Handle("PATCH /api/boards/{id}", signedIn(b.Update)) // name and estimate_scale settings
 	mux.Handle("DELETE /api/boards/{id}", signedIn(b.Delete))
 
 	// Columns

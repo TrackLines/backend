@@ -60,6 +60,40 @@ func (h System) Get(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusOK, b)
 }
 
+// Update changes the board name and estimate scale. Switching scale clears open estimates.
+func (h System) Update(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Name          *string `json:"name"`
+		EstimateScale *string `json:"estimate_scale"`
+	}
+	if !httpx.Decode(w, r, &in) {
+		return
+	}
+	if in.Name == nil && in.EstimateScale == nil {
+		http.Error(w, "name or estimate_scale is required", http.StatusBadRequest)
+		return
+	}
+	name := ""
+	if in.Name != nil {
+		name = strings.TrimSpace(*in.Name)
+		if name == "" {
+			http.Error(w, "name is required", http.StatusBadRequest)
+			return
+		}
+	}
+	if in.EstimateScale != nil {
+		if _, ok := Scales[*in.EstimateScale]; !ok {
+			http.Error(w, "estimate_scale must be none, fibonacci, tshirt, powers or linear", http.StatusBadRequest)
+			return
+		}
+	}
+	if err := h.store.UpdateSettings(r.Context(), r.PathValue("id"), auth.OrgID(r.Context()), name, in.EstimateScale); err != nil {
+		writeErr(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (h System) Delete(w http.ResponseWriter, r *http.Request) {
 	org := auth.OrgID(r.Context())
 	if err := h.store.Delete(r.Context(), r.PathValue("id"), org); err != nil {
