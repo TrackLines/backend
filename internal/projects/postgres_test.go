@@ -84,6 +84,22 @@ func TestStore(t *testing.T) {
 	if err != nil || len(got.Boards) != 3 || len(got.Roadmaps) != 1 {
 		t.Fatalf("get: %+v %v", got, err)
 	}
+	// stats: open urgent on a board, urgent but done, and one in the backlog
+	if _, err := db.Exec(ctx, `INSERT INTO tickets (project_id, board_id, column_id, title, position, priority)
+		SELECT $1, b.id, c.id, c.name, 0, 'urgent' FROM boards b JOIN columns c ON c.board_id = b.id
+		WHERE b.project_id = $1 AND b.name = 'Backend' AND c.position IN (0, (SELECT max(position) FROM columns WHERE board_id = b.id))`, p.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(ctx, `INSERT INTO tickets (project_id, title, position) VALUES ($1, 'later', 0)`, p.ID); err != nil {
+		t.Fatal(err)
+	}
+	list, _ = s.List(ctx, "pr1")
+	if st := list[0].Stats; st == nil || st.Active == "" || *st != (Stats{Boards: 3, Roadmaps: 1, Open: 1, Done: 1, Backlog: 1, Urgent: 1, Active: st.Active}) {
+		t.Fatalf("stats: %+v", st)
+	}
+	if st := list[1].Stats; st == nil || *st != (Stats{Active: list[1].UpdatedAt}) {
+		t.Fatalf("empty project stats: %+v", st)
+	}
 	if _, err := s.Get(ctx, p.ID, "pr2"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("non-owner get: %v", err)
 	}

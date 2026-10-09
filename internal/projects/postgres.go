@@ -25,6 +25,19 @@ type Project struct {
 	UpdatedAt   string             `json:"updated_at"`
 	Boards      []boards.Board     `json:"boards,omitempty"`
 	Roadmaps    []roadmaps.Roadmap `json:"roadmaps,omitempty"`
+	Stats       *Stats             `json:"stats,omitempty"` // List only
+}
+
+// Stats summarises a project for the projects page. Open and Done count board tickets;
+// Urgent is open urgent tickets on boards or in the backlog.
+type Stats struct {
+	Boards   int    `json:"boards"`
+	Roadmaps int    `json:"roadmaps"`
+	Open     int    `json:"open"`
+	Done     int    `json:"done"`
+	Backlog  int    `json:"backlog"`
+	Urgent   int    `json:"urgent"`
+	Active   string `json:"active"` // latest ticket change, or the project's own
 }
 
 type Store struct{ DB *pgxpool.Pool }
@@ -78,11 +91,28 @@ func (s Store) Create(ctx context.Context, owner, name, desc string, limit int) 
 }
 
 func (s Store) List(ctx context.Context, owner string) ([]Project, error) {
-	rows, err := s.DB.Query(ctx, `SELECT `+cols+` FROM projects WHERE owner_clerk_id = $1 ORDER BY created_at`, owner)
+	rows, err := s.DB.Query(ctx, `SELECT `+cols+`,
+		(SELECT count(*) FROM boards b WHERE b.project_id = projects.id),
+		(SELECT count(*) FROM roadmaps r WHERE r.project_id = projects.id),
+		count(*) FILTER (WHERE t.board_id IS NOT NULL AND NOT t.done),
+		count(*) FILTER (WHERE t.done),
+		count(t.tid) FILTER (WHERE t.board_id IS NULL), -- count(t.tid): a project with no tickets joins one all-NULL row
+		count(*) FILTER (WHERE t.priority = 'urgent' AND NOT t.done),
+		to_char(greatest(projects.updated_at, max(t.changed)) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')
+		FROM projects
+		LEFT JOIN LATERAL (SELECT t.id AS tid, t.board_id, t.priority, t.updated_at AS changed, `+boards.TicketDoneSQL+` AS done
+			FROM tickets t WHERE t.project_id = projects.id) t ON true
+		WHERE owner_clerk_id = $1 GROUP BY projects.id ORDER BY created_at`, owner)
 	if err != nil {
 		return nil, err
 	}
-	out, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (Project, error) { return scan(row) })
+	out, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (Project, error) {
+		p, st := Project{}, Stats{}
+		err := row.Scan(&p.ID, &p.Name, &p.Description, &p.CreatedAt, &p.UpdatedAt,
+			&st.Boards, &st.Roadmaps, &st.Open, &st.Done, &st.Backlog, &st.Urgent, &st.Active)
+		p.Stats = &st
+		return p, err
+	})
 	if out == nil {
 		out = []Project{}
 	}

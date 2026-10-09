@@ -1238,6 +1238,17 @@ components:
         roadmaps:
           type: array
           items: { $ref: '#/components/schemas/Roadmap' }
+        stats:
+          description: Only on the project list. Open and done count board tickets (done = in the board's last column); urgent counts open urgent tickets on boards or in the backlog.
+          type: object
+          properties:
+            boards: { type: integer }
+            roadmaps: { type: integer }
+            open: { type: integer }
+            done: { type: integer }
+            backlog: { type: integer }
+            urgent: { type: integer }
+            active: { type: string, format: date-time, description: "Latest ticket change, or the project's own update" }
     BoardSummary:
       type: object
       properties:
