@@ -3,6 +3,7 @@ package sprints
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/bugfixes/go-bugfixes/logs"
@@ -129,28 +130,33 @@ func closeSprint(ctx context.Context, tx pgx.Tx, id string) (Sprint, error) {
 
 // AutoClose closes every open sprint past its end date. Rows are claimed with
 // FOR UPDATE SKIP LOCKED, so several replicas can run it without double-closing.
+// A sprint that fails to close is skipped for the rest of the run, so it can't hold up
+// the others; its error (with the sprint id) is returned alongside the count.
 func (s Store) AutoClose(ctx context.Context) (int, error) {
-	closed := 0
+	closed, failed := 0, []string{}
+	var errs []error
 	for {
-		done := false
+		var id string
 		err := pgx.BeginFunc(ctx, s.DB, func(tx pgx.Tx) error {
-			var id string
 			err := tx.QueryRow(ctx, `SELECT id FROM sprints WHERE closed_at IS NULL AND ends_at <= now()
-				ORDER BY ends_at LIMIT 1 FOR UPDATE SKIP LOCKED`).Scan(&id)
-			if errors.Is(err, pgx.ErrNoRows) {
-				done = true
-				return nil
-			}
+				AND NOT (id::text = ANY($1)) ORDER BY ends_at LIMIT 1 FOR UPDATE SKIP LOCKED`, failed).Scan(&id)
 			if err != nil {
 				return err
 			}
 			_, err = closeSprint(ctx, tx, id)
 			return err
 		})
-		if err != nil || done {
-			return closed, err
+		switch {
+		case errors.Is(err, pgx.ErrNoRows):
+			return closed, errors.Join(errs...)
+		case err != nil && id == "": // couldn't even pick a sprint (e.g. database unreachable)
+			return closed, errors.Join(append(errs, err)...)
+		case err != nil:
+			errs = append(errs, fmt.Errorf("sprint %s: %w", id, err))
+			failed = append(failed, id)
+		default:
+			closed++
 		}
-		closed++
 	}
 }
 
