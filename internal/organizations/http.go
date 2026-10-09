@@ -7,7 +7,9 @@ import (
 
 	"github.com/bugfixes/go-bugfixes/logs"
 	"github.com/clerk/clerk-sdk-go/v2"
+	"github.com/clerk/clerk-sdk-go/v2/organization"
 	"github.com/clerk/clerk-sdk-go/v2/organizationmembership"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/tracklines/backend/internal/auth"
 	"github.com/tracklines/backend/internal/httpx"
 )
@@ -21,11 +23,18 @@ type membershipLister interface {
 	List(ctx context.Context, params *organizationmembership.ListParams) (*clerk.OrganizationMembershipList, error)
 }
 
-type System struct{ memberships membershipLister }
-
-func NewSystem() System {
-	return System{memberships: organizationmembership.NewClient(&clerk.ClientConfig{})}
+type System struct {
+	memberships membershipLister
+	admins      Admins
 }
+
+func NewSystem(db *pgxpool.Pool) System {
+	m := organizationmembership.NewClient(&clerk.ClientConfig{})
+	return System{memberships: m, admins: Admins{DB: db, Orgs: organization.NewClient(&clerk.ClientConfig{}), Memberships: m}}
+}
+
+// AdminModel exposes the org-admin model to other packages (teams checks admins with it).
+func (h System) AdminModel() Admins { return h.admins }
 
 type Member struct {
 	UserID     string  `json:"user_id"`

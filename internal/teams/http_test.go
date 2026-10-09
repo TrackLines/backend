@@ -14,6 +14,7 @@ import (
 	_ "github.com/golang-migrate/migrate/v4/source/file"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/tracklines/backend/internal/auth"
+	"github.com/tracklines/backend/internal/organizations"
 )
 
 func TestTeamAndProjectMembershipsStayWithinOrganization(t *testing.T) {
@@ -57,7 +58,7 @@ func TestTeamAndProjectMembershipsStayWithinOrganization(t *testing.T) {
 		t.Fatal("cross-organization project/team link was accepted")
 	}
 
-	h := NewSystem(db)
+	h := NewSystem(db, organizations.Admins{DB: db})
 	r := httptest.NewRequest(http.MethodGet, "/api/teams", nil)
 	r = r.WithContext(auth.WithAPIKey(r.Context(), "user-a", "team-org-b", "test", "ai"))
 	w := httptest.NewRecorder()

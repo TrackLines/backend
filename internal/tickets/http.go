@@ -8,6 +8,8 @@ import (
 	"strings"
 
 	"github.com/bugfixes/go-bugfixes/logs"
+	"github.com/clerk/clerk-sdk-go/v2"
+	"github.com/clerk/clerk-sdk-go/v2/organizationmembership"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/tracklines/backend/internal/auth"
 	"github.com/tracklines/backend/internal/boards"
@@ -16,10 +18,13 @@ import (
 
 // NewSystem exposes the ticket handlers; routes are declared in internal/service.go.
 func NewSystem(db *pgxpool.Pool) System {
-	return System{Store{DB: db}}
+	return System{store: Store{DB: db}, memberships: organizationmembership.NewClient(&clerk.ClientConfig{})}
 }
 
-type System struct{ store Store }
+type System struct {
+	store       Store
+	memberships membershipLister
+}
 
 type ticketInput struct {
 	Type        string    `json:"type"` // bug | feature | task; defaults to task on create, unchanged on update

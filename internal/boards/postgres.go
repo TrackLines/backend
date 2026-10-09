@@ -99,7 +99,8 @@ type Board struct {
 	Name          string   `json:"name"`
 	Description   string   `json:"description"`
 	EstimateScale string   `json:"estimate_scale"`
-	Style         string   `json:"style"`                 // sprints | kanban
+	Style         string   `json:"style"`
+	TeamID        *string  `json:"team_id"`               // the team whose leaders run this board                 // sprints | kanban
 	HiddenDone    int      `json:"hidden_done,omitempty"` // kanban: Done tickets older than KanbanDoneDays, left off the view // a key of Scales
 	CreatedAt     string   `json:"created_at"`
 	UpdatedAt     string   `json:"updated_at"`
@@ -123,13 +124,13 @@ type Stats struct {
 
 type Store struct{ DB *pgxpool.Pool }
 
-const cols = `id, project_id, owner_clerk_id, name, description, estimate_scale, style,
+const cols = `id, project_id, owner_clerk_id, name, description, estimate_scale, style, team_id,
 	to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
 	to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')`
 
 func scan(row pgx.Row) (Board, error) {
 	var b Board
-	err := row.Scan(&b.ID, &b.ProjectID, &b.OwnerClerkID, &b.Name, &b.Description, &b.EstimateScale, &b.Style, &b.CreatedAt, &b.UpdatedAt)
+	err := row.Scan(&b.ID, &b.ProjectID, &b.OwnerClerkID, &b.Name, &b.Description, &b.EstimateScale, &b.Style, &b.TeamID, &b.CreatedAt, &b.UpdatedAt)
 	return b, notFound(err)
 }
 
@@ -172,7 +173,7 @@ func (s Store) Create(ctx context.Context, owner, projectID, name, desc string) 
 
 // ListByProject lists a project's boards (without columns); callers check ownership.
 func (s Store) ListByProject(ctx context.Context, projectID string) ([]Board, error) {
-	rows, err := s.DB.Query(ctx, `SELECT boards.id, boards.project_id, boards.owner_clerk_id, boards.name, boards.description, boards.estimate_scale, boards.style,
+	rows, err := s.DB.Query(ctx, `SELECT boards.id, boards.project_id, boards.owner_clerk_id, boards.name, boards.description, boards.estimate_scale, boards.style, boards.team_id,
 		to_char(boards.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
 		to_char(boards.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
 		count(t.tid) FILTER (WHERE NOT t.done),
@@ -192,7 +193,7 @@ func (s Store) ListByProject(ctx context.Context, projectID string) ([]Board, er
 	}
 	out, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (Board, error) {
 		b, st := Board{}, Stats{}
-		err := row.Scan(&b.ID, &b.ProjectID, &b.OwnerClerkID, &b.Name, &b.Description, &b.EstimateScale, &b.Style, &b.CreatedAt, &b.UpdatedAt,
+		err := row.Scan(&b.ID, &b.ProjectID, &b.OwnerClerkID, &b.Name, &b.Description, &b.EstimateScale, &b.Style, &b.TeamID, &b.CreatedAt, &b.UpdatedAt,
 			&st.Open, &st.InProgress, &st.Done, &st.Urgent, &st.Active, &st.SprintNumber, &st.SprintEndsAt)
 		b.Stats = &st
 		return b, err

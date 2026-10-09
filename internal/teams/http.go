@@ -8,9 +8,11 @@ import (
 	"github.com/bugfixes/go-bugfixes/logs"
 	"github.com/clerk/clerk-sdk-go/v2"
 	"github.com/clerk/clerk-sdk-go/v2/organizationmembership"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/tracklines/backend/internal/auth"
 	"github.com/tracklines/backend/internal/httpx"
+	"github.com/tracklines/backend/internal/organizations"
 )
 
 type membershipLister interface {
@@ -20,10 +22,17 @@ type membershipLister interface {
 type System struct {
 	db          *pgxpool.Pool
 	memberships membershipLister
+	admins      organizations.Admins // who may name leaders and link boards
 }
 
-func NewSystem(db *pgxpool.Pool) System {
-	return System{db: db, memberships: organizationmembership.NewClient(&clerk.ClientConfig{})}
+func NewSystem(db *pgxpool.Pool, admins organizations.Admins) System {
+	return System{db: db, memberships: organizationmembership.NewClient(&clerk.ClientConfig{}), admins: admins}
+}
+
+// Member is one person on a team; leaders manage the team's boards.
+type Member struct {
+	UserID string `json:"user_id"`
+	Leader bool   `json:"leader"`
 }
 
 type Team struct {
@@ -90,20 +99,20 @@ func (h System) ProjectTeams(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h System) Members(w http.ResponseWriter, r *http.Request) {
-	rows, err := h.db.Query(r.Context(), `SELECT tm.user_clerk_id FROM team_members tm JOIN teams t ON t.id=tm.team_id WHERE t.id=$1 AND t.org_id=$2 ORDER BY tm.user_clerk_id`, r.PathValue("id"), auth.OrgID(r.Context()))
+	rows, err := h.db.Query(r.Context(), `SELECT tm.user_clerk_id, tm.leader FROM team_members tm JOIN teams t ON t.id=tm.team_id WHERE t.id=$1 AND t.org_id=$2 ORDER BY tm.user_clerk_id`, r.PathValue("id"), auth.OrgID(r.Context()))
 	if err != nil {
 		http.Error(w, "internal error", 500)
 		return
 	}
 	defer rows.Close()
-	users := make([]string, 0)
+	users := make([]Member, 0)
 	for rows.Next() {
-		var id string
-		if err = rows.Scan(&id); err != nil {
+		var m Member
+		if err = rows.Scan(&m.UserID, &m.Leader); err != nil {
 			http.Error(w, "internal error", 500)
 			return
 		}
-		users = append(users, id)
+		users = append(users, m)
 	}
 	if rows.Err() != nil {
 		http.Error(w, "internal error", 500)
@@ -255,7 +264,15 @@ func (h System) AddProjectTeam(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h System) RemoveProjectTeam(w http.ResponseWriter, r *http.Request) {
-	_, err := h.db.Exec(r.Context(), `DELETE FROM project_teams WHERE project_id=$1 AND team_id=$2 AND org_id=$3`, r.PathValue("projectID"), r.PathValue("teamID"), auth.OrgID(r.Context()))
+	// a team off the project no longer runs that project's boards
+	err := pgx.BeginFunc(r.Context(), h.db, func(tx pgx.Tx) error {
+		tag, err := tx.Exec(r.Context(), `DELETE FROM project_teams WHERE project_id=$1 AND team_id=$2 AND org_id=$3`, r.PathValue("projectID"), r.PathValue("teamID"), auth.OrgID(r.Context()))
+		if err != nil || tag.RowsAffected() == 0 {
+			return err
+		}
+		_, err = tx.Exec(r.Context(), `UPDATE boards SET team_id = NULL, updated_at = now() WHERE project_id = $1 AND team_id = $2`, r.PathValue("projectID"), r.PathValue("teamID"))
+		return err
+	})
 	if err != nil {
 		http.Error(w, "internal error", 500)
 		return

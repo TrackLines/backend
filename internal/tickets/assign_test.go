@@ -3,11 +3,17 @@ package tickets
 import (
 	"context"
 	"errors"
+	"fmt"
+	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 
+	"github.com/clerk/clerk-sdk-go/v2"
+	"github.com/clerk/clerk-sdk-go/v2/organizationmembership"
 	"github.com/golang-migrate/migrate/v4"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/tracklines/backend/internal/auth"
 )
 
 // PostgreSQL is provisioned by this package's TestMain.
@@ -49,24 +55,68 @@ func TestAssign(t *testing.T) {
 		t.Fatalf("assignees: %+v", list)
 	}
 	for _, who := range []string{"as1", "codex"} {
-		got, err := s.Assign(ctx, "as1", "as1", tid, str(who))
+		got, err := s.Assign(ctx, "as1", "as1", tid, str(who), false)
 		if err != nil || *got.AssignedTo != who {
 			t.Fatalf("assign %s: %v %+v", who, err, got)
 		}
 	}
 	// owner override: reassign even though codex holds it
-	if _, err := s.Assign(ctx, "as1", "as1", tid, str("as1")); err != nil {
+	if _, err := s.Assign(ctx, "as1", "as1", tid, str("as1"), false); err != nil {
 		t.Fatal(err)
 	}
+	if got, err := s.Assign(ctx, "as1", "as1", tid, str("as2"), true); err != nil || *got.AssignedTo != "as2" {
+		t.Fatalf("assign organization member: %v %+v", err, got)
+	}
 	for _, bad := range []string{"gone", "deploy", "stranger", "as2", "anyone"} {
-		if _, err := s.Assign(ctx, "as1", "as1", tid, str(bad)); !errors.Is(err, ErrUnknownAssignee) {
+		if _, err := s.Assign(ctx, "as1", "as1", tid, str(bad), false); !errors.Is(err, ErrUnknownAssignee) {
 			t.Fatalf("%s: %v", bad, err)
 		}
 	}
-	if _, err := s.Assign(ctx, "as2", "as2", tid, str("as2")); !errors.Is(err, ErrNotFound) {
+	if _, err := s.Assign(ctx, "as2", "as2", tid, str("as2"), false); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("other user's ticket: %v", err)
 	}
-	if got, err := s.Assign(ctx, "as1", "as1", tid, nil); err != nil || got.AssignedTo != nil {
+	if got, err := s.Assign(ctx, "as1", "as1", tid, nil, false); err != nil || got.AssignedTo != nil {
 		t.Fatalf("unassign: %v %+v", err, got)
 	}
+
+	h := System{store: s, memberships: testAssigneeMembers{"user_1", "user_2"}}
+	listReq := httptest.NewRequest("GET", "/api/assignees", nil)
+	listReq = listReq.WithContext(auth.WithAPIKey(listReq.Context(), "user_1", "as1", "codex", "ai"))
+	listRec := httptest.NewRecorder()
+	h.Assignees(listRec, listReq)
+	if listRec.Code != 200 || !strings.Contains(listRec.Body.String(), `"id":"user_2"`) || !strings.Contains(listRec.Body.String(), `"id":"codex"`) {
+		t.Fatalf("assignee list: %d %s", listRec.Code, listRec.Body)
+	}
+
+	assignReq := httptest.NewRequest("PUT", "/api/tickets/"+tid+"/assignee", strings.NewReader(`{"assignee":"user_2"}`))
+	assignReq.SetPathValue("id", tid)
+	assignReq = assignReq.WithContext(auth.WithAPIKey(assignReq.Context(), "user_1", "as1", "codex", "ai"))
+	assignRec := httptest.NewRecorder()
+	h.Assign(assignRec, assignReq)
+	if assignRec.Code != 200 || !strings.Contains(assignRec.Body.String(), `"assigned_to":"user_2"`) {
+		t.Fatalf("assign org member: %d %s", assignRec.Code, assignRec.Body)
+	}
+
+	assignReq = httptest.NewRequest("PUT", "/api/tickets/"+tid+"/assignee", strings.NewReader(`{"assignee":"user_outside"}`))
+	assignReq.SetPathValue("id", tid)
+	assignReq = assignReq.WithContext(auth.WithAPIKey(assignReq.Context(), "user_1", "as1", "codex", "ai"))
+	assignRec = httptest.NewRecorder()
+	h.Assign(assignRec, assignReq)
+	if assignRec.Code != 400 || !strings.Contains(assignRec.Body.String(), "active organization member") {
+		t.Fatalf("assign non-member: %d %s", assignRec.Code, assignRec.Body)
+	}
+}
+
+type testAssigneeMembers []string
+
+func (m testAssigneeMembers) List(_ context.Context, params *organizationmembership.ListParams) (*clerk.OrganizationMembershipList, error) {
+	list := &clerk.OrganizationMembershipList{}
+	for _, id := range m {
+		if len(params.UserIDs) != 0 && params.UserIDs[0] != id {
+			continue
+		}
+		list.OrganizationMemberships = append(list.OrganizationMemberships, &clerk.OrganizationMembership{PublicUserData: &clerk.OrganizationMembershipPublicUserData{UserID: id, Identifier: fmt.Sprintf("%s@example.test", id)}})
+	}
+	list.TotalCount = int64(len(list.OrganizationMemberships))
+	return list, nil
 }

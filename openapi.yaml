@@ -74,6 +74,121 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { description: No active organization in the caller's session or API key. }
         '502': { description: The identity provider could not return organization membership. }
+  /organizations/me:
+    get:
+      tags: [Organizations]
+      operationId: getMyOrganizationRoles
+      summary: The caller's roles in their active organization
+      responses:
+        '200':
+          description: Whether the caller is an org admin, and the teams they lead.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user_id: { type: string }
+                  org_id: { type: string }
+                  admin: { type: boolean }
+                  leads: { type: array, items: { type: string, format: uuid } }
+        '403': { description: No active organization. }
+        '502': { description: Clerk could not be reached to resolve the first admin. }
+  /organizations/admins:
+    get:
+      tags: [Organizations]
+      operationId: listOrganizationAdmins
+      summary: List the organization's TrackLines admins
+      description: >-
+        Organizations and their members live in Clerk; TrackLines only records which members are admins.
+        The first time an org's admins are needed, one is chosen from Clerk and stored: the user who created
+        the organization if they are still a member, otherwise the longest-standing member with the Clerk
+        org:admin role, otherwise the longest-standing member. granted_by records which rule applied
+        (clerk:creator, clerk:admin-role, clerk:earliest-member) or the admin who granted it. If Clerk can't be
+        reached nothing is stored and the next request tries again (502); an organization with no members gets
+        no admin (409).
+      responses:
+        '200': { description: Admins oldest first, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/OrgAdmin' } } } } }
+        '403': { description: No active organization. }
+        '409': { description: The organization has no members to make admin. }
+        '502': { description: Clerk could not be reached. }
+  /organizations/admins/{userId}:
+    parameters:
+      - name: userId
+        in: path
+        required: true
+        schema: { type: string }
+    put:
+      tags: [Organizations]
+      operationId: grantOrganizationAdmin
+      summary: Make an organization member an admin
+      description: Org admins only, signed in with a Clerk session (API keys are refused). The user must be a Clerk member of the organization.
+      responses:
+        '204': { description: Granted (or already an admin). }
+        '403': { description: Not a signed-in org admin. }
+        '422': { description: The user is not a member of this organization. }
+    delete:
+      tags: [Organizations]
+      operationId: revokeOrganizationAdmin
+      summary: Remove an admin
+      description: Org admins only, signed in with a Clerk session. The last admin can't be removed.
+      responses:
+        '204': { description: Removed. }
+        '403': { description: Not a signed-in org admin. }
+        '409': { description: That is the organization's last admin. }
+  /teams/{teamId}/leaders/{userId}:
+    parameters:
+      - name: teamId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+      - name: userId
+        in: path
+        required: true
+        schema: { type: string }
+    put:
+      tags: [Teams]
+      operationId: addTeamLeader
+      summary: Make a team member a leader
+      description: Org admins only, signed in with a Clerk session. A team can have several leaders; leaders must be on the team, and removing them from the team ends their leadership.
+      responses:
+        '204': { description: They now lead the team. }
+        '403': { description: Not a signed-in org admin. }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { description: The user is not on the team. }
+    delete:
+      tags: [Teams]
+      operationId: removeTeamLeader
+      summary: Stop a member leading the team (they stay on it)
+      responses:
+        '204': { description: No longer a leader. }
+        '403': { description: Not a signed-in org admin. }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { description: The user is not on the team. }
+  /boards/{boardId}/team:
+    parameters:
+      - $ref: '#/components/parameters/BoardId'
+    put:
+      tags: [Teams]
+      operationId: setBoardTeam
+      summary: Set the team that runs a board
+      description: >-
+        Org admins only, signed in with a Clerk session. The team's leaders' authority is scoped to the boards it
+        runs. The team must belong to the organization and already be linked to the board's project; removing
+        the team from the project unlinks it from that project's boards. null unlinks.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [team_id]
+              properties:
+                team_id: { type: [string, 'null'], format: uuid }
+      responses:
+        '204': { description: Board updated. }
+        '403': { description: Not a signed-in org admin. }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { description: The team isn't linked to the board's project. }
   /teams:
     get:
       tags: [Teams]
@@ -124,14 +239,14 @@ paths:
     get:
       tags: [Teams]
       operationId: listTeamMembers
-      summary: List team member Clerk user IDs
+      summary: List team members and which of them lead the team
       parameters:
         - name: teamId
           in: path
           required: true
           schema: { type: string, format: uuid }
       responses:
-        '200': { description: Team member IDs, content: { application/json: { schema: { type: array, items: { type: string } } } } }
+        '200': { description: Team members, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/TeamMember' } } } } }
         '404': { $ref: '#/components/responses/NotFound' }
   /teams/{teamId}/members/{userId}:
     parameters:
@@ -631,7 +746,7 @@ paths:
       tags: [Tickets]
       operationId: assignTicket
       summary: Assign or unassign a ticket
-      description: Set `assignee` to the caller's ID or active AI key name; set it to null to unassign. Server/service keys cannot be assignees.
+      description: Set `assignee` to an active member of the caller's organization or an active AI key name; set it to null to unassign. Server/service keys cannot be assignees.
       parameters:
         - $ref: '#/components/parameters/TicketId'
       requestBody:
@@ -652,6 +767,7 @@ paths:
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '502': { description: Could not verify organization membership with Clerk. }
 
   /tickets/{ticketId}/labels:
     put:
@@ -756,8 +872,8 @@ paths:
     get:
       tags: [Tickets]
       operationId: listAssignees
-      summary: List people and AI keys available for assignment
-      description: Service/API keys are excluded. AI key labels include their AI type in the user interface.
+      summary: List organization members and AI keys available for assignment
+      description: Only members of the active organization and its active AI keys are listed. Service/API keys are excluded.
       responses:
         '200':
           description: Assignable identities.
@@ -772,6 +888,7 @@ paths:
                     label: { type: string }
                     kind: { type: string, enum: [person, ai] }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '502': { description: Could not load organization members from Clerk. }
 
   /tickets/{ticketId}/backlog:
     post:
@@ -1352,7 +1469,7 @@ components:
         first_name: { type: string }
         last_name: { type: string }
         image_url: { type: string, format: uri }
-        identifier: { type: string, description: Public identifier provided by Clerk, usually an email address. }
+        identifier: { type: string, description: "Public identifier provided by Clerk, usually an email address." }
     OrganizationMemberPage:
       type: object
       required: [members, total_count, limit, offset]
@@ -1363,6 +1480,17 @@ components:
         total_count: { type: integer }
         limit: { type: integer }
         offset: { type: integer }
+    OrgAdmin:
+      type: object
+      properties:
+        user_id: { type: string }
+        granted_by: { type: string, description: "clerk:creator, clerk:admin-role, clerk:earliest-member, or the user id of the admin who granted it" }
+        created_at: { type: string, format: date-time }
+    TeamMember:
+      type: object
+      properties:
+        user_id: { type: string }
+        leader: { type: boolean }
     Team:
       type: object
       required: [id, org_id, name, description, created_at, updated_at]
@@ -1499,6 +1627,7 @@ components:
         estimate_scale: { $ref: '#/components/schemas/EstimateScale' }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+        team_id: { type: [string, 'null'], format: uuid }
         stats:
           description: Only on a project's boards. Counts the tickets the board shows (the open sprint's, or all if it has never run one). in_progress = neither the first column nor done; urgent = open urgent tickets.
           type: object
@@ -1813,6 +1942,7 @@ components:
         updated_at: { type: string, format: date-time }
         style: { type: string, enum: [sprints, kanban] }
         hidden_done: { type: integer, description: "Kanban only. Done tickets finished more than 14 days ago, left off the board." }
+        team_id: { type: [string, 'null'], format: uuid, description: The team whose leaders run this board. }
         sprint: { $ref: '#/components/schemas/Sprint' }
         columns:
           type: array

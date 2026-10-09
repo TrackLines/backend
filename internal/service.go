@@ -50,9 +50,13 @@ func New(cfg *ConfigBuilder.Config, db *pgxpool.Pool, vk valkey.Client, fl *goFl
 func (s *Service) Start() error {
 	mux := http.NewServeMux()
 	signedIn := func(h http.HandlerFunc) http.Handler { return auth.Required(h) }
-	o := organizations.NewSystem()
+	o := organizations.NewSystem(s.DB)
 	mux.Handle("GET /api/organizations/members", signedIn(o.Members))
-	tm := teams.NewSystem(s.DB)
+	mux.Handle("GET /api/organizations/me", signedIn(o.Me))             // the caller's admin flag and the teams they lead
+	mux.Handle("GET /api/organizations/admins", signedIn(o.ListAdmins)) // first admin is resolved from Clerk on demand
+	mux.Handle("PUT /api/organizations/admins/{userID}", signedIn(o.GrantAdmin))
+	mux.Handle("DELETE /api/organizations/admins/{userID}", signedIn(o.RevokeAdmin)) // never the last admin
+	tm := teams.NewSystem(s.DB, o.AdminModel())
 	mux.Handle("GET /api/teams", signedIn(tm.List))
 	mux.Handle("POST /api/teams", signedIn(tm.Create))
 	mux.Handle("PATCH /api/teams/{id}", signedIn(tm.Update))
@@ -60,6 +64,9 @@ func (s *Service) Start() error {
 	mux.Handle("GET /api/teams/{id}/members", signedIn(tm.Members))
 	mux.Handle("PUT /api/teams/{id}/members/{userID}", signedIn(tm.AddMember))
 	mux.Handle("DELETE /api/teams/{id}/members/{userID}", signedIn(tm.RemoveMember))
+	mux.Handle("PUT /api/teams/{id}/leaders/{userID}", signedIn(tm.AddLeader)) // org admins only
+	mux.Handle("DELETE /api/teams/{id}/leaders/{userID}", signedIn(tm.RemoveLeader))
+	mux.Handle("PUT /api/boards/{id}/team", signedIn(tm.SetBoardTeam)) // the team whose leaders run the board
 	mux.Handle("GET /api/projects/{projectID}/teams", signedIn(tm.ProjectTeams))
 	mux.Handle("PUT /api/projects/{projectID}/teams/{teamID}", signedIn(tm.AddProjectTeam))
 	mux.Handle("DELETE /api/projects/{projectID}/teams/{teamID}", signedIn(tm.RemoveProjectTeam))
