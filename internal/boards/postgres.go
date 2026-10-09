@@ -3,6 +3,7 @@ package boards
 import (
 	"context"
 	"errors"
+	"strconv"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -87,6 +88,7 @@ type Column struct {
 	ID       string   `json:"id"`
 	Name     string   `json:"name"`
 	Position int      `json:"position"`
+	WIPLimit *int     `json:"wip_limit"` // advisory work-in-progress limit; null = none
 	Tickets  []Ticket `json:"tickets"`
 }
 
@@ -96,7 +98,9 @@ type Board struct {
 	OwnerClerkID  string   `json:"owner_clerk_id"`
 	Name          string   `json:"name"`
 	Description   string   `json:"description"`
-	EstimateScale string   `json:"estimate_scale"` // a key of Scales
+	EstimateScale string   `json:"estimate_scale"`
+	Style         string   `json:"style"`                 // sprints | kanban
+	HiddenDone    int      `json:"hidden_done,omitempty"` // kanban: Done tickets older than KanbanDoneDays, left off the view // a key of Scales
 	CreatedAt     string   `json:"created_at"`
 	UpdatedAt     string   `json:"updated_at"`
 	Sprint        *Sprint  `json:"sprint,omitempty"` // open sprint, if the board runs sprints
@@ -119,13 +123,13 @@ type Stats struct {
 
 type Store struct{ DB *pgxpool.Pool }
 
-const cols = `id, project_id, owner_clerk_id, name, description, estimate_scale,
+const cols = `id, project_id, owner_clerk_id, name, description, estimate_scale, style,
 	to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
 	to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')`
 
 func scan(row pgx.Row) (Board, error) {
 	var b Board
-	err := row.Scan(&b.ID, &b.ProjectID, &b.OwnerClerkID, &b.Name, &b.Description, &b.EstimateScale, &b.CreatedAt, &b.UpdatedAt)
+	err := row.Scan(&b.ID, &b.ProjectID, &b.OwnerClerkID, &b.Name, &b.Description, &b.EstimateScale, &b.Style, &b.CreatedAt, &b.UpdatedAt)
 	return b, notFound(err)
 }
 
@@ -168,7 +172,7 @@ func (s Store) Create(ctx context.Context, owner, projectID, name, desc string) 
 
 // ListByProject lists a project's boards (without columns); callers check ownership.
 func (s Store) ListByProject(ctx context.Context, projectID string) ([]Board, error) {
-	rows, err := s.DB.Query(ctx, `SELECT boards.id, boards.project_id, boards.owner_clerk_id, boards.name, boards.description, boards.estimate_scale,
+	rows, err := s.DB.Query(ctx, `SELECT boards.id, boards.project_id, boards.owner_clerk_id, boards.name, boards.description, boards.estimate_scale, boards.style,
 		to_char(boards.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
 		to_char(boards.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
 		count(t.tid) FILTER (WHERE NOT t.done),
@@ -188,7 +192,7 @@ func (s Store) ListByProject(ctx context.Context, projectID string) ([]Board, er
 	}
 	out, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (Board, error) {
 		b, st := Board{}, Stats{}
-		err := row.Scan(&b.ID, &b.ProjectID, &b.OwnerClerkID, &b.Name, &b.Description, &b.EstimateScale, &b.CreatedAt, &b.UpdatedAt,
+		err := row.Scan(&b.ID, &b.ProjectID, &b.OwnerClerkID, &b.Name, &b.Description, &b.EstimateScale, &b.Style, &b.CreatedAt, &b.UpdatedAt,
 			&st.Open, &st.InProgress, &st.Done, &st.Urgent, &st.Active, &st.SprintNumber, &st.SprintEndsAt)
 		b.Stats = &st
 		return b, err
@@ -234,19 +238,44 @@ func (s Store) SetEstimateScale(ctx context.Context, id, owner, scale string) er
 	return s.UpdateSettings(ctx, id, owner, "", &scale)
 }
 
+// KanbanDoneDays is how long a finished ticket stays in a kanban board's Done column.
+const KanbanDoneDays = 14
+
+var ErrSprintOpen = errors.New("close the open sprint before switching this board to kanban")
+
+// SetStyle switches the board between sprints and kanban. A board can't go kanban mid-sprint.
+func (s Store) SetStyle(ctx context.Context, id, owner, style string) error {
+	return pgx.BeginFunc(ctx, s.DB, func(tx pgx.Tx) error {
+		if err := tx.QueryRow(ctx, `SELECT id FROM boards WHERE id = $1 AND owner_clerk_id = $2 FOR UPDATE`, id, owner).Scan(&id); err != nil {
+			return notFound(err)
+		}
+		if style == "kanban" {
+			var open bool
+			if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM sprints WHERE board_id = $1 AND closed_at IS NULL)`, id).Scan(&open); err != nil {
+				return err
+			}
+			if open {
+				return ErrSprintOpen
+			}
+		}
+		_, err := tx.Exec(ctx, `UPDATE boards SET style = $2, updated_at = now() WHERE id = $1 AND style <> $2`, id, style)
+		return err
+	})
+}
+
 // Get returns the board with ordered columns and tickets if owner holds it.
 func (s Store) Get(ctx context.Context, id, owner string) (*Board, error) {
 	b, err := scan(s.DB.QueryRow(ctx, `SELECT `+cols+` FROM boards WHERE id = $1 AND owner_clerk_id = $2`, id, owner))
 	if err != nil {
 		return nil, err
 	}
-	rows, err := s.DB.Query(ctx, `SELECT id, name, position FROM columns WHERE board_id = $1 ORDER BY position`, id)
+	rows, err := s.DB.Query(ctx, `SELECT id, name, position, wip_limit FROM columns WHERE board_id = $1 ORDER BY position`, id)
 	if err != nil {
 		return nil, err
 	}
 	b.Columns, err = pgx.CollectRows(rows, func(row pgx.CollectableRow) (Column, error) {
 		c := Column{Tickets: []Ticket{}}
-		return c, row.Scan(&c.ID, &c.Name, &c.Position)
+		return c, row.Scan(&c.ID, &c.Name, &c.Position, &c.WIPLimit)
 	})
 	if err != nil {
 		return nil, err
@@ -262,8 +291,16 @@ func (s Store) Get(ctx context.Context, id, owner string) (*Board, error) {
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return nil, err
 	}
+	// kanban boards never run sprints; their Done column only keeps recent work
+	recent := `true`
+	if b.Style == "kanban" {
+		recent = `(t.done_at IS NULL OR t.done_at > now() - make_interval(days => ` + strconv.Itoa(KanbanDoneDays) + `))`
+		if err := s.DB.QueryRow(ctx, `SELECT count(*) FROM tickets t WHERE t.board_id = $1 AND NOT `+recent, id).Scan(&b.HiddenDone); err != nil {
+			return nil, err
+		}
+	}
 	rows, err = s.DB.Query(ctx, `SELECT `+TicketCols+` FROM tickets t
-		WHERE t.board_id = $1 AND t.sprint_id IS NOT DISTINCT FROM $2 ORDER BY t.position, t.created_at`, id, sprintID)
+		WHERE t.board_id = $1 AND t.sprint_id IS NOT DISTINCT FROM $2 AND `+recent+` ORDER BY t.position, t.created_at`, id, sprintID)
 	if err != nil {
 		return nil, err
 	}

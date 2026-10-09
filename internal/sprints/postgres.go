@@ -16,6 +16,7 @@ var (
 	ErrNotFound      = errors.New("sprint not found")
 	ErrAlreadyOpen   = errors.New("board already has an open sprint")
 	ErrInvalidLength = errors.New("length_days must be between 1 and 365")
+	ErrKanban        = errors.New("kanban boards don't run sprints")
 )
 
 type Sprint = boards.Sprint
@@ -38,6 +39,15 @@ func (s Store) Start(ctx context.Context, owner, boardID string, lengthDays int)
 	}
 	var sp Sprint
 	err := pgx.BeginFunc(ctx, s.DB, func(tx pgx.Tx) error {
+		// the board lock pairs with boards.SetStyle: a board can't turn kanban while a sprint starts
+		var style string
+		if err := tx.QueryRow(ctx, `SELECT b.style FROM boards b JOIN projects p ON p.id = b.project_id
+			WHERE b.id = $1 AND p.owner_clerk_id = $2 FOR UPDATE OF b`, boardID, owner).Scan(&style); err != nil {
+			return notFound(err)
+		}
+		if style == "kanban" {
+			return ErrKanban
+		}
 		var err error
 		sp, err = boards.ScanSprint(tx.QueryRow(ctx, `INSERT INTO sprints (board_id, number, length_days, ends_at)
 			SELECT b.id, COALESCE((SELECT max(number) FROM sprints WHERE board_id = b.id), 0) + 1, $3,

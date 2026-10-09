@@ -53,20 +53,38 @@ func (h System) Create(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusCreated, col)
 }
 
-func (h System) Rename(w http.ResponseWriter, r *http.Request) {
+// Update renames a column and/or sets its work-in-progress limit (0 removes it).
+func (h System) Update(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		Name string `json:"name"`
+		Name     *string `json:"name"`
+		WIPLimit *int    `json:"wip_limit"`
 	}
 	if !httpx.Decode(w, r, &in) {
 		return
 	}
-	in.Name = strings.TrimSpace(in.Name)
-	if in.Name == "" {
-		http.Error(w, "name is required", http.StatusBadRequest)
+	if in.Name == nil && in.WIPLimit == nil {
+		http.Error(w, "name or wip_limit is required", http.StatusBadRequest)
+		return
+	}
+	if in.Name != nil {
+		if *in.Name = strings.TrimSpace(*in.Name); *in.Name == "" {
+			http.Error(w, "name can't be empty", http.StatusBadRequest)
+			return
+		}
+	}
+	if in.WIPLimit != nil && (*in.WIPLimit < 0 || *in.WIPLimit > 999) {
+		http.Error(w, "wip_limit must be between 1 and 999, or 0 to remove it", http.StatusBadRequest)
 		return
 	}
 	org := auth.OrgID(r.Context())
-	if err := h.store.Rename(r.Context(), org, r.PathValue("id"), in.Name); err != nil {
+	var err error
+	if in.Name != nil {
+		err = h.store.Rename(r.Context(), org, r.PathValue("id"), *in.Name)
+	}
+	if err == nil && in.WIPLimit != nil {
+		err = h.store.SetWIPLimit(r.Context(), org, r.PathValue("id"), *in.WIPLimit)
+	}
+	if err != nil {
 		writeErr(w, err)
 		return
 	}

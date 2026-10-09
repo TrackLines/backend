@@ -21,7 +21,7 @@ func writeErr(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, ErrNotFound):
 		http.Error(w, "not found", http.StatusNotFound)
-	case errors.Is(err, ErrAlreadyOpen):
+	case errors.Is(err, ErrAlreadyOpen), errors.Is(err, ErrKanban):
 		http.Error(w, err.Error(), http.StatusConflict)
 	case errors.Is(err, ErrInvalidLength):
 		http.Error(w, err.Error(), http.StatusBadRequest)

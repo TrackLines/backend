@@ -22,6 +22,8 @@ func writeErr(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, ErrNotFound):
 		http.Error(w, "not found", http.StatusNotFound)
+	case errors.Is(err, ErrSprintOpen):
+		http.Error(w, err.Error(), http.StatusConflict)
 	default:
 		logs.Errorf("boards: %v", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -65,12 +67,13 @@ func (h System) Update(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Name          *string `json:"name"`
 		EstimateScale *string `json:"estimate_scale"`
+		Style         *string `json:"style"` // sprints | kanban
 	}
 	if !httpx.Decode(w, r, &in) {
 		return
 	}
-	if in.Name == nil && in.EstimateScale == nil {
-		http.Error(w, "name or estimate_scale is required", http.StatusBadRequest)
+	if in.Name == nil && in.EstimateScale == nil && in.Style == nil {
+		http.Error(w, "name, estimate_scale or style is required", http.StatusBadRequest)
 		return
 	}
 	name := ""
@@ -87,9 +90,21 @@ func (h System) Update(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if err := h.store.UpdateSettings(r.Context(), r.PathValue("id"), auth.OrgID(r.Context()), name, in.EstimateScale); err != nil {
-		writeErr(w, err)
+	if in.Style != nil && *in.Style != "sprints" && *in.Style != "kanban" {
+		http.Error(w, "style must be sprints or kanban", http.StatusBadRequest)
 		return
+	}
+	if in.Style != nil {
+		if err := h.store.SetStyle(r.Context(), r.PathValue("id"), auth.OrgID(r.Context()), *in.Style); err != nil {
+			writeErr(w, err)
+			return
+		}
+	}
+	if in.Name != nil || in.EstimateScale != nil {
+		if err := h.store.UpdateSettings(r.Context(), r.PathValue("id"), auth.OrgID(r.Context()), name, in.EstimateScale); err != nil {
+			writeErr(w, err)
+			return
+		}
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

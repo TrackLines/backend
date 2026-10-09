@@ -58,6 +58,13 @@ func (s Store) Rename(ctx context.Context, owner, id, name string) error {
 	return affected(tag, err)
 }
 
+// SetWIPLimit sets the column's advisory work-in-progress limit; 0 removes it.
+func (s Store) SetWIPLimit(ctx context.Context, owner, id string, limit int) error {
+	tag, err := s.DB.Exec(ctx, `UPDATE columns c SET wip_limit = NULLIF($3, 0) FROM boards b
+		WHERE c.id = $1 AND b.id = c.board_id AND b.owner_clerk_id = $2`, id, owner, limit)
+	return affected(tag, err)
+}
+
 // Delete refuses to discard tickets that are still visible (open-sprint or no-sprint),
 // then compacts the remaining positions. Tickets in a closed sprint's Done column are
 // already hidden by the board view, so they don't block deletion.
