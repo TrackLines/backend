@@ -111,6 +111,7 @@ func (s *Service) Start() error {
 	sp := sprints.NewSystem(s.DB)
 	mux.Handle("GET /api/boards/{id}/sprints", signedIn(sp.List))
 	mux.Handle("POST /api/boards/{id}/sprints", signedIn(sp.Start))
+	mux.Handle("GET /api/boards/{id}/velocity", signedIn(sp.Velocity)) // per closed sprint + open sprint burn
 	mux.Handle("POST /api/sprints/{id}/close", signedIn(sp.Close))
 
 	// Roadmaps — GET by id is open: public ones are readable by anyone with the link

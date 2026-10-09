@@ -59,6 +59,16 @@ func (h System) List(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusOK, out)
 }
 
+// Velocity is what board {id} finished per closed sprint, plus the open sprint's burn data.
+func (h System) Velocity(w http.ResponseWriter, r *http.Request) {
+	v, err := h.store.Velocity(r.Context(), auth.OrgID(r.Context()), r.PathValue("id"))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, v)
+}
+
 // Close closes open sprint {id} and returns the next sprint it opened.
 func (h System) Close(w http.ResponseWriter, r *http.Request) {
 	org := auth.OrgID(r.Context())

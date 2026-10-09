@@ -30,11 +30,11 @@ func TestValidDates(t *testing.T) {
 	}
 }
 
-// Needs a throwaway db (migrated by TestItemTickets in this package): TEST_DATABASE_URL=postgres://...
+// PostgreSQL is provisioned by this package's TestMain.
 func TestStartDates(t *testing.T) {
 	url := os.Getenv("TEST_DATABASE_URL")
 	if url == "" {
-		t.Skip("TEST_DATABASE_URL not set")
+		t.Fatal("TEST_DATABASE_URL not set; package TestMain should provision PostgreSQL")
 	}
 	TestItemTickets(t) // ensures migrations + user rl1
 	ctx := context.Background()

@@ -285,7 +285,11 @@ func (s Store) Move(ctx context.Context, owner, id, toColumn string, pos int) er
 		// an estimate only survives a move to a board on the same scale
 		if _, err := tx.Exec(ctx, `UPDATE tickets t SET board_id = $2, column_id = $3, sprint_id = $4, updated_at = now(),
 				estimate = CASE WHEN (SELECT estimate_scale FROM boards WHERE id = t.board_id) =
-					(SELECT estimate_scale FROM boards WHERE id = $2) THEN t.estimate END
+					(SELECT estimate_scale FROM boards WHERE id = $2) THEN t.estimate END,
+				-- into Done stamps the time (kept when already done); anywhere else clears it.
+				-- ponytail: reordering columns doesn't restamp; Done is still decided by DoneSQL
+				done_at = CASE WHEN $3 = (SELECT dc.id FROM columns dc WHERE dc.board_id = $2 ORDER BY dc.position DESC LIMIT 1)
+					THEN COALESCE(t.done_at, now()) END
 			WHERE t.id = $1`, id, boardID, toColumn, sprint); err != nil {
 			return err
 		}
@@ -313,7 +317,7 @@ func (s Store) ToBacklog(ctx context.Context, owner, id string) error {
 		if from == nil {
 			return nil // already in the backlog
 		}
-		if _, err := tx.Exec(ctx, `UPDATE tickets t SET board_id = NULL, column_id = NULL, sprint_id = NULL, estimate = NULL, updated_at = now(),
+		if _, err := tx.Exec(ctx, `UPDATE tickets t SET board_id = NULL, column_id = NULL, sprint_id = NULL, estimate = NULL, done_at = NULL, updated_at = now(),
 				position = COALESCE((SELECT max(position) + 1 FROM tickets x WHERE x.project_id = t.project_id AND x.board_id IS NULL), 0)
 			WHERE t.id = $1`, id); err != nil {
 			return err

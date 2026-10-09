@@ -55,11 +55,11 @@ func TestDeleteFiles(t *testing.T) {
 	}
 }
 
-// Needs a throwaway db: TEST_DATABASE_URL=postgres://... go test ./internal/attachments/
+// PostgreSQL is provisioned by this package's TestMain.
 func TestStore(t *testing.T) {
 	url := os.Getenv("TEST_DATABASE_URL")
 	if url == "" {
-		t.Skip("TEST_DATABASE_URL not set")
+		t.Fatal("TEST_DATABASE_URL not set; package TestMain should provision PostgreSQL")
 	}
 	ctx := context.Background()
 	m, err := migrate.New("file://../migrations", "pgx5"+url[len("postgres"):])
@@ -117,11 +117,11 @@ func TestStore(t *testing.T) {
 	}
 }
 
-// Needs a throwaway db: TEST_DATABASE_URL=postgres://... go test ./internal/attachments/
+// PostgreSQL is provisioned by this package's TestMain.
 func TestDoneLock(t *testing.T) {
 	url := os.Getenv("TEST_DATABASE_URL")
 	if url == "" {
-		t.Skip("TEST_DATABASE_URL not set")
+		t.Fatal("TEST_DATABASE_URL not set; package TestMain should provision PostgreSQL")
 	}
 	ctx := context.Background()
 	m, err := migrate.New("file://../migrations", "pgx5"+url[len("postgres"):])

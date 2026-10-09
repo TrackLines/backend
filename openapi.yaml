@@ -779,6 +779,26 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /boards/{boardId}/velocity:
+    parameters:
+      - $ref: '#/components/parameters/BoardId'
+    get:
+      tags: [Sprints]
+      operationId: getBoardVelocity
+      summary: Velocity per closed sprint, plus the open sprint's burn data
+      description: >-
+        A closed sprint's completed value is its tickets that were done when it closed (closing carries
+        the rest into the next sprint). Unit is points on a board with an estimate scale (t-shirt sizes
+        count XS=1, S=2, M=3, L=5, XL=8; unestimated tickets count 0), otherwise tickets.
+      responses:
+        '200':
+          description: Velocity history and burn data.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Velocity' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /boards/{boardId}/sprints:
     parameters:
       - $ref: '#/components/parameters/BoardId'
@@ -1326,6 +1346,38 @@ components:
         tickets:
           type: array
           items: { $ref: '#/components/schemas/Ticket' }
+    Velocity:
+      type: object
+      required: [unit, sprints, current]
+      properties:
+        unit: { type: string, enum: [points, tickets] }
+        sprints:
+          type: array
+          description: Closed sprints, oldest first.
+          items:
+            type: object
+            properties:
+              number: { type: integer }
+              starts_at: { type: string, format: date-time }
+              closed_at: { type: string, format: date-time }
+              completed: { type: number }
+        current:
+          description: The open sprint, or null. total is the sprint's current scope (scope changes aren't tracked over time).
+          type: [object, 'null']
+          properties:
+            number: { type: integer }
+            starts_at: { type: string, format: date-time }
+            ends_at: { type: string, format: date-time }
+            total: { type: number }
+            unestimated: { type: integer, description: Tickets with no estimate on a points board. }
+            done:
+              type: array
+              description: When each done ticket reached Done, oldest first.
+              items:
+                type: object
+                properties:
+                  at: { type: string, format: date-time }
+                  value: { type: number }
     Sprint:
       type: object
       properties:

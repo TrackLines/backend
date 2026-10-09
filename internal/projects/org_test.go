@@ -16,11 +16,11 @@ import (
 )
 
 // Projects belong to the caller's active org: everyone in it sees them, nobody outside does.
-// Needs a throwaway db: TEST_DATABASE_URL=postgres://... go test ./internal/projects/
+// PostgreSQL is provisioned by this package's TestMain.
 func TestOrgSharing(t *testing.T) {
 	url := os.Getenv("TEST_DATABASE_URL")
 	if url == "" {
-		t.Skip("TEST_DATABASE_URL not set")
+		t.Fatal("TEST_DATABASE_URL not set; package TestMain should provision PostgreSQL")
 	}
 	ctx := context.Background()
 	m, err := migrate.New("file://../migrations", "pgx5"+url[len("postgres"):])

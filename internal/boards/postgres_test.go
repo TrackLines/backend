@@ -3,35 +3,22 @@ package boards
 import (
 	"context"
 	"errors"
+	"os"
 	"testing"
 
 	"github.com/golang-migrate/migrate/v4"
 	_ "github.com/golang-migrate/migrate/v4/database/pgx/v5"
 	_ "github.com/golang-migrate/migrate/v4/source/file"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/testcontainers/testcontainers-go/modules/postgres"
 )
 
 func TestStore(t *testing.T) {
+	url := os.Getenv("TEST_DATABASE_URL")
+	if url == "" {
+		t.Fatal("TEST_DATABASE_URL not set; package TestMain should provision PostgreSQL")
+	}
 	ctx := context.Background()
-	container, err := postgres.Run(ctx, "postgres:14-alpine",
-		postgres.WithDatabase("tracklines_test"),
-		postgres.WithUsername("test"),
-		postgres.WithPassword("test"),
-		postgres.BasicWaitStrategies(),
-	)
-	if err != nil {
-		t.Fatalf("start postgres container: %v", err)
-	}
-	t.Cleanup(func() {
-		if err := container.Terminate(ctx); err != nil {
-			t.Errorf("terminate postgres container: %v", err)
-		}
-	})
-	url, err := container.ConnectionString(ctx, "sslmode=disable")
-	if err != nil {
-		t.Fatalf("get postgres connection string: %v", err)
-	}
+	var err error
 	m, err := migrate.New("file://../migrations", "pgx5"+url[len("postgres"):])
 	if err != nil {
 		t.Fatal(err)
