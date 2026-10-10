@@ -1695,6 +1695,31 @@ paths:
         '502': { description: Stripe is unavailable while processing the event. }
         '503': { description: Billing is unavailable. }
 
+  /webhooks/clerk:
+    post:
+      tags: [Organizations]
+      operationId: clerkWebhook
+      summary: Receive a Clerk webhook event (delivered by Svix)
+      description: >-
+        Authenticates the raw payload with the Svix headers and CLERK_WEBHOOK_SECRET (timestamps more than 5 minutes off are rejected).
+        organizationMembership.deleted removes the user's admin and team rows in that org and revokes their API keys for it;
+        user.deleted does the same across every org; organization.deleted removes the org's admins and teams and revokes its API keys
+        (projects, boards and tickets are kept). Other event types are acknowledged and ignored. Safe to replay.
+      security: []
+      parameters:
+        - { name: svix-id, in: header, required: true, schema: { type: string } }
+        - { name: svix-timestamp, in: header, required: true, schema: { type: string }, description: Unix seconds. }
+        - { name: svix-signature, in: header, required: true, schema: { type: string }, description: 'Space-separated "v1,<base64>" signatures.' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        '204': { description: Event applied or ignored. }
+        '400': { description: Invalid body or signature. }
+        '503': { description: CLERK_WEBHOOK_SECRET is not set, or the database is unavailable (Svix retries). }
+
   /health:
     get:
       tags: [System]

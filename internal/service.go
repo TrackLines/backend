@@ -22,6 +22,7 @@ import (
 	"github.com/tracklines/backend/internal/boards"
 	"github.com/tracklines/backend/internal/bugfixes-tickets"
 	"github.com/tracklines/backend/internal/clerkcache"
+	"github.com/tracklines/backend/internal/clerkhooks"
 	"github.com/tracklines/backend/internal/columns"
 	"github.com/tracklines/backend/internal/comments"
 	"github.com/tracklines/backend/internal/config"
@@ -187,6 +188,8 @@ func (s *Service) Handler() http.Handler {
 	// Stripe authenticates webhooks by signature, not session
 	mux.HandleFunc("POST /api/webhooks/stripe", s.Billing.Webhook(time.Now))
 	mux.HandleFunc("POST /webhooks/stripe", s.Billing.Webhook(time.Now)) // same path as ../bugfixes (stripe listen --forward-to …/webhooks/stripe)
+	// Clerk (via Svix) authenticates by signature: org/user removals clean up admins, team members and API keys
+	mux.HandleFunc("POST /api/webhooks/clerk", clerkhooks.NewSystem(s.DB, config.Get(s.Config).ClerkWebhookSecret).Webhook(time.Now))
 
 	// Bugfixes ticket-creation — auth via bf_ key (no Clerk session)
 	bt := bugfixesTickets.NewSystem(s.DB)
