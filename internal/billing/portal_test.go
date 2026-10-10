@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/golang-migrate/migrate/v4"
@@ -32,7 +33,9 @@ func TestPortalAndStatus(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	if _, err := db.Exec(ctx, `INSERT INTO users (clerk_id, email, stripe_customer_id) VALUES ('p0', 'n@b.c', NULL), ('p1', 'c@b.c', 'cus_portal') ON CONFLICT DO NOTHING`); err != nil {
+	if _, err := db.Exec(ctx, `INSERT INTO users (clerk_id, email, stripe_customer_id) VALUES ('p0', 'n@b.c', NULL), ('p1', 'c@b.c', 'cus_portal'), ('p2', 'o@b.c', 'cus_stale') ON CONFLICT DO NOTHING;
+		UPDATE users SET stripe_subscription_id = 'sub_1', stripe_status = 'active' WHERE clerk_id = 'p1';
+		UPDATE users SET stripe_status = 'active' WHERE clerk_id = 'p2'`); err != nil { // p2: Pro granted by hand, no subscription
 		t.Fatal(err)
 	}
 	stripeSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -57,7 +60,20 @@ func TestPortalAndStatus(t *testing.T) {
 	}
 	rec = httptest.NewRecorder()
 	s.Status(rec, signedIn(httptest.NewRequest("GET", "/", nil), "p0"))
-	if rec.Body.String() != `{"paid":false,"project_limit":1}`+"\n" {
+	if rec.Body.String() != `{"billed":false,"paid":false,"project_limit":1}`+"\n" {
 		t.Fatalf("status: %s", rec.Body)
+	}
+	// granted by hand: paid, nothing billed, and the portal says so instead of asking Stripe
+	rec = httptest.NewRecorder()
+	s.Portal(rec, signedIn(httptest.NewRequest("POST", "/", nil), "p2"))
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "isn't billed through Stripe") {
+		t.Fatalf("granted plan portal: %d %s", rec.Code, rec.Body)
+	}
+	for user, want := range map[string]string{"p1": `{"billed":true,"paid":true,"project_limit":-1}`, "p2": `{"billed":false,"paid":true,"project_limit":-1}`} {
+		rec = httptest.NewRecorder()
+		s.Status(rec, signedIn(httptest.NewRequest("GET", "/", nil), user))
+		if rec.Body.String() != want+"\n" {
+			t.Fatalf("status %s: %s", user, rec.Body)
+		}
 	}
 }
