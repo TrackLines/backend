@@ -90,11 +90,12 @@ func TestStore(t *testing.T) {
 		WHERE b.project_id = $1 AND b.name = 'Backend' AND c.position IN (0, (SELECT max(position) FROM columns WHERE board_id = b.id))`, p.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec(ctx, `INSERT INTO tickets (project_id, title, position) VALUES ($1, 'later', 0)`, p.ID); err != nil {
+	// one waiting in the backlog, one resolved there: only the first is "in backlog"; the resolved one is done
+	if _, err := db.Exec(ctx, `INSERT INTO tickets (project_id, title, position, resolved_at) VALUES ($1, 'later', 0, NULL), ($1, 'resolved', 1, now())`, p.ID); err != nil {
 		t.Fatal(err)
 	}
 	list, _ = s.List(ctx, "pr1")
-	if st := list[0].Stats; st == nil || st.Active == "" || *st != (Stats{Boards: 3, Roadmaps: 1, Open: 1, Done: 1, Backlog: 1, Urgent: 1, Active: st.Active}) {
+	if st := list[0].Stats; st == nil || st.Active == "" || *st != (Stats{Boards: 3, Roadmaps: 1, Open: 1, Done: 2, Backlog: 1, Urgent: 1, Active: st.Active}) {
 		t.Fatalf("stats: %+v", st)
 	}
 	if st := list[1].Stats; st == nil || *st != (Stats{Active: list[1].UpdatedAt}) {

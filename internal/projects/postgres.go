@@ -96,7 +96,7 @@ func (s Store) List(ctx context.Context, owner string) ([]Project, error) {
 		(SELECT count(*) FROM roadmaps r WHERE r.project_id = projects.id),
 		count(*) FILTER (WHERE t.board_id IS NOT NULL AND NOT t.done),
 		count(*) FILTER (WHERE t.done),
-		count(t.tid) FILTER (WHERE t.board_id IS NULL), -- count(t.tid): a project with no tickets joins one all-NULL row
+		count(t.tid) FILTER (WHERE t.board_id IS NULL AND NOT t.done), -- open backlog only (resolved ones are done); count(t.tid): a project with no tickets joins one all-NULL row
 		count(*) FILTER (WHERE t.priority = 'urgent' AND NOT t.done),
 		to_char(greatest(projects.updated_at, max(t.changed)) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')
 		FROM projects
