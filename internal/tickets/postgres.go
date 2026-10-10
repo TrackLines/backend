@@ -286,9 +286,18 @@ func (s Store) Release(ctx context.Context, owner, actor, id string) error {
 	return nil
 }
 
+// Delete removes a ticket; if it was its parent's last unfinished sub-ticket, the parent completes.
 func (s Store) Delete(ctx context.Context, owner, id string) error {
-	return exec(s.DB.Exec(ctx, `DELETE FROM tickets t USING projects p
-		WHERE t.id = $1 AND p.id = t.project_id AND p.owner_clerk_id = $2`, id, owner))
+	var parent *string
+	err := s.DB.QueryRow(ctx, `DELETE FROM tickets t USING projects p
+		WHERE t.id = $1 AND p.id = t.project_id AND p.owner_clerk_id = $2 RETURNING t.parent_id`, id, owner).Scan(&parent)
+	if err != nil {
+		return notFound(err)
+	}
+	if parent == nil {
+		return nil
+	}
+	return s.completeIfFinished(ctx, owner, *parent)
 }
 
 func exec(tag pgconn.CommandTag, err error) error {
@@ -303,11 +312,10 @@ func exec(tag pgconn.CommandTag, err error) error {
 
 // Move puts ticket id at position pos (clamped) in toColumn. The column's board must be in
 // the ticket's project; the ticket can come from another column, another board or the
-// backlog, and joins the target board's open sprint. Same column = reorder.
-// Move places a ticket in a column (reopening it if it was resolved), then completes its parent
-// if that was the parent's last unfinished sub-ticket.
-// Move puts a ticket in a column. Entering a sprint on its last day is refused (SprintLockedError);
-// moves inside the sprint, to Done, or out of it are fine.
+// backlog, and joins the target board's open sprint. Same column = reorder. A resolved ticket
+// reopens; finishing the parent's last unfinished sub-ticket completes the parent. Entering a
+// sprint on its last day is refused (SprintLockedError); moves inside the sprint, to Done, or out
+// of it are fine.
 func (s Store) Move(ctx context.Context, owner, id, toColumn string, pos int) error {
 	return s.MoveEstimated(ctx, owner, id, toColumn, pos, nil, false)
 }
@@ -484,7 +492,8 @@ func (s Store) SetParent(ctx context.Context, owner, id string, parentID *string
 	if parentID != nil && *parentID == id {
 		return ErrSelfParent
 	}
-	return pgx.BeginFunc(ctx, s.DB, func(tx pgx.Tx) error {
+	var old *string
+	err := pgx.BeginFunc(ctx, s.DB, func(tx pgx.Tx) error {
 		var project string
 		if err := tx.QueryRow(ctx, `SELECT t.project_id FROM tickets t JOIN projects p ON p.id = t.project_id
 			WHERE t.id = $1 AND p.owner_clerk_id = $2`, id, owner).Scan(&project); err != nil {
@@ -492,6 +501,9 @@ func (s Store) SetParent(ctx context.Context, owner, id string, parentID *string
 		}
 		// one parent change at a time per project, so two concurrent edits can't form a loop
 		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext('ticket-parent:' || $1))`, project); err != nil {
+			return err
+		}
+		if err := tx.QueryRow(ctx, `SELECT parent_id FROM tickets WHERE id = $1`, id).Scan(&old); err != nil {
 			return err
 		}
 		if parentID != nil {
@@ -516,6 +528,11 @@ func (s Store) SetParent(ctx context.Context, owner, id string, parentID *string
 		_, err := tx.Exec(ctx, `UPDATE tickets SET parent_id = $2, updated_at = now() WHERE id = $1`, id, parentID)
 		return err
 	})
+	// taking a sub-ticket away can leave the old parent with only finished ones
+	if err != nil || old == nil || (parentID != nil && *parentID == *old) {
+		return err
+	}
+	return s.completeIfFinished(ctx, owner, *old)
 }
 
 // Get returns the owner's ticket with its project/board/column/sprint context.

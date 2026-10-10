@@ -38,13 +38,24 @@ func (s Store) Resolve(ctx context.Context, owner, id string) error {
 // completes its own parent in turn, so it carries up the chain. A parent that's already done, or
 // whose children aren't all finished, is left alone.
 func (s Store) completeParent(ctx context.Context, owner, id string) error {
+	var parent *string
+	if err := s.DB.QueryRow(ctx, `SELECT parent_id FROM tickets WHERE id = $1`, id).Scan(&parent); err != nil || parent == nil {
+		return ignoreNoRows(err)
+	}
+	return s.completeIfFinished(ctx, owner, *parent)
+}
+
+// completeIfFinished completes parent when all of its sub-tickets are done or resolved. Besides a
+// sub-ticket finishing, removing the last unfinished one (delete, detach, re-parent) can finish it;
+// adding one never does.
+func (s Store) completeIfFinished(ctx context.Context, owner, parentID string) error {
 	var parent, board *string
 	var children, finished int
 	var parentDone bool
 	err := s.DB.QueryRow(ctx, `SELECT p.id, p.board_id, `+boards.DoneSQL("p")+`,
 			(SELECT count(*) FROM tickets c WHERE c.parent_id = p.id),
 			(SELECT count(*) FROM tickets c WHERE c.parent_id = p.id AND `+boards.DoneSQL("c")+`)
-		FROM tickets t JOIN tickets p ON p.id = t.parent_id WHERE t.id = $1`, id).
+		FROM tickets p WHERE p.id = $1`, parentID).
 		Scan(&parent, &board, &parentDone, &children, &finished)
 	if errors.Is(err, pgx.ErrNoRows) || (err == nil && (parentDone || children == 0 || finished < children)) {
 		return nil
@@ -72,4 +83,11 @@ func (h System) Resolve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func ignoreNoRows(err error) error {
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	return err
 }
