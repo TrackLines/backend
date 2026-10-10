@@ -60,3 +60,15 @@ func TestResolvePrice(t *testing.T) {
 		t.Error("product without default price should error")
 	}
 }
+
+func TestStripeErrorKeepsTheReason(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":{"type":"invalid_request_error","code":"url_invalid","param":"return_url","message":"Not a valid URL"}}`))
+	}))
+	defer srv.Close()
+	_, err := Stripe{SecretKey: "sk", BaseURL: srv.URL}.PortalURL(context.Background(), "cus_1", "http://localhost:3000/settings")
+	if err == nil || err.Error() != "stripe returned HTTP 400 (invalid_request_error, url_invalid, param return_url): Not a valid URL" {
+		t.Fatalf("error: %v", err)
+	}
+}

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/bugfixes/go-bugfixes/logs"
 	goFlags "github.com/flags-gg/go-flags"
@@ -65,6 +66,10 @@ func run() error {
 	port := strconv.Itoa(c.Local.HTTPPort)
 	if pc.RailwayPort != "" {
 		port = pc.RailwayPort
+	}
+	// a live Stripe key sends paying customers back to PORTAL_URL: localhost there is a misconfiguration
+	if strings.HasPrefix(pc.Stripe.Key, "sk_live_") && strings.Contains(pc.PortalURL, "localhost") {
+		logs.Warnf("PORTAL_URL is %q with a live Stripe key: set it to the site's settings page (e.g. https://tracklin.es/settings)", pc.PortalURL)
 	}
 	bill := billing.Service{
 		DB:            db,

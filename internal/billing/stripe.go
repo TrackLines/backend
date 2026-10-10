@@ -25,13 +25,29 @@ type Stripe struct {
 	Client    *http.Client
 }
 
+// stripeError keeps what Stripe says went wrong; its messages name the problem (e.g. an unsaved
+// customer portal configuration, or a bad return_url) and don't contain secrets.
 type stripeError struct {
-	Status int
-	Type   string
+	Status  int
+	Type    string
+	Code    string
+	Param   string
+	Message string
 }
 
 func (e stripeError) Error() string {
-	return fmt.Sprintf("stripe returned HTTP %d (%s)", e.Status, e.Type)
+	msg := fmt.Sprintf("stripe returned HTTP %d (%s", e.Status, e.Type)
+	if e.Code != "" {
+		msg += ", " + e.Code
+	}
+	if e.Param != "" {
+		msg += ", param " + e.Param
+	}
+	msg += ")"
+	if e.Message != "" {
+		msg += ": " + e.Message
+	}
+	return msg
 }
 
 func (s Stripe) call(ctx context.Context, method, path string, form url.Values, idempotencyKey string, out any) error {
@@ -70,11 +86,15 @@ func (s Stripe) call(ctx context.Context, method, path string, form url.Values, 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		var failure struct {
 			Error struct {
-				Type string `json:"type"`
+				Type    string `json:"type"`
+				Code    string `json:"code"`
+				Param   string `json:"param"`
+				Message string `json:"message"`
 			} `json:"error"`
 		}
 		_ = json.Unmarshal(payload, &failure)
-		return stripeError{Status: resp.StatusCode, Type: failure.Error.Type}
+		e := failure.Error
+		return stripeError{Status: resp.StatusCode, Type: e.Type, Code: e.Code, Param: e.Param, Message: e.Message}
 	}
 	return json.Unmarshal(payload, out)
 }
