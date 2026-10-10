@@ -3,11 +3,13 @@ package billing
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"time"
 
 	"github.com/bugfixes/go-bugfixes/logs"
+	"github.com/jackc/pgx/v5"
 	"github.com/tracklines/backend/internal/httpx"
 )
 
@@ -55,10 +57,17 @@ func (s Service) Webhook(now func() time.Time) http.HandlerFunc {
 				http.Error(w, "billing provider unavailable", http.StatusBadGateway)
 				return
 			}
-			if err := applySubscription(r.Context(), s, sub); err != nil {
+			customer, err := applySubscription(r.Context(), s, sub)
+			if err != nil {
 				logs.Errorf("billing: webhook apply %s: %v", subID, err)
 				http.Error(w, "billing unavailable", http.StatusServiceUnavailable)
 				return
+			}
+			// ponytail: best effort, the next subscription event re-syncs; add a retry queue if gaps show up in HQ
+			if customer != nil {
+				if err := s.ChewedFeed.Sync(r.Context(), *customer); err != nil {
+					logs.Errorf("billing: chewedfeed sync %s: %v", subID, err)
+				}
 			}
 		}
 		httpx.JSON(w, http.StatusOK, map[string]bool{"received": true})
@@ -68,10 +77,19 @@ func (s Service) Webhook(now func() time.Time) http.HandlerFunc {
 // applySubscription stores the subscription on the user owning its customer. A stale
 // non-live subscription can't overwrite a different live one. Unknown customers
 // (not from our checkout) match no row and are acknowledged so Stripe stops retrying.
-func applySubscription(ctx context.Context, s Service, sub Subscription) error {
-	_, err := s.DB.Exec(ctx, `UPDATE users SET stripe_subscription_id = $2, stripe_status = $3, updated_at = now()
+// It returns the updated user for ChewedFeed, or nil when no row changed.
+func applySubscription(ctx context.Context, s Service, sub Subscription) (*chewedFeedCustomer, error) {
+	c := chewedFeedCustomer{BillingStatus: sub.Status, Plan: plan(sub.Status)}
+	err := s.DB.QueryRow(ctx, `UPDATE users SET stripe_subscription_id = $2, stripe_status = $3, updated_at = now()
 		WHERE stripe_customer_id = $1
-		  AND (stripe_subscription_id IS NULL OR stripe_subscription_id = $2 OR $3 IN ('active', 'trialing'))`,
-		sub.CustomerID, sub.ID, sub.Status)
-	return err
+		  AND (stripe_subscription_id IS NULL OR stripe_subscription_id = $2 OR $3 IN ('active', 'trialing'))
+		RETURNING clerk_id, COALESCE(name, ''), email, created_at`,
+		sub.CustomerID, sub.ID, sub.Status).Scan(&c.ExternalCustomerID, &c.Name, &c.Email, &c.SignedUpAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &c, nil
 }

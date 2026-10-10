@@ -5,6 +5,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -75,8 +76,19 @@ func TestWebhook(t *testing.T) {
 		_, _ = w.Write([]byte(subs[strings.TrimPrefix(r.URL.Path, "/v1/subscriptions/")]))
 	}))
 	defer stripeSrv.Close()
+	var synced []chewedFeedCustomer
+	chewedSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var c chewedFeedCustomer
+		if r.URL.Path != "/api/product-customers/sync" || r.Header.Get("X-Enquiry-Key") != "ek" || json.NewDecoder(r.Body).Decode(&c) != nil {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		synced = append(synced, c)
+	}))
+	defer chewedSrv.Close()
 	now := time.Now()
-	s := Service{DB: db, Stripe: Stripe{SecretKey: "sk", BaseURL: stripeSrv.URL}, PriceID: "p", WebhookSecret: "whsec", ReturnURL: "r"}
+	s := Service{DB: db, Stripe: Stripe{SecretKey: "sk", BaseURL: stripeSrv.URL}, PriceID: "p", WebhookSecret: "whsec", ReturnURL: "r",
+		ChewedFeed: ChewedFeed{URL: chewedSrv.URL + "/", Key: "ek"}}
 	h := s.Webhook(func() time.Time { return now })
 	send := func(body, secret string) int {
 		req := httptest.NewRequest("POST", "/", strings.NewReader(body))
@@ -101,6 +113,9 @@ func TestWebhook(t *testing.T) {
 	if paid, _ := IsPaid(ctx, db, "w1"); !paid {
 		t.Fatal("not paid after checkout")
 	}
+	if len(synced) != 1 || synced[0].ExternalCustomerID != "w1" || synced[0].Email != "w@b.c" || synced[0].Plan != "paid" || synced[0].BillingStatus != "active" {
+		t.Fatalf("chewedfeed purchase sync: %+v", synced)
+	}
 	// late event for an old canceled subscription must not downgrade the live one
 	if code := send(`{"type":"customer.subscription.deleted","data":{"object":{"id":"sub_old"}}}`, "whsec"); code != 200 || status() != "active" {
 		t.Fatalf("stale event: %d %q", code, status())
@@ -117,5 +132,9 @@ func TestWebhook(t *testing.T) {
 	}
 	if paid, _ := IsPaid(ctx, db, "w1"); paid {
 		t.Fatal("still paid after cancel")
+	}
+	// stale and unknown-customer events change no row, so only checkout and cancel reach ChewedFeed
+	if len(synced) != 2 || synced[1].Plan != "free" || synced[1].BillingStatus != "canceled" {
+		t.Fatalf("chewedfeed cancel sync: %+v", synced)
 	}
 }

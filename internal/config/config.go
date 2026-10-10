@@ -22,6 +22,8 @@ type Project struct {
 	BugfixesLogLevel string `env:"BUGFIXES_LOG_LEVEL" envDefault:"info"`
 	UploadThingToken string `env:"UPLOADTHING_TOKEN"`                   // ticket attachments; used to delete stored files
 	RateLimit        int    `env:"API_KEY_RATE_LIMIT" envDefault:"300"` // requests per minute per API key; 0 turns it off
+	ChewedFeedURL    string `env:"CHEWEDFEED_API_URL"`                  // HQ customer sync; off when unset
+	ChewedFeedKey    string `env:"CHEWEDFEED_ENQUIRY_KEY"`              // tracklines project's enquiry key in ChewedFeed
 }
 
 type ProjectConfigurator struct{}

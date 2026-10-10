@@ -77,6 +77,7 @@ func run() error {
 		PriceID:       pc.Stripe.PriceID,
 		WebhookSecret: pc.Stripe.WebhookSecret,
 		ReturnURL:     pc.PortalURL,
+		ChewedFeed:    billing.ChewedFeed{URL: pc.ChewedFeedURL, Key: pc.ChewedFeedKey},
 	}
 	return service.New(c, db, vk, fl, bill, port).Start()
 }

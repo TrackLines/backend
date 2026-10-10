@@ -10,6 +10,7 @@ type Service struct {
 	PriceID       string
 	WebhookSecret string
 	ReturnURL     string // frontend settings page; checkout/portal send the user back here
+	ChewedFeed    ChewedFeed
 }
 
 func (s Service) configured() bool {
