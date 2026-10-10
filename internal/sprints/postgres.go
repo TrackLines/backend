@@ -147,13 +147,23 @@ func (s Store) CloseWithOptions(ctx context.Context, owner, sprintID string, opt
 
 // closeSprint (caller holds the sprint row lock) marks it closed, opens the next sprint
 // with the same length starting now, and carries over every ticket that isn't in the
-// board's last column ("done"), keeping its column and order.
+// board's last column ("done"), keeping its column and order. If the board planned its next
+// sprint (refinement) and that plan is within capacity or approved, the plan's tickets join it.
 func closeSprint(ctx context.Context, tx pgx.Tx, id string, options CloseOptions) (Sprint, error) {
 	if err := boards.RecordScope(ctx, tx, id); err != nil {
 		return Sprint{}, err
 	}
-	if _, err := tx.Exec(ctx, `UPDATE sprints SET closed_at = now() WHERE id = $1`, id); err != nil {
+	var boardID string
+	if err := tx.QueryRow(ctx, `UPDATE sprints SET closed_at = now() WHERE id = $1 RETURNING board_id`, id).Scan(&boardID); err != nil {
 		return Sprint{}, err
+	}
+	// refinement: planned sprint 1 becomes the next sprint (its length, unless the closer chose one)
+	plan, err := nextPlan(ctx, tx, boardID)
+	if err != nil {
+		return Sprint{}, err
+	}
+	if plan != nil && options.NextLengthDays == 0 {
+		options.NextLengthDays = plan.LengthDays
 	}
 	next, err := boards.ScanSprint(tx.QueryRow(ctx, `INSERT INTO sprints (board_id, number, length_days, starts_at, ends_at)
 		SELECT board_id, number + 1, COALESCE(NULLIF($2, 0), length_days), COALESCE($3::timestamptz, now()),
@@ -162,8 +172,13 @@ func closeSprint(ctx context.Context, tx pgx.Tx, id string, options CloseOptions
 	if err != nil {
 		return Sprint{}, err
 	}
-	_, err = tx.Exec(ctx, `UPDATE tickets SET sprint_id = $2 WHERE sprint_id = $1 AND column_id <> (
-		SELECT c.id FROM columns c WHERE c.board_id = $3 ORDER BY c.position DESC LIMIT 1)`, id, next.ID, next.BoardID)
+	if _, err := tx.Exec(ctx, `UPDATE tickets SET sprint_id = $2 WHERE sprint_id = $1 AND column_id <> (
+		SELECT c.id FROM columns c WHERE c.board_id = $3 ORDER BY c.position DESC LIMIT 1)`, id, next.ID, next.BoardID); err != nil {
+		return Sprint{}, err
+	}
+	if plan != nil {
+		err = movePlanned(ctx, tx, plan, next)
+	}
 	return next, err
 }
 

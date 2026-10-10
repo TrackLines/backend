@@ -232,6 +232,8 @@ func (a Admins) RequireResourceBoardManager(w http.ResponseWriter, r *http.Reque
 		err = a.DB.QueryRow(r.Context(), `SELECT c.board_id::text FROM columns c JOIN boards b ON b.id=c.board_id WHERE c.id::text=$1 AND b.owner_clerk_id=$2`, id, auth.OrgID(r.Context())).Scan(&boardID)
 	case "sprint":
 		err = a.DB.QueryRow(r.Context(), `SELECT s.board_id::text FROM sprints s JOIN boards b ON b.id=s.board_id WHERE s.id::text=$1 AND b.owner_clerk_id=$2`, id, auth.OrgID(r.Context())).Scan(&boardID)
+	case "planned_sprint":
+		err = a.DB.QueryRow(r.Context(), `SELECT s.board_id::text FROM planned_sprints s JOIN boards b ON b.id=s.board_id WHERE s.id::text=$1 AND b.owner_clerk_id=$2`, id, auth.OrgID(r.Context())).Scan(&boardID)
 	default:
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return false

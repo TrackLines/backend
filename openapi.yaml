@@ -1462,6 +1462,10 @@ paths:
       tags: [Sprints]
       operationId: closeSprint
       summary: Close a sprint and start or schedule the next one
+      description: >-
+        If the board has a planned sprint (refinement) that's within capacity or approved, it becomes the next sprint: its length
+        (unless next_length_days is given) and its tickets, which join the board's first column with their estimates. A planned
+        sprint over capacity without approval isn't promoted and stays planned. Unfinished tickets carry over as before.
       parameters:
         - name: sprintId
           in: path
@@ -1485,6 +1489,99 @@ paths:
         '400': { $ref: '#/components/responses/BadRequest' }
         '403': { description: Requires a signed-in organization admin or the linked team's leader. }
         '404': { $ref: '#/components/responses/NotFound' }
+
+  /boards/{boardId}/planned-sprints:
+    parameters:
+      - $ref: '#/components/parameters/BoardId'
+    get:
+      tags: [Sprints]
+      operationId: listPlannedSprints
+      summary: A board's planned sprints with their tickets and capacity
+      responses:
+        '200':
+          description: Planned sprints, next first (at most 2).
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/PlannedSprint' } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [Sprints]
+      operationId: planSprint
+      summary: Plan a sprint after the current one (org admins and the board team's leaders)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [length_days]
+              properties:
+                length_days: { type: integer, minimum: 1, maximum: 365 }
+      responses:
+        '201':
+          description: The board's planned sprints.
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/PlannedSprint' } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { description: Not an org admin or the board team's leader. }
+        '409': { description: Already 2 planned sprints, or a kanban board. }
+
+  /planned-sprints/{plannedSprintId}:
+    parameters:
+      - { name: plannedSprintId, in: path, required: true, schema: { type: string, format: uuid } }
+    delete:
+      tags: [Sprints]
+      operationId: unplanSprint
+      summary: Remove a planned sprint; its tickets stay in the backlog, unplanned and unestimated
+      responses:
+        '204': { description: Removed; a later planned sprint moves up. }
+        '403': { description: Not an org admin or the board team's leader. }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /planned-sprints/{plannedSprintId}/approve:
+    parameters:
+      - { name: plannedSprintId, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      tags: [Sprints]
+      operationId: approvePlannedSprint
+      summary: Accept a planned sprint's current total over capacity (org admins and the board team's leaders, signed in)
+      description: Records the total, who and when. If the planned total later goes above it, the sprint needs approval again.
+      responses:
+        '200':
+          description: The planned sprint.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlannedSprint' }
+        '403': { description: Not an org admin or the board team's leader, or an API key. }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /tickets/{ticketId}/planned-sprint:
+    parameters:
+      - $ref: '#/components/parameters/TicketId'
+    put:
+      tags: [Tickets]
+      operationId: planTicket
+      summary: Plan a backlog ticket into a planned sprint, sized on that board's scale
+      description: >-
+        The ticket stays in the backlog until the planned sprint starts. Without an estimate it keeps one already on the same scale.
+        planned_sprint_id null takes it out of the plan (and clears the estimate). Going over capacity is allowed; the sprint then
+        needs approval before it can start.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                planned_sprint_id: { type: [string, 'null'], format: uuid }
+                estimate: { type: string }
+      responses:
+        '204': { description: Planned. }
+        '400': { description: Estimate isn't on the board's scale. }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: The ticket is on a board, not in the backlog. }
 
   /roadmaps:
     get:
@@ -2087,6 +2184,7 @@ components:
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
         done_at: { type: [string, 'null'], format: date-time, description: "When it reached its board's Done column or was resolved; null while open." }
+        planned_sprint_id: { type: [string, 'null'], format: uuid, description: A backlog ticket planned into a board's upcoming sprint (refinement). }
     Column:
       type: object
       properties:
@@ -2129,6 +2227,28 @@ components:
                 properties:
                   at: { type: string, format: date-time }
                   value: { type: number }
+    PlannedSprint:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        board_id: { type: string, format: uuid }
+        position: { type: integer, description: 1 = the next sprint }
+        number: { type: integer, description: The sprint number it will get }
+        length_days: { type: integer }
+        tickets: { type: array, items: { $ref: '#/components/schemas/Ticket' } }
+        capacity:
+          type: object
+          properties:
+            unit: { type: string, enum: [points, tickets] }
+            velocity: { type: [number, 'null'], description: Average completed over the last 3 closed sprints; null without history. }
+            cap: { type: [number, 'null'], description: velocity + 10%; null = no limit yet. }
+            used: { type: number }
+            unestimated: { type: integer }
+            over: { type: boolean }
+            approved_total: { type: [number, 'null'] }
+            approved_by: { type: [string, 'null'] }
+            approved_at: { type: [string, 'null'], format: date-time }
+            needs_approval: { type: boolean, description: Over capacity and not covered by an approval; it won't start until approved or trimmed. }
     Sprint:
       type: object
       properties:

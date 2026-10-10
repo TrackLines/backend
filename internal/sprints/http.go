@@ -8,6 +8,7 @@ import (
 	"github.com/bugfixes/go-bugfixes/logs"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/tracklines/backend/internal/auth"
+	"github.com/tracklines/backend/internal/boards"
 	"github.com/tracklines/backend/internal/httpx"
 	"github.com/tracklines/backend/internal/organizations"
 )
@@ -26,9 +27,9 @@ func writeErr(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, ErrNotFound):
 		http.Error(w, "not found", http.StatusNotFound)
-	case errors.Is(err, ErrAlreadyOpen), errors.Is(err, ErrKanban):
+	case errors.Is(err, ErrAlreadyOpen), errors.Is(err, ErrKanban), errors.Is(err, ErrTooManyPlanned), errors.Is(err, ErrNotBacklog):
 		http.Error(w, err.Error(), http.StatusConflict)
-	case errors.Is(err, ErrInvalidLength), errors.Is(err, ErrInvalidStart):
+	case errors.Is(err, ErrInvalidLength), errors.Is(err, ErrInvalidStart), errors.Is(err, boards.ErrBadEstimate):
 		http.Error(w, err.Error(), http.StatusBadRequest)
 	default:
 		logs.Errorf("sprints: %v", err)

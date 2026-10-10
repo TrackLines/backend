@@ -31,6 +31,8 @@ type Ticket struct {
 	CreatedAt   string   `json:"created_at"`
 	UpdatedAt   string   `json:"updated_at"`
 	DoneAt      *string  `json:"done_at"` // when it reached Done (or was resolved); null while open
+	// PlannedSprintID: a backlog ticket planned into a board's upcoming sprint (refinement)
+	PlannedSprintID *string `json:"planned_sprint_id"`
 }
 
 // TicketCols + ScanTicket read a ticket row; shared with the tickets package. The last column
@@ -40,7 +42,7 @@ var TicketCols = `t.id, t.created_by, t.assigned_to, t.project_id, t.column_id, 
 	to_char(t.resolved_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
 	to_char(t.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
 	to_char(t.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
-	to_char(t.done_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')`
+	to_char(t.done_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'), t.planned_sprint_id`
 
 func ScanTicket(row pgx.Row) (Ticket, error) {
 	var t Ticket
@@ -64,7 +66,7 @@ var TicketBlockedSQL = `EXISTS (SELECT 1 FROM ticket_dependencies td JOIN ticket
 
 // TicketDest lists scan targets matching TicketCols, for queries that select extra columns after them.
 func TicketDest(t *Ticket) []any {
-	return []any{&t.ID, &t.CreatedBy, &t.AssignedTo, &t.ProjectID, &t.ColumnID, &t.SprintID, &t.Type, &t.Title, &t.Description, &t.Priority, &t.Estimate, &t.Position, &t.Blocked, &t.Labels, &t.ResolvedAt, &t.CreatedAt, &t.UpdatedAt, &t.DoneAt}
+	return []any{&t.ID, &t.CreatedBy, &t.AssignedTo, &t.ProjectID, &t.ColumnID, &t.SprintID, &t.Type, &t.Title, &t.Description, &t.Priority, &t.Estimate, &t.Position, &t.Blocked, &t.Labels, &t.ResolvedAt, &t.CreatedAt, &t.UpdatedAt, &t.DoneAt, &t.PlannedSprintID}
 }
 
 // Sprint is a board's time box; only the open one is shown on the board.
@@ -207,7 +209,9 @@ func (s Store) UpdateSettings(ctx context.Context, id, owner, name string, scale
 			return err
 		}
 		if scale != nil && old != updatedScale {
-			if _, err := tx.Exec(ctx, `UPDATE tickets t SET estimate = NULL, updated_at = now() WHERE t.board_id = $1 AND t.estimate IS NOT NULL
+			// open estimates on the board and on tickets planned into its upcoming sprints
+			if _, err := tx.Exec(ctx, `UPDATE tickets t SET estimate = NULL, updated_at = now()
+				WHERE (t.board_id = $1 OR t.planned_sprint_id IN (SELECT ps.id FROM planned_sprints ps WHERE ps.board_id = $1)) AND t.estimate IS NOT NULL
 				AND NOT EXISTS (SELECT 1 FROM sprints sp WHERE sp.id = t.sprint_id AND sp.closed_at IS NOT NULL)`, id); err != nil {
 				return err
 			}

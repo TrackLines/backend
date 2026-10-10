@@ -189,4 +189,15 @@ func TestAdmins(t *testing.T) {
 	if code := manager("leader", true, "board", boardID); code != 403 {
 		t.Fatalf("API key board access: %d", code)
 	}
+	// refinement: approving a planned sprint follows the same rule
+	var plannedID string
+	if err := db.QueryRow(ctx, `INSERT INTO planned_sprints(board_id,position,length_days) VALUES ($1,1,14) RETURNING id`, boardID).Scan(&plannedID); err != nil {
+		t.Fatal(err)
+	}
+	if code := manager("leader", false, "planned_sprint", plannedID); code != 200 {
+		t.Fatalf("team leader planned sprint access: %d", code)
+	}
+	if code := manager("member", false, "planned_sprint", plannedID); code != 403 {
+		t.Fatalf("ordinary member planned sprint access: %d", code)
+	}
 }

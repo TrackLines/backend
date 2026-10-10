@@ -166,6 +166,12 @@ func (s *Service) Handler() http.Handler {
 	mux.Handle("GET /api/sprints/{id}", signedIn(sp.Get))              // read-only: burn data and tickets
 	mux.Handle("PATCH /api/sprints/{id}", signedIn(sp.Update))         // change an open sprint's length
 	mux.Handle("POST /api/sprints/{id}/close", signedIn(sp.Close))
+	// Refinement: up to 2 planned sprints per board; backlog tickets are planned and sized into them
+	mux.Handle("GET /api/boards/{id}/planned-sprints", signedIn(sp.ListPlanned)) // with tickets and capacity (velocity + 10%)
+	mux.Handle("POST /api/boards/{id}/planned-sprints", signedIn(sp.Plan))
+	mux.Handle("DELETE /api/planned-sprints/{id}", signedIn(sp.Unplan))
+	mux.Handle("POST /api/planned-sprints/{id}/approve", signedIn(sp.Approve)) // accept the total over capacity
+	mux.Handle("PUT /api/tickets/{id}/planned-sprint", signedIn(sp.PlanTicket))
 
 	// Roadmaps — GET by id is open: public ones are readable by anyone with the link
 	r := roadmaps.NewSystem(s.DB)

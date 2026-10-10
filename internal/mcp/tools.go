@@ -122,6 +122,24 @@ var tools = []tool{
 	{name: "close_sprint", title: "Close sprint", description: "Close an open sprint and carry unfinished tickets forward. Optionally set next_length_days and next_starts_at (RFC3339); by default the next sprint starts now with the same length.",
 		method: "POST", path: "/api/sprints/{sprint_id}/close", body: []string{"next_length_days", "next_starts_at"},
 		props: map[string]any{"sprint_id": id("Sprint"), "next_length_days": map[string]any{"type": "integer", "minimum": 1, "maximum": 365}, "next_starts_at": map[string]any{"type": "string", "format": "date-time"}}, required: []string{"sprint_id"}},
+
+	// refinement: plan backlog tickets into a board's next sprints and size them
+	{name: "list_planned_sprints", title: "List planned sprints", description: "A board's planned sprints (up to 2, after the current one), with their tickets and capacity: " +
+		"velocity (average of the last 3 closed sprints), cap (velocity + 10%), used, unestimated, and whether it's over and needs approval.",
+		method: "GET", path: "/api/boards/{board_id}/planned-sprints", props: map[string]any{"board_id": id("Board")}, required: []string{"board_id"}, readOnly: true},
+	{name: "plan_sprint", title: "Plan a sprint", description: "Add a planned sprint after the board's current (and any planned) sprint; at most 2. Org admins and the board team's leaders.",
+		method: "POST", path: "/api/boards/{board_id}/planned-sprints", body: []string{"length_days"},
+		props: map[string]any{"board_id": id("Board"), "length_days": map[string]any{"type": "integer", "minimum": 1, "maximum": 365}}, required: []string{"board_id", "length_days"}},
+	{name: "plan_ticket", title: "Plan ticket into a sprint", description: "Put a backlog ticket into a planned sprint (it stays in the backlog until that sprint starts), sized with estimate " +
+		"on that board's scale; planned_sprint_id null takes it out. Going over capacity is allowed but the sprint then needs approval before it can start.",
+		method: "PUT", path: "/api/tickets/{ticket_id}/planned-sprint", body: []string{"planned_sprint_id", "estimate"},
+		props: map[string]any{"ticket_id": id("Ticket"), "planned_sprint_id": map[string]any{"type": []string{"string", "null"}, "description": "Planned sprint UUID, or null to unplan"},
+			"estimate": str("Estimate on the planned sprint's board scale")}, required: []string{"ticket_id", "planned_sprint_id"}},
+	{name: "approve_planned_sprint", title: "Approve planned sprint", description: "Accept a planned sprint's current total over capacity, so it can start. Org admins and the board team's leaders " +
+		"(signed in; agent keys can't approve). Adding more afterwards needs approval again.",
+		method: "POST", path: "/api/planned-sprints/{planned_sprint_id}/approve", props: map[string]any{"planned_sprint_id": id("Planned sprint")}, required: []string{"planned_sprint_id"}},
+	{name: "unplan_sprint", title: "Remove planned sprint", description: "Remove a planned sprint; its tickets stay in the backlog, unplanned and unestimated. Org admins and the board team's leaders.",
+		method: "DELETE", path: "/api/planned-sprints/{planned_sprint_id}", props: map[string]any{"planned_sprint_id": id("Planned sprint")}, required: []string{"planned_sprint_id"}},
 }
 
 // keepTitleAndDescription: PATCH /tickets/{id} replaces both, so fill whichever the bot left out.

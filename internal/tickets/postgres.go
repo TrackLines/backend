@@ -23,6 +23,11 @@ var (
 
 type Ticket = boards.Ticket
 
+// scaleSQL is ticket t's estimate scale: its board's, or for a backlog ticket planned into an
+// upcoming sprint, that sprint's board's. NULL in the plain backlog (no estimates there).
+const scaleSQL = `COALESCE((SELECT estimate_scale FROM boards WHERE id = t.board_id),
+	(SELECT pb.estimate_scale FROM planned_sprints ps JOIN boards pb ON pb.id = ps.board_id WHERE ps.id = t.planned_sprint_id))`
+
 type Store struct{ DB *pgxpool.Pool }
 
 // ValidType reports whether t is a ticket type; "" means "unchanged" on update.
@@ -229,9 +234,8 @@ func (s Store) SetRequiredEstimate(ctx context.Context, owner, id, estimate stri
 
 func (s Store) setEstimate(ctx context.Context, owner, id, estimate string, require bool) error {
 	var scale string
-	if err := s.DB.QueryRow(ctx, `SELECT COALESCE(b.estimate_scale, 'none') FROM tickets t
-		JOIN projects p ON p.id = t.project_id AND p.owner_clerk_id = $2
-		LEFT JOIN boards b ON b.id = t.board_id WHERE t.id = $1`, id, owner).Scan(&scale); err != nil {
+	if err := s.DB.QueryRow(ctx, `SELECT COALESCE(`+scaleSQL+`, 'none') FROM tickets t
+		JOIN projects p ON p.id = t.project_id AND p.owner_clerk_id = $2 WHERE t.id = $1`, id, owner).Scan(&scale); err != nil {
 		return notFound(err)
 	}
 	if !boards.ValidEstimate(scale, estimate) {
@@ -344,7 +348,7 @@ func (s Store) move(ctx context.Context, owner, id, toColumn string, pos int, o 
 		// lock the target board: moves on one board are serialised
 		err := tx.QueryRow(ctx, `SELECT b.id, b.estimate_scale, t.column_id, t.sprint_id,
 				(SELECT id FROM sprints WHERE board_id = b.id AND closed_at IS NULL),
-				t.board_id, (SELECT estimate_scale FROM boards WHERE id = t.board_id), t.estimate
+				t.board_id, `+scaleSQL+`, t.estimate
 			FROM tickets t JOIN projects p ON p.id = t.project_id AND p.owner_clerk_id = $2
 			JOIN columns c ON c.id = $3 JOIN boards b ON b.id = c.board_id AND b.project_id = t.project_id
 			WHERE t.id = $1 FOR UPDATE OF b`, id, owner, toColumn).Scan(&boardID, &scale, &from, &fromSprint, &sprint, &fromBoard, &fromScale, &estimate)
@@ -382,6 +386,7 @@ func (s Store) move(ctx context.Context, owner, id, toColumn string, pos int, o 
 		pos = max(0, min(pos, len(ids)))
 		ids = append(ids[:pos], append([]string{id}, ids[pos:]...)...)
 		if _, err := tx.Exec(ctx, `UPDATE tickets t SET board_id = $2, column_id = $3, sprint_id = $4, resolved_at = NULL, updated_at = now(),
+				planned_sprint_id = NULL, -- on a board now: out of any plan
 				estimate = $5,
 				-- into Done stamps the time (kept when already done); anywhere else clears it.
 				-- ponytail: reordering columns doesn't restamp; Done is still decided by DoneSQL
@@ -540,7 +545,7 @@ func (s Store) Get(ctx context.Context, owner, id string) (*Detail, error) {
 	var d Detail
 	var parentID *string
 	dest := append(boards.TicketDest(&d.Ticket), &d.ProjectName, &d.BoardID, &d.BoardName, &d.EstimateScale, &d.ColumnName, &d.SprintNumber, &d.Done, &parentID)
-	err := s.DB.QueryRow(ctx, `SELECT `+boards.TicketCols+`, p.name, t.board_id, b.name, COALESCE(b.estimate_scale, 'none'), c.name, sp.number, `+boards.TicketDoneSQL+`, t.parent_id
+	err := s.DB.QueryRow(ctx, `SELECT `+boards.TicketCols+`, p.name, t.board_id, b.name, COALESCE(`+scaleSQL+`, 'none'), c.name, sp.number, `+boards.TicketDoneSQL+`, t.parent_id
 		FROM tickets t JOIN projects p ON p.id = t.project_id AND p.owner_clerk_id = $2
 		LEFT JOIN boards b ON b.id = t.board_id
 		LEFT JOIN columns c ON c.id = t.column_id
