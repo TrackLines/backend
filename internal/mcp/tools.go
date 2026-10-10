@@ -38,7 +38,8 @@ var tools = []tool{
 			"per_page": map[string]any{"type": "integer", "minimum": 1, "maximum": 100}},
 		required: []string{"project_id"}, readOnly: true},
 	{name: "list_open_tickets", title: "List open tickets", description: "The way to find what to work on next: every ticket in a project that isn't done, across all boards and the backlog, " +
-		"without descriptions, already in pick order (priority urgent→low, then on a board before the backlog, then oldest). " +
+		"without descriptions, already in pick order (in an open sprint first, then priority urgent→low, then on a board before the backlog, then oldest). " +
+		"in_sprint marks tickets in their board's open sprint. " +
 		"Use assignee=unassigned and blocked=exclude for claimable work, or assignee=me for what you hold; then get_ticket for details.",
 		method: "GET", path: "/api/projects/{project_id}/open-tickets", query: []string{"assignee", "blocked"},
 		props: map[string]any{"project_id": id("Project"),

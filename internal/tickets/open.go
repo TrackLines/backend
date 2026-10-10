@@ -20,13 +20,16 @@ type OpenTicket struct {
 	Labels     []string `json:"labels"`
 	AssignedTo *string  `json:"assigned_to"`
 	Blocked    bool     `json:"blocked"`
-	BoardID    *string  `json:"board_id"` // null in the backlog
+	InSprint   bool     `json:"in_sprint"` // in its board's open sprint
+	BoardID    *string  `json:"board_id"`  // null in the backlog
 	BoardName  *string  `json:"board_name"`
 	ColumnID   *string  `json:"column_id"`
 	ColumnName *string  `json:"column_name"`
 	CreatedAt  string   `json:"created_at"`
 	UpdatedAt  string   `json:"updated_at"`
 }
+
+const inOpenSprint = `EXISTS (SELECT 1 FROM sprints sp WHERE sp.id = t.sprint_id AND sp.closed_at IS NULL)`
 
 // OpenFilter narrows OpenTickets: Assignee "unassigned", or an actor id for "mine"; "" = anyone.
 type OpenFilter struct {
@@ -36,7 +39,8 @@ type OpenFilter struct {
 }
 
 // OpenTickets lists the project's tickets that aren't done (boards and backlog), in the order work
-// is picked: priority, then on a board before in the backlog, then oldest first.
+// is picked, like a team member during a sprint: open-sprint tickets first, then priority, then on a
+// board before in the backlog, then oldest first.
 func (s Store) OpenTickets(ctx context.Context, owner, projectID string, f OpenFilter) ([]OpenTicket, error) {
 	var ok bool
 	if err := s.DB.QueryRow(ctx, `SELECT true FROM projects WHERE id = $1 AND owner_clerk_id = $2`, projectID, owner).Scan(&ok); err != nil {
@@ -44,7 +48,7 @@ func (s Store) OpenTickets(ctx context.Context, owner, projectID string, f OpenF
 	}
 	rows, err := s.DB.Query(ctx, `SELECT t.id, t.title, t.type::text, t.priority::text, t.estimate,
 			ARRAY(SELECT l.label FROM ticket_labels l WHERE l.ticket_id = t.id ORDER BY lower(l.label)),
-			t.assigned_to, `+boards.TicketBlockedSQL+`, t.board_id::text, b.name, t.column_id::text, c.name,
+			t.assigned_to, `+boards.TicketBlockedSQL+`, `+inOpenSprint+`, t.board_id::text, b.name, t.column_id::text, c.name,
 			to_char(t.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'), to_char(t.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')
 		FROM tickets t
 		LEFT JOIN boards b ON b.id = t.board_id
@@ -53,14 +57,14 @@ func (s Store) OpenTickets(ctx context.Context, owner, projectID string, f OpenF
 			AND ($2 = false OR t.assigned_to IS NULL)
 			AND ($3 = '' OR t.assigned_to = $3)
 			AND ($4 = false OR NOT `+boards.TicketBlockedSQL+`)
-		ORDER BY t.priority DESC, t.board_id IS NULL, t.created_at`,
+		ORDER BY `+inOpenSprint+` DESC, t.priority DESC, t.board_id IS NULL, t.created_at`,
 		projectID, f.Unassigned, f.Assignee, f.ExcludeBlocked)
 	if err != nil {
 		return nil, err
 	}
 	out, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (OpenTicket, error) {
 		var t OpenTicket
-		return t, row.Scan(&t.ID, &t.Title, &t.Type, &t.Priority, &t.Estimate, &t.Labels, &t.AssignedTo, &t.Blocked,
+		return t, row.Scan(&t.ID, &t.Title, &t.Type, &t.Priority, &t.Estimate, &t.Labels, &t.AssignedTo, &t.Blocked, &t.InSprint,
 			&t.BoardID, &t.BoardName, &t.ColumnID, &t.ColumnName, &t.CreatedAt, &t.UpdatedAt)
 	})
 	if out == nil {

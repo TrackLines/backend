@@ -54,6 +54,11 @@ func TestOpenTickets(t *testing.T) {
 	_ = s.Move(ctx, "ot1", done, b.Columns[2].ID, 0)
 	_ = s.SetBlockedBy(ctx, "ot1", medium, []string{backlogHigh})
 	_, _ = s.Claim(ctx, "ot1", "claude", boardHigh)
+	// only "board medium" is in the board's open sprint
+	if _, err := db.Exec(ctx, `WITH sp AS (INSERT INTO sprints (board_id, number, length_days, ends_at) VALUES ($1, 1, 14, now() + interval '14 days') RETURNING id)
+		UPDATE tickets SET sprint_id = (SELECT id FROM sp) WHERE id = $2`, b.ID, medium); err != nil {
+		t.Fatal(err)
+	}
 
 	ids := func(ts []OpenTicket) string {
 		var out []string
@@ -63,15 +68,18 @@ func TestOpenTickets(t *testing.T) {
 		return strings.Join(out, ", ")
 	}
 	all, err := s.OpenTickets(ctx, "ot1", pid, OpenFilter{})
-	// priority first, then board before backlog, done left out
-	if err != nil || ids(all) != "backlog urgent, board high, backlog high, board medium" {
+	// open sprint first, then priority, then board before backlog, done left out
+	if err != nil || ids(all) != "board medium, backlog urgent, board high, backlog high" {
 		t.Fatalf("all: %s %v", ids(all), err)
+	}
+	if !all[0].InSprint || all[1].InSprint || all[2].InSprint {
+		t.Fatalf("in_sprint: %+v", all)
 	}
 	if all[0].CreatedAt == "" || all[0].UpdatedAt == "" {
 		t.Fatalf("open tickets need dates: %+v", all[0])
 	}
-	if all[1].BoardName == nil || *all[1].BoardName != "Backend" || *all[1].ColumnName != "To do" || all[0].BoardID != nil {
-		t.Fatalf("where: %+v %+v", all[0], all[1])
+	if all[2].BoardName == nil || *all[2].BoardName != "Backend" || *all[2].ColumnName != "To do" || all[1].BoardID != nil {
+		t.Fatalf("where: %+v %+v", all[1], all[2])
 	}
 	if next, _ := s.OpenTickets(ctx, "ot1", pid, OpenFilter{Unassigned: true, ExcludeBlocked: true}); ids(next) != "backlog urgent, backlog high" {
 		t.Fatalf("claimable: %s", ids(next))

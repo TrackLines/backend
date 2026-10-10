@@ -37,7 +37,9 @@ func Handler(api http.Handler, version string) http.Handler {
 	return sdk.NewStreamableHTTPHandler(func(r *http.Request) *sdk.Server {
 		s := sdk.NewServer(&sdk.Implementation{Name: "tracklines", Title: "TrackLines", Version: version}, &sdk.ServerOptions{
 			Instructions: "TrackLines boards, backlog and tickets. Work is organised as projects → boards (one per team) → columns → tickets; " +
-				"the last column of a board is Done. Typical flow: list_projects, get_board or list_backlog, claim_ticket, move_ticket, add_comment.",
+				"the last column of a board is Done. Typical flow: list_projects, list_open_tickets, claim_ticket, move_ticket, add_comment. " +
+				"Work like a member of the team: while a sprint is open, only pick tickets in it (in_sprint=true in list_open_tickets). " +
+				"Don't start backlog or out-of-sprint tickets unless no sprint ticket is claimable or the user asks for that ticket.",
 		})
 		call := requester(api, r.Header)
 		for _, t := range tools {

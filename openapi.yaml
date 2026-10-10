@@ -999,7 +999,8 @@ paths:
       summary: Tickets that aren't done, across boards and backlog, in pick order
       description: >-
         Every ticket in the project that isn't in its board's Done column, plus the backlog, without descriptions.
-        Ordered the way work is picked: priority (urgent first), then on a board before in the backlog, then oldest.
+        Ordered the way work is picked: tickets in their board's open sprint first, then priority (urgent first),
+        then on a board before in the backlog, then oldest.
         The MCP tool list_open_tickets maps to this.
       parameters:
         - name: assignee
@@ -1028,6 +1029,7 @@ paths:
                     labels: { type: array, items: { type: string } }
                     assigned_to: { type: [string, 'null'] }
                     blocked: { type: boolean }
+                    in_sprint: { type: boolean, description: In its board's open sprint. }
                     board_id: { type: [string, 'null'], format: uuid, description: Null in the backlog. }
                     board_name: { type: [string, 'null'] }
                     column_id: { type: [string, 'null'], format: uuid }
