@@ -3,6 +3,7 @@ package sprints
 import (
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/bugfixes/go-bugfixes/logs"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -27,12 +28,31 @@ func writeErr(w http.ResponseWriter, err error) {
 		http.Error(w, "not found", http.StatusNotFound)
 	case errors.Is(err, ErrAlreadyOpen), errors.Is(err, ErrKanban):
 		http.Error(w, err.Error(), http.StatusConflict)
-	case errors.Is(err, ErrInvalidLength):
+	case errors.Is(err, ErrInvalidLength), errors.Is(err, ErrInvalidStart):
 		http.Error(w, err.Error(), http.StatusBadRequest)
 	default:
 		logs.Errorf("sprints: %v", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 	}
+}
+
+// Update changes the length of an open or scheduled sprint, keeping its start date fixed.
+func (h System) Update(w http.ResponseWriter, r *http.Request) {
+	if !h.admins.RequireResourceBoardManager(w, r, "sprint", r.PathValue("id")) {
+		return
+	}
+	var in struct {
+		LengthDays int `json:"length_days"`
+	}
+	if !httpx.Decode(w, r, &in) {
+		return
+	}
+	sp, err := h.store.UpdateLength(r.Context(), auth.OrgID(r.Context()), r.PathValue("id"), in.LengthDays)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, sp)
 }
 
 // Start opens a sprint on board {id}: {"length_days": 7 | 14 | any 1–365}.
@@ -92,7 +112,17 @@ func (h System) Close(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	org := auth.OrgID(r.Context())
-	next, err := h.store.Close(r.Context(), org, r.PathValue("id"))
+	var in struct {
+		NextLengthDays int        `json:"next_length_days"`
+		NextStartsAt   *time.Time `json:"next_starts_at"`
+	}
+	if r.ContentLength != 0 && !httpx.Decode(w, r, &in) {
+		return
+	}
+	next, err := h.store.CloseWithOptions(r.Context(), org, r.PathValue("id"), CloseOptions{
+		NextLengthDays: in.NextLengthDays,
+		NextStartsAt:   in.NextStartsAt,
+	})
 	if err != nil {
 		writeErr(w, err)
 		return

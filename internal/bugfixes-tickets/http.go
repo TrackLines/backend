@@ -50,8 +50,10 @@ func Middleware(db *pgxpool.Pool) func(http.Handler) http.Handler {
 }
 
 // Create is the Bugfixes ticket-creation endpoint: POST /api/bugfixes/tickets
-// Auth: Bearer bf_… key (no Clerk session). See Middleware. Creates a bug in the column, as the
-// key's agent, on a board the key's owner owns. labels is optional (e.g. ["agent:checkout-api"]).
+// Auth: Bearer bf_… key (no Clerk session). See Middleware. Bugfixes tickets always land in the
+// backlog of the board's project, as the key's agent: the team triages, sizes and pulls them onto a
+// board. board_id/column_id (a column on a board the key's owner owns) only pick the project; the
+// current bugfixes service posts to /projects/{id}/backlog directly. labels is optional.
 func (h System) Create(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		BoardID  string   `json:"board_id"`
@@ -83,15 +85,15 @@ func (h System) Create(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	// the column must be on the given board, and the board the owner's (CreateAs re-checks ownership)
-	var ok bool
-	if err := h.db.QueryRow(r.Context(), `SELECT true FROM columns c JOIN boards b ON b.id = c.board_id
+	// the column must be on the given board, and the board the owner's (CreateBacklogAs re-checks ownership)
+	var projectID string
+	if err := h.db.QueryRow(r.Context(), `SELECT b.project_id::text FROM columns c JOIN boards b ON b.id = c.board_id
 		JOIN projects p ON p.id = b.project_id WHERE c.id::text = $1 AND b.id::text = $2 AND p.owner_clerk_id = $3`,
-		in.ColumnID, in.BoardID, owner).Scan(&ok); err != nil {
+		in.ColumnID, in.BoardID, owner).Scan(&projectID); err != nil {
 		http.Error(w, "board or column not found", http.StatusNotFound)
 		return
 	}
-	t, err := h.tickets.CreateAs(r.Context(), owner, agent, in.ColumnID, "bug", in.Title, in.Body)
+	t, err := h.tickets.CreateBacklogAs(r.Context(), owner, agent, projectID, "bug", in.Title, in.Body)
 	if err == nil && in.Priority != "" {
 		t.Priority = in.Priority
 		err = h.tickets.Update(r.Context(), owner, t.ID, "", t.Title, t.Description, in.Priority)
@@ -109,7 +111,7 @@ func (h System) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.JSON(w, http.StatusCreated, Ticket{
-		ID: t.ID, BoardID: in.BoardID, ColumnID: in.ColumnID, Title: t.Title, Body: t.Description,
+		ID: t.ID, Title: t.Title, Body: t.Description, // in the backlog: no board or column
 		Priority: t.Priority, CreatedBy: t.CreatedBy, CreatedAt: time.Now().UTC().Format(time.RFC3339), Labels: labels,
 	})
 }

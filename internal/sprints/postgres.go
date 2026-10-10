@@ -17,10 +17,16 @@ var (
 	ErrNotFound      = errors.New("sprint not found")
 	ErrAlreadyOpen   = errors.New("board already has an open sprint")
 	ErrInvalidLength = errors.New("length_days must be between 1 and 365")
+	ErrInvalidStart  = errors.New("next_starts_at must be in the future")
 	ErrKanban        = errors.New("kanban boards don't run sprints")
 )
 
 type Sprint = boards.Sprint
+
+type CloseOptions struct {
+	NextLengthDays int
+	NextStartsAt   *time.Time
+}
 
 type Store struct{ DB *pgxpool.Pool }
 
@@ -72,6 +78,23 @@ func (s Store) Start(ctx context.Context, owner, boardID string, lengthDays int)
 	return &sp, nil
 }
 
+// UpdateLength changes the length of an unclosed sprint and keeps its start time fixed.
+func (s Store) UpdateLength(ctx context.Context, owner, sprintID string, lengthDays int) (*Sprint, error) {
+	if lengthDays < 1 || lengthDays > 365 {
+		return nil, ErrInvalidLength
+	}
+	sp, err := boards.ScanSprint(s.DB.QueryRow(ctx, `UPDATE sprints sp SET length_days = $3,
+		ends_at = sp.starts_at + make_interval(days => $3)
+		WHERE sp.id = $1 AND sp.closed_at IS NULL AND EXISTS (
+			SELECT 1 FROM boards b JOIN projects p ON p.id = b.project_id
+			WHERE b.id = sp.board_id AND p.owner_clerk_id = $2)
+		RETURNING `+boards.SprintCols, sprintID, owner, lengthDays))
+	if err != nil {
+		return nil, notFound(err)
+	}
+	return &sp, nil
+}
+
 // List returns the board's sprints, newest first.
 func (s Store) List(ctx context.Context, owner, boardID string) ([]Sprint, error) {
 	var ok bool
@@ -92,6 +115,18 @@ func (s Store) List(ctx context.Context, owner, boardID string) ([]Sprint, error
 
 // Close closes the owner's open sprint and opens the next one (see closeSprint).
 func (s Store) Close(ctx context.Context, owner, sprintID string) (*Sprint, error) {
+	return s.CloseWithOptions(ctx, owner, sprintID, CloseOptions{})
+}
+
+// CloseWithOptions closes the current sprint and creates its next sprint, optionally scheduled
+// for a future start date and with a different length. Omitted options preserve today's behavior.
+func (s Store) CloseWithOptions(ctx context.Context, owner, sprintID string, options CloseOptions) (*Sprint, error) {
+	if options.NextLengthDays != 0 && (options.NextLengthDays < 1 || options.NextLengthDays > 365) {
+		return nil, ErrInvalidLength
+	}
+	if options.NextStartsAt != nil && !options.NextStartsAt.After(time.Now()) {
+		return nil, ErrInvalidStart
+	}
 	var next Sprint
 	err := pgx.BeginFunc(ctx, s.DB, func(tx pgx.Tx) error {
 		var id string
@@ -101,7 +136,7 @@ func (s Store) Close(ctx context.Context, owner, sprintID string) (*Sprint, erro
 		if err != nil {
 			return notFound(err)
 		}
-		next, err = closeSprint(ctx, tx, id)
+		next, err = closeSprint(ctx, tx, id, options)
 		return err
 	})
 	if err != nil {
@@ -113,16 +148,17 @@ func (s Store) Close(ctx context.Context, owner, sprintID string) (*Sprint, erro
 // closeSprint (caller holds the sprint row lock) marks it closed, opens the next sprint
 // with the same length starting now, and carries over every ticket that isn't in the
 // board's last column ("done"), keeping its column and order.
-func closeSprint(ctx context.Context, tx pgx.Tx, id string) (Sprint, error) {
+func closeSprint(ctx context.Context, tx pgx.Tx, id string, options CloseOptions) (Sprint, error) {
 	if err := boards.RecordScope(ctx, tx, id); err != nil {
 		return Sprint{}, err
 	}
 	if _, err := tx.Exec(ctx, `UPDATE sprints SET closed_at = now() WHERE id = $1`, id); err != nil {
 		return Sprint{}, err
 	}
-	next, err := boards.ScanSprint(tx.QueryRow(ctx, `INSERT INTO sprints (board_id, number, length_days, ends_at)
-		SELECT board_id, number + 1, length_days, now() + make_interval(days => length_days)
-		FROM sprints WHERE id = $1 RETURNING `+boards.SprintCols, id))
+	next, err := boards.ScanSprint(tx.QueryRow(ctx, `INSERT INTO sprints (board_id, number, length_days, starts_at, ends_at)
+		SELECT board_id, number + 1, COALESCE(NULLIF($2, 0), length_days), COALESCE($3::timestamptz, now()),
+			COALESCE($3::timestamptz, now()) + make_interval(days => COALESCE(NULLIF($2, 0), length_days))
+		FROM sprints WHERE id = $1 RETURNING `+boards.SprintCols, id, options.NextLengthDays, options.NextStartsAt))
 	if err != nil {
 		return Sprint{}, err
 	}
@@ -141,12 +177,12 @@ func (s Store) AutoClose(ctx context.Context) (int, error) {
 	for {
 		var id string
 		err := pgx.BeginFunc(ctx, s.DB, func(tx pgx.Tx) error {
-			err := tx.QueryRow(ctx, `SELECT id FROM sprints WHERE closed_at IS NULL AND ends_at <= now()
+			err := tx.QueryRow(ctx, `SELECT id FROM sprints WHERE closed_at IS NULL AND starts_at <= now() AND ends_at <= now()
 				AND NOT (id::text = ANY($1)) ORDER BY ends_at LIMIT 1 FOR UPDATE SKIP LOCKED`, failed).Scan(&id)
 			if err != nil {
 				return err
 			}
-			_, err = closeSprint(ctx, tx, id)
+			_, err = closeSprint(ctx, tx, id, CloseOptions{})
 			return err
 		})
 		switch {

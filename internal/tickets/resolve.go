@@ -59,7 +59,10 @@ func (s Store) completeParent(ctx context.Context, owner, id string) error {
 	if err := s.DB.QueryRow(ctx, `SELECT id FROM columns WHERE board_id = $1 ORDER BY position DESC LIMIT 1`, *board).Scan(&done); err != nil {
 		return err
 	}
-	return s.Move(ctx, owner, *parent, done, 0)
+	if err := s.move(ctx, owner, *parent, done, 0, moveOpts{}); err != nil {
+		return err
+	}
+	return s.completeParent(ctx, owner, *parent)
 }
 
 // Resolve: POST /api/tickets/{id}/resolve. 204; 409 for a ticket on a board.

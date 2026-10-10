@@ -80,7 +80,7 @@ func (h System) applyEstimate(r *http.Request, user, id string, in ticketInput, 
 	if in.Estimate == nil {
 		return nil
 	}
-	if err := h.store.SetEstimate(r.Context(), user, id, *in.Estimate); err != nil {
+	if err := h.store.SetRequiredEstimate(r.Context(), user, id, *in.Estimate); err != nil {
 		return err
 	}
 	if t != nil && *in.Estimate != "" {
@@ -101,7 +101,15 @@ func (h System) applyLabels(r *http.Request, user, id string, in ticketInput, t 
 }
 
 func writeErr(w http.ResponseWriter, err error) {
+	var locked SprintLockedError
+	var unestimated EstimateRequiredError
 	switch {
+	case errors.As(err, &locked):
+		http.Error(w, err.Error(), http.StatusConflict)
+		return
+	case errors.As(err, &unestimated):
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
 	case errors.Is(err, ErrNotFound):
 		http.Error(w, "not found", http.StatusNotFound)
 		return
@@ -132,18 +140,26 @@ func (h System) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	org := auth.OrgID(r.Context())
-	t, err := h.store.CreateAs(r.Context(), org, auth.ActorID(r.Context()), r.PathValue("id"), in.createType(), in.Title, in.Description)
+	estimate := ""
+	if in.Estimate != nil {
+		estimate = *in.Estimate
+	}
+	t, err := h.store.CreateEstimated(r.Context(), org, auth.ActorID(r.Context()), r.PathValue("id"), in.createType(), in.Title, in.Description, estimate)
 	if err == nil {
 		err = h.applyLabels(r, org, t.ID, in, t)
 	}
 	if err == nil {
 		err = h.applyPriority(r, org, in, t)
 	}
-	if err == nil {
-		err = h.applyEstimate(r, org, t.ID, in, t)
-	}
 	if err != nil {
 		writeErr(w, err)
+		return
+	}
+	if t.ColumnID == nil { // the board's sprint is on its last day: the ticket went to the backlog
+		httpx.JSON(w, http.StatusCreated, struct {
+			*Ticket
+			RedirectedToBacklog bool `json:"redirected_to_backlog"`
+		}{t, true})
 		return
 	}
 	httpx.JSON(w, http.StatusCreated, t)
@@ -180,8 +196,9 @@ func (h System) Delete(w http.ResponseWriter, r *http.Request) {
 
 func (h System) Move(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		ColumnID string `json:"column_id"`
-		Position int    `json:"position"`
+		ColumnID string  `json:"column_id"`
+		Position int     `json:"position"`
+		Estimate *string `json:"estimate"` // size it on the way in; required entering a board with an estimate scale
 	}
 	if !httpx.Decode(w, r, &in) {
 		return
@@ -191,7 +208,7 @@ func (h System) Move(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	org := auth.OrgID(r.Context())
-	if err := h.store.Move(r.Context(), org, r.PathValue("id"), in.ColumnID, in.Position); err != nil {
+	if err := h.store.MoveEstimated(r.Context(), org, r.PathValue("id"), in.ColumnID, in.Position, in.Estimate, true); err != nil {
 		writeErr(w, err)
 		return
 	}

@@ -18,8 +18,8 @@ var (
 
 type Ticket struct {
 	ID        string   `json:"id"`
-	BoardID   string   `json:"board_id"`
-	ColumnID  string   `json:"column_id"`
+	BoardID   string   `json:"board_id"`  // "": bugfixes tickets go to the backlog
+	ColumnID  string   `json:"column_id"` // ""
 	Title     string   `json:"title"`
 	Body      string   `json:"body"`
 	Priority  string   `json:"priority"`

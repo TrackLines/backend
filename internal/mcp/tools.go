@@ -38,7 +38,8 @@ var tools = []tool{
 			"per_page": map[string]any{"type": "integer", "minimum": 1, "maximum": 100}},
 		required: []string{"project_id"}, readOnly: true},
 	{name: "list_open_tickets", title: "List open tickets", description: "The way to find what to work on next: every ticket in a project that isn't done, across all boards and the backlog, " +
-		"without descriptions, already in pick order (in an open sprint first, then priority urgent→low, then on a board before the backlog, then oldest). " +
+		"without descriptions, already in pick order (in an open sprint first, bugs before other ticket types within that sprint, then priority urgent→low; " +
+		"out-of-sprint tickets follow, ordered by priority urgent→low, then on a board before the backlog, then oldest). " +
 		"in_sprint marks tickets in their board's open sprint. " +
 		"Use assignee=unassigned and blocked=exclude for claimable work, or assignee=me for what you hold; then get_ticket for details.",
 		method: "GET", path: "/api/projects/{project_id}/open-tickets", query: []string{"assignee", "blocked"},
@@ -64,7 +65,9 @@ var tools = []tool{
 		method: "GET", path: "/api/roadmaps/{roadmap_id}", props: map[string]any{"roadmap_id": id("Roadmap")}, required: []string{"roadmap_id"}, readOnly: true},
 
 	// tickets
-	{name: "create_ticket", title: "Create ticket", description: "Create a ticket in a board column (joins the board's open sprint).",
+	{name: "create_ticket", title: "Create ticket", description: "Create a ticket in a board column (joins the board's open sprint). " +
+		"On the sprint's last day its scope is locked: the ticket goes to the bottom of the backlog instead (redirected_to_backlog: true, column_id null). " +
+		"On a board with an estimate scale, estimate is required.",
 		method: "POST", path: "/api/columns/{column_id}/tickets", body: []string{"title", "description", "type", "priority", "labels", "estimate"},
 		props:    map[string]any{"column_id": id("Column"), "title": str("Title"), "description": str("Details (markdown)"), "type": ticketType, "priority": priority, "labels": labels, "estimate": estimate},
 		required: []string{"column_id", "title"}},
@@ -83,9 +86,12 @@ var tools = []tool{
 	{name: "assign_ticket", title: "Assign ticket", description: "Assign a ticket to someone from list_assignees, or null to unassign.",
 		method: "PUT", path: "/api/tickets/{ticket_id}/assignee", body: []string{"assignee"},
 		props: map[string]any{"ticket_id": id("Ticket"), "assignee": map[string]any{"type": []string{"string", "null"}}}, required: []string{"ticket_id"}},
-	{name: "move_ticket", title: "Move ticket", description: "Move a ticket to a column (any board in the same project, which also takes it out of the backlog). Moving to the board's last column marks it done.",
-		method: "POST", path: "/api/tickets/{ticket_id}/move", body: []string{"column_id", "position"},
-		props: map[string]any{"ticket_id": id("Ticket"), "column_id": id("Destination column"), "position": position}, required: []string{"ticket_id", "column_id"}},
+	{name: "move_ticket", title: "Move ticket", description: "Move a ticket to a column (any board in the same project, which also takes it out of the backlog). Moving to the board's last column marks it done. " +
+		"On a sprint's last day, moving a ticket into that sprint is refused (scope locked); moves within it or out are fine. " +
+		"A board with an estimate scale only takes estimated tickets: moving one in from the backlog or another board needs estimate (on the target board's scale, see get_board) " +
+		"unless it already has one on the same scale.",
+		method: "POST", path: "/api/tickets/{ticket_id}/move", body: []string{"column_id", "position", "estimate"},
+		props: map[string]any{"ticket_id": id("Ticket"), "column_id": id("Destination column"), "position": position, "estimate": str("Estimate on the target board's scale; required entering a board with an estimate scale")}, required: []string{"ticket_id", "column_id"}},
 	{name: "send_to_backlog", title: "Send to backlog", description: "Take a ticket off its board and put it at the bottom of the project backlog (clears its estimate).",
 		method: "POST", path: "/api/tickets/{ticket_id}/backlog", props: map[string]any{"ticket_id": id("Ticket")}, required: []string{"ticket_id"}},
 	{name: "resolve_ticket", title: "Resolve ticket", description: "Close a backlog ticket in place, without putting it on a board (a board ticket is finished by moving it to the board's last column). " +
@@ -110,8 +116,12 @@ var tools = []tool{
 	{name: "start_sprint", title: "Start sprint", description: "Open a sprint on a (non-kanban) board; tickets already on it join.",
 		method: "POST", path: "/api/boards/{board_id}/sprints", body: []string{"length_days"},
 		props: map[string]any{"board_id": id("Board"), "length_days": map[string]any{"type": "integer", "minimum": 1, "maximum": 365}}, required: []string{"board_id", "length_days"}},
-	{name: "close_sprint", title: "Close sprint", description: "Close an open sprint: unfinished tickets move into the next sprint, which opens immediately.",
-		method: "POST", path: "/api/sprints/{sprint_id}/close", props: map[string]any{"sprint_id": id("Sprint")}, required: []string{"sprint_id"}},
+	{name: "update_sprint_length", title: "Change sprint length", description: "Change an open or scheduled sprint's length in days; its start date stays fixed.",
+		method: "PATCH", path: "/api/sprints/{sprint_id}", body: []string{"length_days"},
+		props: map[string]any{"sprint_id": id("Sprint"), "length_days": map[string]any{"type": "integer", "minimum": 1, "maximum": 365}}, required: []string{"sprint_id", "length_days"}},
+	{name: "close_sprint", title: "Close sprint", description: "Close an open sprint and carry unfinished tickets forward. Optionally set next_length_days and next_starts_at (RFC3339); by default the next sprint starts now with the same length.",
+		method: "POST", path: "/api/sprints/{sprint_id}/close", body: []string{"next_length_days", "next_starts_at"},
+		props: map[string]any{"sprint_id": id("Sprint"), "next_length_days": map[string]any{"type": "integer", "minimum": 1, "maximum": 365}, "next_starts_at": map[string]any{"type": "string", "format": "date-time"}}, required: []string{"sprint_id"}},
 }
 
 // keepTitleAndDescription: PATCH /tickets/{id} replaces both, so fill whichever the bot left out.

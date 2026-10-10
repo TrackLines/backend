@@ -74,7 +74,7 @@ func (s Store) Velocity(ctx context.Context, owner, boardID string) (*Velocity, 
 	}
 
 	var open string
-	err = s.DB.QueryRow(ctx, `SELECT id FROM sprints WHERE board_id = $1 AND closed_at IS NULL`, boardID).Scan(&open)
+	err = s.DB.QueryRow(ctx, `SELECT id FROM sprints WHERE board_id = $1 AND closed_at IS NULL AND starts_at <= now()`, boardID).Scan(&open)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return v, nil
 	}

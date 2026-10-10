@@ -29,7 +29,7 @@ type OpenTicket struct {
 	UpdatedAt  string   `json:"updated_at"`
 }
 
-const inOpenSprint = `EXISTS (SELECT 1 FROM sprints sp WHERE sp.id = t.sprint_id AND sp.closed_at IS NULL)`
+const inOpenSprint = `EXISTS (SELECT 1 FROM sprints sp WHERE sp.id = t.sprint_id AND sp.closed_at IS NULL AND sp.starts_at <= now())`
 
 // OpenFilter narrows OpenTickets: Assignee "unassigned", or an actor id for "mine"; "" = anyone.
 type OpenFilter struct {
@@ -39,8 +39,8 @@ type OpenFilter struct {
 }
 
 // OpenTickets lists the project's tickets that aren't done (boards and backlog), in the order work
-// is picked, like a team member during a sprint: open-sprint tickets first, then priority, then on a
-// board before in the backlog, then oldest first.
+// is picked: open-sprint tickets first, bugs before other ticket types within the open sprint,
+// then priority, then on a board before in the backlog, then oldest first.
 func (s Store) OpenTickets(ctx context.Context, owner, projectID string, f OpenFilter) ([]OpenTicket, error) {
 	var ok bool
 	if err := s.DB.QueryRow(ctx, `SELECT true FROM projects WHERE id = $1 AND owner_clerk_id = $2`, projectID, owner).Scan(&ok); err != nil {
@@ -57,7 +57,8 @@ func (s Store) OpenTickets(ctx context.Context, owner, projectID string, f OpenF
 			AND ($2 = false OR t.assigned_to IS NULL)
 			AND ($3 = '' OR t.assigned_to = $3)
 			AND ($4 = false OR NOT `+boards.TicketBlockedSQL+`)
-		ORDER BY `+inOpenSprint+` DESC, t.priority DESC, t.board_id IS NULL, t.created_at`,
+		ORDER BY `+inOpenSprint+` DESC, (`+inOpenSprint+` AND t.type = 'bug') DESC,
+			t.priority DESC, t.board_id IS NULL, t.created_at`,
 		projectID, f.Unassigned, f.Assignee, f.ExcludeBlocked)
 	if err != nil {
 		return nil, err

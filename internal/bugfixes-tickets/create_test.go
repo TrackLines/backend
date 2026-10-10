@@ -80,12 +80,23 @@ func TestCreate(t *testing.T) {
 	}
 	var typ, prio, project string
 	var labels []string
+	var boardID, columnID, sprintID *string
 	if err := db.QueryRow(ctx, `SELECT t.type::text, t.priority::text, t.project_id::text,
-		ARRAY(SELECT label FROM ticket_labels WHERE ticket_id = t.id) FROM tickets t WHERE t.id = $1`, got.ID).Scan(&typ, &prio, &project, &labels); err != nil {
+		ARRAY(SELECT label FROM ticket_labels WHERE ticket_id = t.id), t.board_id::text, t.column_id::text, t.sprint_id::text
+		FROM tickets t WHERE t.id = $1`, got.ID).Scan(&typ, &prio, &project, &labels, &boardID, &columnID, &sprintID); err != nil {
 		t.Fatal(err)
 	}
 	if typ != "bug" || prio != "high" || project == "" || len(labels) != 1 {
 		t.Fatalf("stored: %s %s %q %v", typ, prio, project, labels)
+	}
+	// always the backlog of the board's project, never the board
+	if boardID != nil || columnID != nil || sprintID != nil || got.BoardID != "" || got.ColumnID != "" {
+		t.Fatalf("bugfixes ticket landed on a board: %v %v %v %+v", boardID, columnID, sprintID, got)
+	}
+	var boardProject string
+	_ = db.QueryRow(ctx, `SELECT project_id::text FROM boards WHERE id = $1`, bid).Scan(&boardProject)
+	if project != boardProject {
+		t.Fatalf("backlog of project %s, want the board's %s", project, boardProject)
 	}
 	if rec := post(body(bid, col, "")); rec.Code != http.StatusCreated || !strings.Contains(rec.Body.String(), `"priority":"medium"`) {
 		t.Fatalf("defaults: %d %s", rec.Code, rec.Body)

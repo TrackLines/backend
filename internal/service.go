@@ -26,6 +26,7 @@ import (
 	"github.com/tracklines/backend/internal/columns"
 	"github.com/tracklines/backend/internal/comments"
 	"github.com/tracklines/backend/internal/config"
+	"github.com/tracklines/backend/internal/httpx"
 	"github.com/tracklines/backend/internal/invitations"
 	"github.com/tracklines/backend/internal/mcp"
 	"github.com/tracklines/backend/internal/organizations"
@@ -163,6 +164,7 @@ func (s *Service) Handler() http.Handler {
 	mux.Handle("POST /api/boards/{id}/sprints", signedIn(sp.Start))
 	mux.Handle("GET /api/boards/{id}/velocity", signedIn(sp.Velocity)) // per closed sprint + open sprint burn
 	mux.Handle("GET /api/sprints/{id}", signedIn(sp.Get))              // read-only: burn data and tickets
+	mux.Handle("PATCH /api/sprints/{id}", signedIn(sp.Update))         // change an open sprint's length
 	mux.Handle("POST /api/sprints/{id}/close", signedIn(sp.Close))
 
 	// Roadmaps — GET by id is open: public ones are readable by anyone with the link
@@ -191,7 +193,7 @@ func (s *Service) Handler() http.Handler {
 	// Clerk (via Svix) authenticates by signature: org/user removals clean up admins, team members and API keys
 	mux.HandleFunc("POST /api/webhooks/clerk", clerkhooks.NewSystem(s.DB, config.Get(s.Config).ClerkWebhookSecret).Webhook(time.Now))
 
-	// Bugfixes ticket-creation — auth via bf_ key (no Clerk session)
+	// Bugfixes ticket-creation — auth via bf_ key (no Clerk session); always lands in the project backlog
 	bt := bugfixesTickets.NewSystem(s.DB)
 	mux.Handle("POST /api/bugfixes/tickets", bugfixesTickets.Middleware(s.DB)(http.HandlerFunc(bt.Create)))
 
@@ -200,13 +202,13 @@ func (s *Service) Handler() http.Handler {
 	cors := bm.NewMiddleware()
 	cors.AddAllowedOrigins("http://localhost:3000", "https://tracklin.es")
 	cors.AddAllowedMethods(http.MethodGet, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete, http.MethodOptions)
-	cors.AddAllowedHeaders("Authorization", "X-Requested-With") // Accept, Content-Type are library defaults
+	cors.AddAllowedHeaders("Authorization", "X-Requested-With", httpx.ZoneHeader) // Accept, Content-Type are library defaults
 	var handler, mcpHandler http.Handler
 	// MCP (Streamable HTTP) for bots: same auth as REST (tl_ key or Clerk session); each tool calls a REST route
 	// in-process through handler, so MCP and REST can't drift apart
 	mux.Handle("/mcp", auth.Required(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { mcpHandler.ServeHTTP(w, r) })))
 	handler = apikeys.Middleware(s.DB)(bugfixesTickets.Middleware(s.DB)(ratelimit.Middleware(s.Valkey, config.Get(s.Config).RateLimit, time.Now)(auth.Optional(users.Ensure(s.DB)(
-		bm.Recoverer(bm.RequestID(bm.Logger(cors.CORS(mux)))))))))
+		bm.Recoverer(bm.RequestID(bm.Logger(cors.CORS(httpx.WithZone(mux))))))))))
 	mcpHandler = mcp.Handler(handler, "1.0.0")
 	return handler
 }

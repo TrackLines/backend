@@ -43,20 +43,48 @@ func (s Store) Create(ctx context.Context, owner, columnID, typ, title, desc str
 }
 
 // CreateAs appends a ticket and records the authenticated actor separately from its owner.
-// It joins the board's open sprint, if any.
+// It joins the board's open sprint, if any. On that sprint's last day the sprint is locked, so the
+// ticket goes to the bottom of the project backlog instead (ColumnID nil tells the caller).
+// No estimate is asked for (internal callers and tests); people and agents use CreateEstimated.
 func (s Store) CreateAs(ctx context.Context, owner, actor, columnID, typ, title, desc string) (*Ticket, error) {
+	return s.create(ctx, owner, actor, columnID, typ, title, desc, "", false)
+}
+
+// CreateEstimated is CreateAs for people and agents: on a board with an estimate scale the
+// estimate is required (EstimateRequiredError) and must be on the scale.
+func (s Store) CreateEstimated(ctx context.Context, owner, actor, columnID, typ, title, desc, estimate string) (*Ticket, error) {
+	return s.create(ctx, owner, actor, columnID, typ, title, desc, estimate, true)
+}
+
+func (s Store) create(ctx context.Context, owner, actor, columnID, typ, title, desc, estimate string, require bool) (*Ticket, error) {
 	if !ValidType(typ) {
 		return nil, ErrInvalidType
+	}
+	var boardID, projectID, scale string
+	if err := s.DB.QueryRow(ctx, `SELECT b.id, b.project_id, b.estimate_scale FROM columns c JOIN boards b ON b.id = c.board_id
+		JOIN projects p ON p.id = b.project_id WHERE c.id = $1 AND p.owner_clerk_id = $2`, columnID, owner).Scan(&boardID, &projectID, &scale); err != nil {
+		return nil, notFound(err)
+	}
+	if locked, err := lockedSprint(ctx, s.DB, boardID); err != nil {
+		return nil, err
+	} else if locked > 0 {
+		return s.CreateBacklogAs(ctx, owner, actor, projectID, typ, title, desc) // the backlog has no scale
+	}
+	if !boards.ValidEstimate(scale, estimate) {
+		return nil, boards.ErrBadEstimate
+	}
+	if require && scale != "none" && estimate == "" {
+		return nil, EstimateRequiredError{Scale: scale}
 	}
 	t, err := boards.ScanTicket(s.DB.QueryRow(ctx, `WITH placed AS (
 			SELECT b.project_id, b.id AS board_id, c.id AS column_id,
 				(SELECT id FROM sprints WHERE board_id = b.id AND closed_at IS NULL) AS sprint_id
 			FROM columns c JOIN boards b ON b.id = c.board_id JOIN projects p ON p.id = b.project_id
 			WHERE c.id = $1 AND p.owner_clerk_id = $2)
-		INSERT INTO tickets AS t (project_id, board_id, column_id, sprint_id, type, title, description, priority, position, created_by)
+		INSERT INTO tickets AS t (project_id, board_id, column_id, sprint_id, type, title, description, priority, position, created_by, estimate)
 		SELECT project_id, board_id, column_id, sprint_id, $3::ticket_type, $4, $5, 'medium'::priority, COALESCE((SELECT max(position) + 1 FROM tickets x WHERE x.column_id = placed.column_id
-				AND x.sprint_id IS NOT DISTINCT FROM placed.sprint_id), 0), $6
-		FROM placed RETURNING `+boards.TicketCols, columnID, owner, typ, title, desc, actor))
+				AND x.sprint_id IS NOT DISTINCT FROM placed.sprint_id), 0), $6, NULLIF($7, '')
+		FROM placed RETURNING `+boards.TicketCols, columnID, owner, typ, title, desc, actor, estimate))
 	if err != nil {
 		return nil, notFound(err)
 	}
@@ -190,6 +218,16 @@ func (s Store) Update(ctx context.Context, owner, id, typ, title, desc, priority
 // SetEstimate sets ("" clears) the ticket's estimate; it must be on its board's scale, so a
 // backlog ticket (no board) can only be cleared.
 func (s Store) SetEstimate(ctx context.Context, owner, id, estimate string) error {
+	return s.setEstimate(ctx, owner, id, estimate, false)
+}
+
+// SetRequiredEstimate is SetEstimate for people and agents: an estimate can't be cleared on a board
+// with an estimate scale.
+func (s Store) SetRequiredEstimate(ctx context.Context, owner, id, estimate string) error {
+	return s.setEstimate(ctx, owner, id, estimate, true)
+}
+
+func (s Store) setEstimate(ctx context.Context, owner, id, estimate string, require bool) error {
 	var scale string
 	if err := s.DB.QueryRow(ctx, `SELECT COALESCE(b.estimate_scale, 'none') FROM tickets t
 		JOIN projects p ON p.id = t.project_id AND p.owner_clerk_id = $2
@@ -198,6 +236,9 @@ func (s Store) SetEstimate(ctx context.Context, owner, id, estimate string) erro
 	}
 	if !boards.ValidEstimate(scale, estimate) {
 		return boards.ErrBadEstimate
+	}
+	if require && scale != "none" && estimate == "" {
+		return EstimateRequiredError{Scale: scale}
 	}
 	return exec(s.DB.Exec(ctx, `UPDATE tickets SET estimate = NULLIF($2, ''), updated_at = now() WHERE id = $1`, id, estimate))
 }
@@ -265,25 +306,66 @@ func exec(tag pgconn.CommandTag, err error) error {
 // backlog, and joins the target board's open sprint. Same column = reorder.
 // Move places a ticket in a column (reopening it if it was resolved), then completes its parent
 // if that was the parent's last unfinished sub-ticket.
+// Move puts a ticket in a column. Entering a sprint on its last day is refused (SprintLockedError);
+// moves inside the sprint, to Done, or out of it are fine.
 func (s Store) Move(ctx context.Context, owner, id, toColumn string, pos int) error {
-	if err := s.move(ctx, owner, id, toColumn, pos); err != nil {
+	return s.MoveEstimated(ctx, owner, id, toColumn, pos, nil, false)
+}
+
+// MoveEstimated is Move that can size the ticket on the way (estimate, on the target board's scale).
+// With require, a ticket entering a board with an estimate scale must end up estimated
+// (EstimateRequiredError); moves within the board aren't checked.
+func (s Store) MoveEstimated(ctx context.Context, owner, id, toColumn string, pos int, estimate *string, require bool) error {
+	if err := s.move(ctx, owner, id, toColumn, pos, moveOpts{lock: true, require: require, estimate: estimate}); err != nil {
 		return err
 	}
 	return s.completeParent(ctx, owner, id)
 }
 
-func (s Store) move(ctx context.Context, owner, id, toColumn string, pos int) error {
+// moveOpts: lock refuses entering a sprint on its last day (off for completing a parent, which
+// isn't adding scope); require and estimate as in MoveEstimated.
+type moveOpts struct {
+	lock, require bool
+	estimate      *string
+}
+
+func (s Store) move(ctx context.Context, owner, id, toColumn string, pos int, o moveOpts) error {
 	return pgx.BeginFunc(ctx, s.DB, func(tx pgx.Tx) error {
-		var boardID string
-		var from, fromSprint, sprint *string
+		var boardID, scale string
+		var from, fromSprint, sprint, fromBoard, fromScale, estimate *string
 		// lock the target board: moves on one board are serialised
-		err := tx.QueryRow(ctx, `SELECT b.id, t.column_id, t.sprint_id,
-				(SELECT id FROM sprints WHERE board_id = b.id AND closed_at IS NULL)
+		err := tx.QueryRow(ctx, `SELECT b.id, b.estimate_scale, t.column_id, t.sprint_id,
+				(SELECT id FROM sprints WHERE board_id = b.id AND closed_at IS NULL),
+				t.board_id, (SELECT estimate_scale FROM boards WHERE id = t.board_id), t.estimate
 			FROM tickets t JOIN projects p ON p.id = t.project_id AND p.owner_clerk_id = $2
 			JOIN columns c ON c.id = $3 JOIN boards b ON b.id = c.board_id AND b.project_id = t.project_id
-			WHERE t.id = $1 FOR UPDATE OF b`, id, owner, toColumn).Scan(&boardID, &from, &fromSprint, &sprint)
+			WHERE t.id = $1 FOR UPDATE OF b`, id, owner, toColumn).Scan(&boardID, &scale, &from, &fromSprint, &sprint, &fromBoard, &fromScale, &estimate)
 		if err != nil {
 			return notFound(err)
+		}
+		// an estimate only survives a move to a board on the same scale, unless one is given
+		if fromScale == nil || *fromScale != scale {
+			estimate = nil
+		}
+		if o.estimate != nil {
+			if !boards.ValidEstimate(scale, *o.estimate) {
+				return boards.ErrBadEstimate
+			}
+			estimate = o.estimate
+			if *estimate == "" {
+				estimate = nil
+			}
+		}
+		entering := fromBoard == nil || *fromBoard != boardID
+		if o.require && entering && scale != "none" && estimate == nil {
+			return EstimateRequiredError{Scale: scale}
+		}
+		if o.lock && sprint != nil && (fromSprint == nil || *fromSprint != *sprint) {
+			if locked, err := lockedSprint(ctx, tx, boardID); err != nil {
+				return err
+			} else if locked > 0 {
+				return SprintLockedError{Number: locked}
+			}
 		}
 		ids, err := columnOrder(ctx, tx, toColumn, sprint, id)
 		if err != nil {
@@ -291,15 +373,13 @@ func (s Store) move(ctx context.Context, owner, id, toColumn string, pos int) er
 		}
 		pos = max(0, min(pos, len(ids)))
 		ids = append(ids[:pos], append([]string{id}, ids[pos:]...)...)
-		// an estimate only survives a move to a board on the same scale
 		if _, err := tx.Exec(ctx, `UPDATE tickets t SET board_id = $2, column_id = $3, sprint_id = $4, resolved_at = NULL, updated_at = now(),
-				estimate = CASE WHEN (SELECT estimate_scale FROM boards WHERE id = t.board_id) =
-					(SELECT estimate_scale FROM boards WHERE id = $2) THEN t.estimate END,
+				estimate = $5,
 				-- into Done stamps the time (kept when already done); anywhere else clears it.
 				-- ponytail: reordering columns doesn't restamp; Done is still decided by DoneSQL
 				done_at = CASE WHEN $3 = (SELECT dc.id FROM columns dc WHERE dc.board_id = $2 ORDER BY dc.position DESC LIMIT 1)
 					THEN COALESCE(t.done_at, now()) END
-			WHERE t.id = $1`, id, boardID, toColumn, sprint); err != nil {
+			WHERE t.id = $1`, id, boardID, toColumn, sprint, estimate); err != nil {
 			return err
 		}
 		if err := renumber(ctx, tx, ids); err != nil {

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/golang-migrate/migrate/v4"
 	_ "github.com/golang-migrate/migrate/v4/database/pgx/v5"
@@ -146,5 +147,30 @@ func TestSprints(t *testing.T) {
 	}
 	if _, cols := view(); len(cols["To do"]) != 3 || cols["To do"][0] != "from backlog" {
 		t.Fatalf("backlog → sprint: %+v", cols)
+	}
+
+	current, _ := view()
+	updated, err := s.UpdateLength(ctx, "s1", current.Sprint.ID, 10)
+	if err != nil || updated.LengthDays != 10 {
+		t.Fatalf("change sprint length: %+v %v", updated, err)
+	}
+	starts, _ := time.Parse(time.RFC3339, updated.StartsAt)
+	ends, _ := time.Parse(time.RFC3339, updated.EndsAt)
+	if !ends.Equal(starts.Add(10 * 24 * time.Hour)) {
+		t.Fatalf("updated end date: starts %s ends %s", starts, ends)
+	}
+
+	nextStart := time.Now().Add(48 * time.Hour).Truncate(time.Second)
+	scheduled, err := s.CloseWithOptions(ctx, "s1", current.Sprint.ID, CloseOptions{NextLengthDays: 7, NextStartsAt: &nextStart})
+	if err != nil || scheduled.Number != current.Sprint.Number+1 || scheduled.LengthDays != 7 {
+		t.Fatalf("close into scheduled sprint: %+v %v", scheduled, err)
+	}
+	starts, _ = time.Parse(time.RFC3339, scheduled.StartsAt)
+	if !starts.Equal(nextStart) {
+		t.Fatalf("scheduled start: got %s want %s", starts, nextStart)
+	}
+	planned, plannedColumns := view()
+	if planned.Sprint == nil || planned.Sprint.ID != scheduled.ID || planned.Sprint.StartsAt != scheduled.StartsAt || len(plannedColumns["To do"]) != 3 {
+		t.Fatalf("scheduled sprint not visible with carried tickets: %+v %+v", planned.Sprint, plannedColumns)
 	}
 }

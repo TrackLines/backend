@@ -36,12 +36,16 @@ func TestOpenTickets(t *testing.T) {
 	_ = db.QueryRow(ctx, `INSERT INTO projects (owner_clerk_id, name) VALUES ('ot1', 'p') RETURNING id`).Scan(&pid)
 	b, _ := boards.Store{DB: db}.Create(ctx, "ot1", pid, "Backend", "")
 	s := Store{DB: db}
-	mk := func(title, prio string, onBoard bool) string {
+	mk := func(title, prio string, onBoard bool, kind ...string) string {
+		ticketType := "task"
+		if len(kind) > 0 {
+			ticketType = kind[0]
+		}
 		var tk *Ticket
 		if onBoard {
-			tk, _ = s.Create(ctx, "ot1", b.Columns[0].ID, "task", title, "long description")
+			tk, _ = s.Create(ctx, "ot1", b.Columns[0].ID, ticketType, title, "long description")
 		} else {
-			tk, _ = s.CreateBacklog(ctx, "ot1", pid, "task", title, "")
+			tk, _ = s.CreateBacklog(ctx, "ot1", pid, ticketType, title, "")
 		}
 		_ = s.Update(ctx, "ot1", tk.ID, "", title, "long description", prio)
 		return tk.ID
@@ -50,13 +54,14 @@ func TestOpenTickets(t *testing.T) {
 	boardHigh := mk("board high", "high", true)
 	mk("backlog urgent", "urgent", false)
 	medium := mk("board medium", "medium", true)
+	inSprintBug := mk("in sprint bug", "low", true, "bug")
 	done := mk("shipped", "urgent", true)
 	_ = s.Move(ctx, "ot1", done, b.Columns[2].ID, 0)
 	_ = s.SetBlockedBy(ctx, "ot1", medium, []string{backlogHigh})
 	_, _ = s.Claim(ctx, "ot1", "claude", boardHigh)
 	// only "board medium" is in the board's open sprint
 	if _, err := db.Exec(ctx, `WITH sp AS (INSERT INTO sprints (board_id, number, length_days, ends_at) VALUES ($1, 1, 14, now() + interval '14 days') RETURNING id)
-		UPDATE tickets SET sprint_id = (SELECT id FROM sp) WHERE id = $2`, b.ID, medium); err != nil {
+		UPDATE tickets SET sprint_id = (SELECT id FROM sp) WHERE id = ANY($2)`, b.ID, []string{medium, inSprintBug}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -68,20 +73,20 @@ func TestOpenTickets(t *testing.T) {
 		return strings.Join(out, ", ")
 	}
 	all, err := s.OpenTickets(ctx, "ot1", pid, OpenFilter{})
-	// open sprint first, then priority, then board before backlog, done left out
-	if err != nil || ids(all) != "board medium, backlog urgent, board high, backlog high" {
+	// open sprint first, bugs before other types in that sprint, then priority, then board before backlog.
+	if err != nil || ids(all) != "in sprint bug, board medium, backlog urgent, board high, backlog high" {
 		t.Fatalf("all: %s %v", ids(all), err)
 	}
-	if !all[0].InSprint || all[1].InSprint || all[2].InSprint {
+	if !all[0].InSprint || !all[1].InSprint || all[2].InSprint || all[3].InSprint {
 		t.Fatalf("in_sprint: %+v", all)
 	}
 	if all[0].CreatedAt == "" || all[0].UpdatedAt == "" {
 		t.Fatalf("open tickets need dates: %+v", all[0])
 	}
-	if all[2].BoardName == nil || *all[2].BoardName != "Backend" || *all[2].ColumnName != "To do" || all[1].BoardID != nil {
-		t.Fatalf("where: %+v %+v", all[1], all[2])
+	if all[3].BoardName == nil || *all[3].BoardName != "Backend" || *all[3].ColumnName != "To do" || all[2].BoardID != nil {
+		t.Fatalf("where: %+v %+v", all[2], all[3])
 	}
-	if next, _ := s.OpenTickets(ctx, "ot1", pid, OpenFilter{Unassigned: true, ExcludeBlocked: true}); ids(next) != "backlog urgent, backlog high" {
+	if next, _ := s.OpenTickets(ctx, "ot1", pid, OpenFilter{Unassigned: true, ExcludeBlocked: true}); ids(next) != "in sprint bug, backlog urgent, backlog high" {
 		t.Fatalf("claimable: %s", ids(next))
 	}
 	if mine, _ := s.OpenTickets(ctx, "ot1", pid, OpenFilter{Assignee: "claude"}); ids(mine) != "board high" {
