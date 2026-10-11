@@ -117,13 +117,26 @@ func (h System) Resolve(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "reason is too long", http.StatusBadRequest)
 		return
 	}
-	if err := h.store.ResolveAs(r.Context(), auth.OrgID(r.Context()), auth.ActorID(r.Context()), r.PathValue("id"), in.Resolution, in.Reason); err != nil {
+	org := auth.OrgID(r.Context())
+	before := h.detail(r.Context(), org, r.PathValue("id"))
+	if err := h.store.ResolveAs(r.Context(), org, auth.ActorID(r.Context()), r.PathValue("id"), in.Resolution, in.Reason); err != nil {
 		if errors.Is(err, ErrBadResolution) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 		writeErr(w, err)
 		return
+	}
+	if d := h.detail(r.Context(), org, r.PathValue("id")); d != nil && before != nil && (!before.Done || in.Resolution == ResolutionWontDo) {
+		if in.Resolution == ResolutionWontDo {
+			text := "closed " + ref(d) + " as won't do"
+			if reason := strings.TrimSpace(in.Reason); reason != "" {
+				text += ": " + reason
+			}
+			h.tell(r, []string{d.CreatedBy}, "wont_do", text, d)
+		} else {
+			h.finished(r, d, "resolved")
+		}
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

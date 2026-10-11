@@ -1,19 +1,54 @@
 package comments
 
 import (
+	"context"
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/bugfixes/go-bugfixes/logs"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/tracklines/backend/internal/auth"
 	"github.com/tracklines/backend/internal/httpx"
+	"github.com/tracklines/backend/internal/notifications"
 )
 
-type System struct{ store Store }
+// mentions tells everyone body @mentions (not the author) that they were mentioned on the ticket.
+func (h System) mentions(r *http.Request, org, ticketID, body string) {
+	if h.notify == nil || h.people == nil || !strings.Contains(body, "@") {
+		return
+	}
+	people, err := h.people(r.Context(), org)
+	if err != nil {
+		logs.Errorf("comments: mention lookup: %v", err)
+		return
+	}
+	to := notifications.Mentioned(body, people)
+	if len(to) == 0 {
+		return
+	}
+	var name string
+	_ = h.store.DB.QueryRow(r.Context(), `SELECT coalesce(p.key_prefix || '-' || t.number || ': ', '') || t.title
+		FROM tickets t JOIN projects p ON p.id = t.project_id WHERE t.id = $1`, ticketID).Scan(&name)
+	notifications.Send(r.Context(), h.notify, org, to, notifications.Event{
+		Kind: "mention", Text: "mentioned you on " + name, Actor: auth.ActorID(r.Context()), TicketID: ticketID,
+	})
+}
+
+type System struct {
+	store  Store
+	notify notifications.Notifier                                                // nil: nobody is told
+	people func(ctx context.Context, org string) ([]notifications.Person, error) // who can be @mentioned
+}
 
 // NewSystem exposes the comment handlers; routes are declared in internal/service.go.
 func NewSystem(db *pgxpool.Pool) System { return System{store: Store{DB: db}} }
+
+// WithMentions tells people @mentioned in a comment, looking names up through people.
+func (h System) WithMentions(n notifications.Notifier, people func(ctx context.Context, org string) ([]notifications.Person, error)) System {
+	h.notify, h.people = n, people
+	return h
+}
 
 func writeErr(w http.ResponseWriter, err error) {
 	switch {
@@ -53,5 +88,6 @@ func (h System) Create(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
+	h.mentions(r, org, c.TicketID, in.Body)
 	httpx.JSON(w, http.StatusCreated, c)
 }

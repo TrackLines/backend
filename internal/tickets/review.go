@@ -64,6 +64,15 @@ func (h System) ReviewTicket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	err := h.store.Review(r.Context(), auth.OrgID(r.Context()), auth.ActorID(r.Context()), r.PathValue("id"), *in.Approve, in.Comment)
+	if err == nil {
+		if d := h.detail(r.Context(), auth.OrgID(r.Context()), r.PathValue("id")); d != nil {
+			if *in.Approve {
+				h.finished(r, d, "approved and finished")
+			} else if d.AssignedTo != nil {
+				h.tell(r, []string{*d.AssignedTo}, "sent_back", "sent back "+ref(d)+": "+in.Comment, d)
+			}
+		}
+	}
 	if errors.Is(err, ErrNotInReview) {
 		http.Error(w, err.Error(), http.StatusConflict)
 		return

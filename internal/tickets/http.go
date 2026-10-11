@@ -2,6 +2,7 @@ package tickets
 
 import (
 	"errors"
+	"github.com/tracklines/backend/internal/notifications"
 	"net/http"
 	"slices"
 	"strconv"
@@ -25,6 +26,7 @@ func NewSystem(db *pgxpool.Pool) System {
 func (h System) CachingMembers(l membershipLister) System { h.assigneeMembers = l; return h }
 
 type System struct {
+	notify          notifications.Notifier // nil: nobody is told
 	store           Store
 	assigneeMembers membershipLister // nil: memberships
 	memberships     membershipLister
@@ -209,10 +211,18 @@ func (h System) Move(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	org := auth.OrgID(r.Context())
+	before := h.detail(r.Context(), org, r.PathValue("id"))
 	review, err := h.store.MoveEstimated(r.Context(), org, r.PathValue("id"), in.ColumnID, in.Position, in.Estimate, true, auth.ViaAPIKey(r.Context()))
 	if err != nil {
 		writeErr(w, err)
 		return
+	}
+	if after := h.detail(r.Context(), org, r.PathValue("id")); after != nil && before != nil {
+		if review {
+			h.reviewers(r, after)
+		} else if after.Done && !before.Done {
+			h.finished(r, after, "finished")
+		}
 	}
 	if review { // an agent finished it on a board with agent review: a person has to approve it
 		httpx.JSON(w, http.StatusOK, map[string]any{"needs_review": true, "message": "Moved to the column before Done to wait for a person's review."})

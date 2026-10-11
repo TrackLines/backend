@@ -960,6 +960,48 @@ paths:
                       line: { type: integer }
         '404': { description: The ticket didn't come from Bugfixes. }
 
+  /notifications:
+    get:
+      tags: [Notifications]
+      operationId: listNotifications
+      summary: The signed-in user's inbox in the active organization, unread first, then newest
+      description: >-
+        Events: assigned (someone assigned you a ticket), mention (@you in a comment), finished (a ticket you raised
+        was finished or resolved), wont_do (a ticket you raised was closed as won't do, with the reason), review (an
+        agent finished a ticket on a board you manage), sent_back (your ticket was sent back from review), approval
+        (a planned sprint on a board you manage went over capacity). Nobody is told about their own actions; only
+        people (not agents) get notifications. MCP tool list_notifications.
+      parameters:
+        - { name: page, in: query, schema: { type: integer, minimum: 1, default: 1 } }
+        - { name: per_page, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
+      responses:
+        '200': { description: Notifications., content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Notification' } } } } }
+        '403': { description: Not signed in to an organization. }
+  /notifications/unread-count:
+    get:
+      tags: [Notifications]
+      operationId: unreadNotificationCount
+      summary: How many notifications are unread
+      responses:
+        '200': { description: The count., content: { application/json: { schema: { type: object, properties: { count: { type: integer } } } } } }
+  /notifications/{notificationId}/read:
+    post:
+      tags: [Notifications]
+      operationId: readNotification
+      summary: Mark one of your notifications read
+      parameters:
+        - { name: notificationId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '204': { description: Read. }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /notifications/read-all:
+    post:
+      tags: [Notifications]
+      operationId: readAllNotifications
+      summary: Mark all your notifications read
+      responses:
+        '204': { description: Read. }
+
   /tickets/{ticketId}/review:
     parameters:
       - $ref: '#/components/parameters/TicketId'
@@ -3035,6 +3077,18 @@ components:
       required: [url]
       properties:
         url: { type: string, format: uri }
+    Notification:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        kind: { type: string, enum: [assigned, mention, finished, wont_do, review, sent_back, approval] }
+        text: { type: string, description: 'Reads after the actor, e.g. "assigned you TL-12: Fix login".' }
+        actor: { type: string, description: User id or agent name. }
+        ticket_id: { type: [string, 'null'], format: uuid }
+        ticket_key: { type: [string, 'null'] }
+        board_id: { type: [string, 'null'], format: uuid }
+        created_at: { type: string, format: date-time }
+        read_at: { type: [string, 'null'], format: date-time }
     Board:
       type: object
       required: [id, project_id, name, columns]

@@ -11,6 +11,7 @@ import (
 	"github.com/tracklines/backend/internal/boards"
 	"github.com/tracklines/backend/internal/httpx"
 	"github.com/tracklines/backend/internal/live"
+	"github.com/tracklines/backend/internal/notifications"
 	"github.com/tracklines/backend/internal/organizations"
 	"github.com/valkey-io/valkey-go"
 )
@@ -19,6 +20,7 @@ type System struct {
 	store  Store
 	admins organizations.Admins
 	live   live.System
+	notify notifications.Notifier // nil: nobody is told
 }
 
 // NewSystem exposes the sprint handlers; routes are declared in internal/service.go.

@@ -448,9 +448,17 @@ func (h System) PlanTicket(w http.ResponseWriter, r *http.Request) {
 	if !httpx.Decode(w, r, &in) {
 		return
 	}
+	plan := ""
+	if in.PlannedSprintID != nil {
+		plan = *in.PlannedSprintID
+	}
+	_, _, wasOver := h.approvalState(r.Context(), auth.OrgID(r.Context()), plan)
 	if err := h.store.PlanTicket(r.Context(), auth.OrgID(r.Context()), r.PathValue("id"), in.PlannedSprintID, in.Estimate); err != nil {
 		writeErr(w, err)
 		return
+	}
+	if board, number, over := h.approvalState(r.Context(), auth.OrgID(r.Context()), plan); over && !wasOver {
+		h.overCapacity(r, board, number)
 	}
 	var board string
 	if err := h.store.DB.QueryRow(r.Context(), `SELECT board_id FROM tickets WHERE id = $1`, r.PathValue("id")).Scan(&board); err == nil {

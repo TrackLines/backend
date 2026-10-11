@@ -31,6 +31,7 @@ import (
 	"github.com/tracklines/backend/internal/invitations"
 	"github.com/tracklines/backend/internal/live"
 	"github.com/tracklines/backend/internal/mcp"
+	"github.com/tracklines/backend/internal/notifications"
 	"github.com/tracklines/backend/internal/organizations"
 	"github.com/tracklines/backend/internal/projects"
 	"github.com/tracklines/backend/internal/ratelimit"
@@ -132,7 +133,14 @@ func (s *Service) Handler() http.Handler {
 	mux.Handle("DELETE /api/columns/{id}", signedIn(c.Delete))
 
 	// Tickets
-	t := tickets.NewSystem(s.DB).CachingMembers(members)
+	// Notifications: an in-app inbox for now (external channels later implement the same Notifier)
+	inbox := notifications.Store{DB: s.DB}
+	nf := notifications.NewSystem(inbox)
+	mux.Handle("GET /api/notifications", signedIn(nf.List))
+	mux.Handle("GET /api/notifications/unread-count", signedIn(nf.UnreadCount))
+	mux.Handle("POST /api/notifications/read-all", signedIn(nf.ReadAll))
+	mux.Handle("POST /api/notifications/{id}/read", signedIn(nf.Read))
+	t := tickets.NewSystem(s.DB).CachingMembers(members).WithNotifier(inbox)
 	mux.Handle("POST /api/columns/{id}/tickets", signedIn(t.Create))
 	mux.Handle("GET /api/tickets/{id}", signedIn(t.Get)) // one ticket + where it lives (deep links)
 	mux.Handle("GET /api/search", signedIn(t.Search))    // full-text over titles, descriptions, comments; exact keys first
@@ -176,7 +184,7 @@ func (s *Service) Handler() http.Handler {
 	mux.Handle("PUT /api/tickets/{id}/blocked-by", signedIn(t.SetBlockedBy)) // dependencies; claim is refused while blocked
 
 	// Comments — a ticket's conversation, separate from its description; replies via parent_comment_id
-	cm := comments.NewSystem(s.DB)
+	cm := comments.NewSystem(s.DB).WithMentions(inbox, t.People)
 	mux.Handle("GET /api/tickets/{id}/comments", signedIn(cm.List))
 	mux.Handle("POST /api/tickets/{id}/comments", signedIn(cm.Create))
 
@@ -194,7 +202,7 @@ func (s *Service) Handler() http.Handler {
 	mux.Handle("GET /api/projects/{id}/labels", signedIn(t.ProjectLabels)) // labels in use, for suggestions
 
 	// Sprints — per team board; closing opens the next and carries unfinished tickets over
-	sp := sprints.NewSystem(s.DB, o.AdminModel()).WithLive(s.Valkey)
+	sp := sprints.NewSystem(s.DB, o.AdminModel()).WithLive(s.Valkey).WithNotifier(inbox)
 	lv := live.New(s.Valkey, boards.Store{DB: s.DB})
 	mux.Handle("POST /api/boards/{id}/live/standup", signedIn(lv.Start))
 	mux.Handle("GET /api/boards/{id}/live/standup", signedIn(lv.Get))
