@@ -71,6 +71,9 @@ var tools = []tool{
 		"(title, occurrences, status, last seen, levels, file:line, link) and whether it regressed (seen again after the ticket was done). " +
 		"404 for tickets that didn't come from Bugfixes; available=false when the org hasn't connected Bugfixes or it's unreachable.",
 		method: "GET", path: "/api/tickets/{ticket_id}/bugfixes", props: map[string]any{"ticket_id": id("Ticket")}, required: []string{"ticket_id"}, readOnly: true},
+	{name: "get_ticket_prs", title: "Get ticket's pull requests", description: "Pull requests (GitHub/Bitbucket, in repos linked to the project) " +
+		"that mention the ticket's key in their branch, title or description, with their state (open, draft, merged, closed). Merging one closes the ticket.",
+		method: "GET", path: "/api/tickets/{ticket_id}/prs", props: map[string]any{"ticket_id": id("Ticket")}, required: []string{"ticket_id"}, readOnly: true},
 	{name: "get_ticket", title: "Get ticket", description: "A ticket with where it lives (project, board, column, sprint), its blockers, sub-tickets and parent.",
 		method: "GET", path: "/api/tickets/{ticket_id}", props: map[string]any{"ticket_id": id("Ticket")}, required: []string{"ticket_id"}, readOnly: true},
 	{name: "list_comments", title: "List comments", description: "A ticket's comments, oldest first.",

@@ -253,8 +253,8 @@ func verifyHub(body []byte, header, secret string) bool {
 	return hmac.Equal(got, mac.Sum(nil))
 }
 
-// GitHubWebhook: POST /api/webhooks/github. Uninstalling the app disconnects the org; pull
-// request events link PRs to tickets (see the PR webhooks ticket).
+// GitHubWebhook: POST /api/webhooks/github. Pull request events link PRs to the tickets they
+// mention (and merging closes them); uninstalling the app disconnects the org.
 func (h System) GitHubWebhook(secret string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if secret == "" {
@@ -265,6 +265,16 @@ func (h System) GitHubWebhook(secret string) http.HandlerFunc {
 		if err != nil || !verifyHub(body, r.Header.Get("X-Hub-Signature-256"), secret) {
 			http.Error(w, "invalid signature", http.StatusBadRequest)
 			return
+		}
+		if pr, installation, ok := githubPR(r.Header.Get("X-GitHub-Event"), body); ok {
+			orgs, err := h.orgsFor(r.Context(), GitHub, installation, pr.Repo)
+			if err == nil {
+				err = h.linkPR(r.Context(), orgs, pr)
+			}
+			if err != nil {
+				gitErr(w, err) // 5xx: GitHub redelivers
+				return
+			}
 		}
 		if r.Header.Get("X-GitHub-Event") == "installation" {
 			var e struct {
@@ -296,6 +306,16 @@ func (h System) BitbucketWebhook(secret string) http.HandlerFunc {
 			http.Error(w, "invalid signature", http.StatusBadRequest)
 			return
 		}
-		w.WriteHeader(http.StatusNoContent) // pull request events: see the PR webhooks ticket
+		if pr, ok := bitbucketPR(r.Header.Get("X-Event-Key"), body); ok {
+			orgs, err := h.orgsFor(r.Context(), Bitbucket, "", pr.Repo)
+			if err == nil {
+				err = h.linkPR(r.Context(), orgs, pr)
+			}
+			if err != nil {
+				gitErr(w, err)
+				return
+			}
+		}
+		w.WriteHeader(http.StatusNoContent)
 	}
 }

@@ -155,6 +155,7 @@ func (s *Service) Handler() http.Handler {
 	mux.Handle("POST /api/integrations/{provider}/complete", signedIn(in.Complete)) // back from the provider
 	mux.Handle("GET /api/integrations/{provider}/repos", signedIn(in.ListRepos))
 	mux.Handle("GET /api/projects/{id}/repos", signedIn(in.ProjectRepos))
+	mux.Handle("GET /api/tickets/{id}/prs", signedIn(in.TicketPRs)) // PRs that mention the ticket's key
 	mux.Handle("POST /api/projects/{id}/repos", signedIn(in.LinkRepo))
 	mux.Handle("DELETE /api/projects/{id}/repos", signedIn(in.UnlinkRepo)) // ?provider=&full_name=
 	mux.HandleFunc("POST /api/webhooks/github", in.GitHubWebhook(gc.GitHubWebhookSecret))
