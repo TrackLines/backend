@@ -79,6 +79,8 @@ var tools = []tool{
 		method: "GET", path: "/api/tickets/{ticket_id}", props: map[string]any{"ticket_id": id("Ticket")}, required: []string{"ticket_id"}, readOnly: true},
 	{name: "list_comments", title: "List comments", description: "A ticket's comments, oldest first.",
 		method: "GET", path: "/api/tickets/{ticket_id}/comments", props: map[string]any{"ticket_id": id("Ticket")}, required: []string{"ticket_id"}, readOnly: true},
+	{name: "list_attachments", title: "List attachments", description: "A ticket's attached files (name, type, size, url), e.g. a design screenshot.",
+		method: "GET", path: "/api/tickets/{ticket_id}/attachments", props: map[string]any{"ticket_id": id("Ticket")}, required: []string{"ticket_id"}, readOnly: true},
 	{name: "list_assignees", title: "List assignees", description: "Who tickets can be assigned to.",
 		method: "GET", path: "/api/assignees", readOnly: true},
 	{name: "list_project_labels", title: "List project labels", description: "Labels used in a project, with counts.",
