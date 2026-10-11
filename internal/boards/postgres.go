@@ -31,6 +31,7 @@ type Ticket struct {
 	CreatedAt   string   `json:"created_at"`
 	UpdatedAt   string   `json:"updated_at"`
 	DoneAt      *string  `json:"done_at"` // when it reached Done (or was resolved); null while open
+	StartedAt   *string  `json:"started_at"` // first move out of the board's first column; null when unknown
 	// PlannedSprintID: a backlog ticket planned into a board's upcoming sprint (refinement)
 	PlannedSprintID *string `json:"planned_sprint_id"`
 	Key             string  `json:"key"` // e.g. TL-123: the project's key prefix and the ticket's number in it
@@ -46,7 +47,8 @@ var TicketCols = `t.id, t.created_by, t.assigned_to, t.project_id, t.column_id, 
 	to_char(t.resolved_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
 	to_char(t.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
 	to_char(t.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
-	to_char(t.done_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'), t.planned_sprint_id,
+	to_char(t.done_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
+	to_char(t.started_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'), t.planned_sprint_id,
 	(SELECT kp.key_prefix FROM projects kp WHERE kp.id = t.project_id) || '-' || t.number,
 	t.external_source, t.external_url`
 
@@ -72,7 +74,7 @@ var TicketBlockedSQL = `EXISTS (SELECT 1 FROM ticket_dependencies td JOIN ticket
 
 // TicketDest lists scan targets matching TicketCols, for queries that select extra columns after them.
 func TicketDest(t *Ticket) []any {
-	return []any{&t.ID, &t.CreatedBy, &t.AssignedTo, &t.ProjectID, &t.ColumnID, &t.SprintID, &t.Type, &t.Title, &t.Description, &t.Priority, &t.Estimate, &t.Position, &t.Blocked, &t.Labels, &t.ResolvedAt, &t.CreatedAt, &t.UpdatedAt, &t.DoneAt, &t.PlannedSprintID, &t.Key, &t.ExternalSource, &t.ExternalURL}
+	return []any{&t.ID, &t.CreatedBy, &t.AssignedTo, &t.ProjectID, &t.ColumnID, &t.SprintID, &t.Type, &t.Title, &t.Description, &t.Priority, &t.Estimate, &t.Position, &t.Blocked, &t.Labels, &t.ResolvedAt, &t.CreatedAt, &t.UpdatedAt, &t.DoneAt, &t.StartedAt, &t.PlannedSprintID, &t.Key, &t.ExternalSource, &t.ExternalURL}
 }
 
 // Sprint is a board's time box; only the open one is shown on the board.

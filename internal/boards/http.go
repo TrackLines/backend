@@ -3,6 +3,7 @@ package boards
 import (
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/bugfixes/go-bugfixes/logs"
@@ -74,6 +75,25 @@ func (h System) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.JSON(w, http.StatusOK, b)
+}
+
+// Flow reports completed tickets, cycle-time percentiles, and weekly throughput for a board.
+func (h System) Flow(w http.ResponseWriter, r *http.Request) {
+	weeks := 12
+	if raw := r.URL.Query().Get("weeks"); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 1 || n > 52 {
+			http.Error(w, "weeks must be between 1 and 52", http.StatusBadRequest)
+			return
+		}
+		weeks = n
+	}
+	f, err := h.store.Flow(r.Context(), auth.OrgID(r.Context()), r.PathValue("id"), weeks)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, f)
 }
 
 // Update changes the board name and estimate scale. Switching scale clears open estimates.

@@ -39,6 +39,7 @@ type SearchQuery struct {
 	Unassigned bool
 	Status     string // open | done | ""
 	Limit      int
+	Page       int // 1-based; with Limit, for "load more" (stable: rank, then updated, then id)
 }
 
 const maxSearchResults = 50
@@ -95,10 +96,10 @@ func (s Store) Search(ctx context.Context, owner string, q SearchQuery) ([]Searc
 			AND ($9 = '' OR t.assigned_to = $9)
 			AND ($10 = false OR t.assigned_to IS NULL)
 			AND ($11 = '' OR ($11 = 'done') = `+boards.TicketDoneSQL+`)
-		ORDER BY CASE WHEN q.query IS NULL THEN 0 ELSE ts_rank(t.search, q.query) END DESC, t.updated_at DESC
-		LIMIT $12`,
+		ORDER BY CASE WHEN q.query IS NULL THEN 0 ELSE ts_rank(t.search, q.query) END DESC, t.updated_at DESC, t.id
+		LIMIT $12 OFFSET $13`,
 		owner, query, keyID, q.ProjectID, q.BoardID, nonNil(q.Types), nonNil(q.Priorities), lower(q.Labels),
-		q.Assignee, q.Unassigned, q.Status, q.Limit)
+		q.Assignee, q.Unassigned, q.Status, q.Limit, (max(q.Page, 1)-1)*q.Limit)
 	if err != nil {
 		return nil, notFound(err)
 	}
@@ -139,7 +140,8 @@ func lower(v []string) []string {
 	return out
 }
 
-// Search: GET /api/search?q=&project=&board=&type=&priority=&label=&assignee=me|unassigned|<id>&status=open|done&limit=
+// Search: GET /api/search?q=&project=&board=&type=&priority=&label=&assignee=me|unassigned|<id>&status=open|done&limit=&page=
+// "My work" is assignee=me&status=open (newest change first) across every board and project.
 // type, priority and label repeat (any of).
 func (h System) Search(w http.ResponseWriter, r *http.Request) {
 	v := r.URL.Query()
@@ -167,6 +169,14 @@ func (h System) Search(w http.ResponseWriter, r *http.Request) {
 		q.Assignee = auth.ActorID(r.Context())
 	default:
 		q.Assignee = a
+	}
+	if p := v.Get("page"); p != "" {
+		n, err := strconv.Atoi(p)
+		if err != nil || n < 1 || n > 1000 {
+			http.Error(w, "page must be 1 or more", http.StatusBadRequest)
+			return
+		}
+		q.Page = n
 	}
 	if l := v.Get("limit"); l != "" {
 		n, err := strconv.Atoi(l)

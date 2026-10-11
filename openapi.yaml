@@ -898,6 +898,7 @@ paths:
         - { name: assignee, in: query, schema: { type: string }, description: "me (the caller), unassigned, or a user id / agent name." }
         - { name: status, in: query, schema: { type: string, enum: [open, done] } }
         - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 50, default: 20 } }
+        - { name: page, in: query, schema: { type: integer, minimum: 1, default: 1 }, description: '1-based, with limit. "My work" is assignee=me&status=open across every board and project.' }
       responses:
         '200':
           description: Matching tickets, best first.
@@ -1668,6 +1669,32 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Velocity' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /boards/{boardId}/flow:
+    parameters:
+      - $ref: '#/components/parameters/BoardId'
+    get:
+      tags: [Boards]
+      operationId: getBoardFlow
+      summary: Cycle time and weekly throughput for finished tickets
+      description: >-
+        Returns tickets completed during the requested rolling window of UTC calendar weeks, including
+        empty throughput weeks. Cycle-time percentiles include only tickets with a recorded started_at;
+        older tickets without an exact start time remain in throughput but have a null cycle_days.
+      parameters:
+        - name: weeks
+          in: query
+          description: Number of UTC calendar weeks including the current week.
+          schema: { type: integer, minimum: 1, maximum: 52, default: 12 }
+      responses:
+        '200':
+          description: Finished tickets, cycle-time percentiles, and throughput by week.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BoardFlow' }
+        '400': { description: weeks must be between 1 and 52. }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
 
@@ -2611,6 +2638,7 @@ components:
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
         done_at: { type: [string, 'null'], format: date-time, description: "When it reached its board's Done column or was resolved; null while open." }
+        started_at: { type: [string, 'null'], format: date-time, description: "First move out of the board's first column; null for historical tickets without a known start." }
         planned_sprint_id: { type: [string, 'null'], format: uuid, description: A backlog ticket planned into a board's upcoming sprint (refinement). }
         key: { type: string, example: TL-123, description: "The project's key prefix and the ticket's number in the project, assigned on create. For branch names, PR titles and search." }
         external_source: { type: [string, 'null'], description: Where an integration made it (bugfixes); null for our own tickets. }
@@ -2657,6 +2685,35 @@ components:
                 properties:
                   at: { type: string, format: date-time }
                   value: { type: number }
+    BoardFlow:
+      type: object
+      required: [weeks, tickets, median_cycle_days, p85_cycle_days, throughput]
+      properties:
+        weeks: { type: integer, description: Number of UTC calendar weeks included, including the current week. }
+        tickets:
+          type: array
+          description: Finished tickets in the date window, oldest completion first.
+          items:
+            type: object
+            required: [id, key, title, started_at, done_at, cycle_days]
+            properties:
+              id: { type: string, format: uuid }
+              key: { type: string, example: TL-123 }
+              title: { type: string }
+              started_at: { type: [string, 'null'], format: date-time }
+              done_at: { type: string, format: date-time }
+              cycle_days: { type: [number, 'null'], description: Elapsed days from started_at to done_at; null when start is unknown. }
+        median_cycle_days: { type: [number, 'null'], description: Median elapsed days for tickets with a known start. }
+        p85_cycle_days: { type: [number, 'null'], description: 85th percentile elapsed days for tickets with a known start. }
+        throughput:
+          type: array
+          description: Counts by UTC Monday week start, including weeks with no completed tickets.
+          items:
+            type: object
+            required: [week_start, tickets]
+            properties:
+              week_start: { type: string, format: date }
+              tickets: { type: integer }
     ProjectRepo:
       type: object
       properties:

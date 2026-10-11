@@ -120,6 +120,7 @@ func (s *Service) Handler() http.Handler {
 	mux.Handle("POST /api/board-templates", signedIn(b.CreateTemplate))
 	mux.Handle("DELETE /api/board-templates/{id}", signedIn(b.DeleteTemplate))
 	mux.Handle("GET /api/boards/{id}", signedIn(b.Get))
+	mux.Handle("GET /api/boards/{id}/flow", signedIn(b.Flow))
 	mux.Handle("PATCH /api/boards/{id}", signedIn(b.Update)) // name and estimate_scale settings
 	mux.Handle("DELETE /api/boards/{id}", signedIn(b.Delete))
 

@@ -58,14 +58,15 @@ var tools = []tool{
 	{name: "search_tickets", title: "Search tickets", description: "Find tickets in the caller's organization by words in their title, description or comments " +
 		"(every word, matched as a prefix), or by key (TL-123, found exactly). Ranked by relevance, then most recently changed; with no q it just filters. " +
 		"Each result says where the ticket lives (project, board/column or backlog) and whether it's done.",
-		method: "GET", path: "/api/search", query: []string{"q", "project", "board", "type", "priority", "label", "assignee", "status", "limit"},
+		method: "GET", path: "/api/search", query: []string{"q", "project", "board", "type", "priority", "label", "assignee", "status", "limit", "page"},
 		props: map[string]any{"q": str("Words or a ticket key"), "project": id("Project"), "board": id("Board"),
 			"type":     map[string]any{"type": "array", "items": ticketType, "description": "Any of these types"},
 			"priority": map[string]any{"type": "array", "items": priority, "description": "Any of these priorities"},
 			"label":    map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Any of these labels"},
 			"assignee": str("me, unassigned, or a user id / agent name"),
 			"status":   map[string]any{"type": "string", "enum": []string{"open", "done"}},
-			"limit":    map[string]any{"type": "integer", "minimum": 1, "maximum": 50}},
+			"limit":    map[string]any{"type": "integer", "minimum": 1, "maximum": 50},
+			"page":     map[string]any{"type": "integer", "minimum": 1, "description": "1-based, with limit"}},
 		readOnly: true},
 	{name: "get_ticket_bugfixes", title: "Get ticket's Bugfixes report", description: "For a ticket Bugfixes created: its crash report's live details " +
 		"(title, occurrences, status, last seen, levels, file:line, link) and whether it regressed (seen again after the ticket was done). " +

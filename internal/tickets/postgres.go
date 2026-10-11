@@ -396,6 +396,10 @@ func (s Store) move(ctx context.Context, owner, id, toColumn string, pos int, o 
 		if _, err := tx.Exec(ctx, `UPDATE tickets t SET board_id = $2, column_id = $3, sprint_id = $4, resolved_at = NULL, updated_at = now(),
 				planned_sprint_id = NULL, -- on a board now: out of any plan
 				estimate = $5,
+				-- The first move out of the source board's first column starts cycle time.
+				started_at = CASE WHEN t.column_id = (SELECT fc.id FROM columns fc WHERE fc.board_id = t.board_id ORDER BY fc.position LIMIT 1)
+					AND $3 <> (SELECT fc.id FROM columns fc WHERE fc.board_id = t.board_id ORDER BY fc.position LIMIT 1)
+					THEN COALESCE(t.started_at, now()) ELSE t.started_at END,
 				-- into Done stamps the time (kept when already done); anywhere else clears it.
 				-- ponytail: reordering columns doesn't restamp; Done is still decided by DoneSQL
 				done_at = CASE WHEN $3 = (SELECT dc.id FROM columns dc WHERE dc.board_id = $2 ORDER BY dc.position DESC LIMIT 1)
