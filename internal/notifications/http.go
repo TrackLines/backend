@@ -118,3 +118,34 @@ func (h System) ReadAll(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
+
+// Dismiss: DELETE /api/notifications/{id} removes one of your notifications.
+func (h System) Dismiss(w http.ResponseWriter, r *http.Request) {
+	org, user, ok := h.me(w, r)
+	if !ok {
+		return
+	}
+	tag, err := h.store.DB.Exec(r.Context(), `DELETE FROM notifications WHERE id::text = $1 AND user_id = $2 AND org_id = $3`, r.PathValue("id"), user, org)
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	if tag.RowsAffected() == 0 {
+		http.NotFound(w, r)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// ClearRead: DELETE /api/notifications/read removes the ones you've read.
+func (h System) ClearRead(w http.ResponseWriter, r *http.Request) {
+	org, user, ok := h.me(w, r)
+	if !ok {
+		return
+	}
+	if _, err := h.store.DB.Exec(r.Context(), `DELETE FROM notifications WHERE user_id = $1 AND org_id = $2 AND read_at IS NOT NULL`, user, org); err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}

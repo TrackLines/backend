@@ -97,6 +97,21 @@ func TestInbox(t *testing.T) {
 	if rec := call(ava, h.ReadAll, "POST", "/", ""); rec.Code != 204 || count() != 0 {
 		t.Fatalf("read all: %d, unread %d", rec.Code, count())
 	}
+	// dismiss one (only your own), then clear the rest that are read
+	if rec := call(person("user_bo", "nt1"), h.Dismiss, "DELETE", "/", list[0].ID); rec.Code != 404 {
+		t.Fatalf("other's dismiss: %d", rec.Code)
+	}
+	if rec := call(ava, h.Dismiss, "DELETE", "/", list[0].ID); rec.Code != 204 {
+		t.Fatalf("dismiss: %d", rec.Code)
+	}
+	_ = s.Notify(ctx, "nt1", []string{"user_ava"}, Event{Kind: "mention", Text: "new", Actor: "user_bo"})
+	if rec := call(ava, h.ClearRead, "DELETE", "/", ""); rec.Code != 204 {
+		t.Fatalf("clear read: %d", rec.Code)
+	}
+	_ = json.Unmarshal(call(ava, h.List, "GET", "/", "").Body.Bytes(), &list)
+	if len(list) != 1 || list[0].Text != "new" || list[0].ReadAt != nil {
+		t.Fatalf("after clearing read: %+v", list)
+	}
 	// the other org's notification is still unread there
 	var other map[string]int
 	_ = json.Unmarshal(call(person("user_ava", "nt2"), h.UnreadCount, "GET", "/", "").Body.Bytes(), &other)

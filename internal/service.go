@@ -140,6 +140,8 @@ func (s *Service) Handler() http.Handler {
 	mux.Handle("GET /api/notifications/unread-count", signedIn(nf.UnreadCount))
 	mux.Handle("POST /api/notifications/read-all", signedIn(nf.ReadAll))
 	mux.Handle("POST /api/notifications/{id}/read", signedIn(nf.Read))
+	mux.Handle("DELETE /api/notifications/read", signedIn(nf.ClearRead)) // clear everything already read
+	mux.Handle("DELETE /api/notifications/{id}", signedIn(nf.Dismiss))
 	t := tickets.NewSystem(s.DB).CachingMembers(members).WithNotifier(inbox)
 	mux.Handle("POST /api/columns/{id}/tickets", signedIn(t.Create))
 	mux.Handle("GET /api/tickets/{id}", signedIn(t.Get)) // one ticket + where it lives (deep links)

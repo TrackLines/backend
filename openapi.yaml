@@ -994,6 +994,23 @@ paths:
       responses:
         '204': { description: Read. }
         '404': { $ref: '#/components/responses/NotFound' }
+  /notifications/{notificationId}:
+    delete:
+      tags: [Notifications]
+      operationId: dismissNotification
+      summary: Remove one of your notifications
+      parameters:
+        - { name: notificationId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '204': { description: Removed. }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /notifications/read:
+    delete:
+      tags: [Notifications]
+      operationId: clearReadNotifications
+      summary: Remove all your notifications that are already read
+      responses:
+        '204': { description: Cleared. }
   /notifications/read-all:
     post:
       tags: [Notifications]
