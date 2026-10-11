@@ -209,8 +209,13 @@ func (h System) Move(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	org := auth.OrgID(r.Context())
-	if err := h.store.MoveEstimated(r.Context(), org, r.PathValue("id"), in.ColumnID, in.Position, in.Estimate, true); err != nil {
+	review, err := h.store.MoveEstimated(r.Context(), org, r.PathValue("id"), in.ColumnID, in.Position, in.Estimate, true, auth.ViaAPIKey(r.Context()))
+	if err != nil {
 		writeErr(w, err)
+		return
+	}
+	if review { // an agent finished it on a board with agent review: a person has to approve it
+		httpx.JSON(w, http.StatusOK, map[string]any{"needs_review": true, "message": "Moved to the column before Done to wait for a person's review."})
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

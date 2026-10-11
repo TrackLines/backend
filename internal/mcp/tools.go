@@ -134,7 +134,7 @@ var tools = []tool{
 	{name: "assign_ticket", title: "Assign ticket", description: "Assign a ticket to someone from list_assignees, or null to unassign.",
 		method: "PUT", path: "/api/tickets/{ticket_id}/assignee", body: []string{"assignee"},
 		props: map[string]any{"ticket_id": id("Ticket"), "assignee": map[string]any{"type": []string{"string", "null"}}}, required: []string{"ticket_id"}},
-	{name: "move_ticket", title: "Move ticket", description: "Move a ticket to a column (any board in the same project, which also takes it out of the backlog). Moving to the board's last column marks it done. " +
+	{name: "move_ticket", title: "Move ticket", description: "Move a ticket to a column (any board in the same project, which also takes it out of the backlog). Moving to the board's last column marks it done, except on a board with agent review (get_board: agent_review): there an agent's move into Done stops in the column before Done as needs review (review_requested_at set) until a person approves it. " +
 		"On a sprint's last day, moving a ticket into that sprint is refused (scope locked); moves within it or out are fine. " +
 		"A board with an estimate scale only takes estimated tickets: moving one in from the backlog or another board needs estimate (on the target board's scale, see get_board) " +
 		"unless it already has one on the same scale.",

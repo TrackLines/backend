@@ -329,17 +329,21 @@ func exec(tag pgconn.CommandTag, err error) error {
 // sprint on its last day is refused (SprintLockedError); moves inside the sprint, to Done, or out
 // of it are fine.
 func (s Store) Move(ctx context.Context, owner, id, toColumn string, pos int) error {
-	return s.MoveEstimated(ctx, owner, id, toColumn, pos, nil, false)
+	_, err := s.MoveEstimated(ctx, owner, id, toColumn, pos, nil, false, false)
+	return err
 }
 
 // MoveEstimated is Move that can size the ticket on the way (estimate, on the target board's scale).
 // With require, a ticket entering a board with an estimate scale must end up estimated
 // (EstimateRequiredError); moves within the board aren't checked.
-func (s Store) MoveEstimated(ctx context.Context, owner, id, toColumn string, pos int, estimate *string, require bool) error {
-	if err := s.move(ctx, owner, id, toColumn, pos, moveOpts{lock: true, require: require, estimate: estimate}); err != nil {
-		return err
+// With agent (an API key moved it) on a board with agent review, a move into Done lands in the
+// column before Done waiting for review instead (review is true).
+func (s Store) MoveEstimated(ctx context.Context, owner, id, toColumn string, pos int, estimate *string, require, agent bool) (review bool, err error) {
+	o := moveOpts{lock: true, require: require, estimate: estimate, agent: agent}
+	if err := s.move(ctx, owner, id, toColumn, pos, &o); err != nil {
+		return false, err
 	}
-	return s.completeParent(ctx, owner, id)
+	return o.review, s.completeParent(ctx, owner, id)
 }
 
 // moveOpts: lock refuses entering a sprint on its last day (off for completing a parent, which
@@ -347,9 +351,11 @@ func (s Store) MoveEstimated(ctx context.Context, owner, id, toColumn string, po
 type moveOpts struct {
 	lock, require bool
 	estimate      *string
+	agent         bool // set by: an API key; review is set when its move into Done became a review request
+	review        bool
 }
 
-func (s Store) move(ctx context.Context, owner, id, toColumn string, pos int, o moveOpts) error {
+func (s Store) move(ctx context.Context, owner, id, toColumn string, pos int, o *moveOpts) error {
 	return pgx.BeginFunc(ctx, s.DB, func(tx pgx.Tx) error {
 		var boardID, scale string
 		var from, fromSprint, sprint, fromBoard, fromScale, estimate *string
@@ -376,6 +382,19 @@ func (s Store) move(ctx context.Context, owner, id, toColumn string, pos int, o 
 				estimate = nil
 			}
 		}
+		// Needs review: an agent's move into Done on a review board stops one column short (a board
+		// with a single column has nowhere to wait, so it goes through)
+		if o.agent {
+			var reviewCol *string
+			if err := tx.QueryRow(ctx, `SELECT (SELECT c.id FROM columns c WHERE c.board_id = b.id ORDER BY c.position DESC OFFSET 1 LIMIT 1)
+				FROM boards b WHERE b.id = $1 AND b.agent_review
+					AND $2 = (SELECT d.id FROM columns d WHERE d.board_id = b.id ORDER BY d.position DESC LIMIT 1)`, boardID, toColumn).Scan(&reviewCol); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+				return err
+			}
+			if reviewCol != nil {
+				toColumn, o.review = *reviewCol, true
+			}
+		}
 		entering := fromBoard == nil || *fromBoard != boardID
 		if o.require && entering && scale != "none" && estimate == nil {
 			return EstimateRequiredError{Scale: scale}
@@ -396,6 +415,8 @@ func (s Store) move(ctx context.Context, owner, id, toColumn string, pos int, o 
 		if _, err := tx.Exec(ctx, `UPDATE tickets t SET board_id = $2, column_id = $3, sprint_id = $4, resolved_at = NULL, updated_at = now(),
 				planned_sprint_id = NULL, -- on a board now: out of any plan
 				estimate = $5,
+				-- waiting for review only while an agent's finish is held; any other move clears it
+				review_requested_at = CASE WHEN $6 THEN COALESCE(t.review_requested_at, now()) END,
 				-- The first move out of the source board's first column starts cycle time.
 				started_at = CASE WHEN t.column_id = (SELECT fc.id FROM columns fc WHERE fc.board_id = t.board_id ORDER BY fc.position LIMIT 1)
 					AND $3 <> (SELECT fc.id FROM columns fc WHERE fc.board_id = t.board_id ORDER BY fc.position LIMIT 1)
@@ -404,7 +425,7 @@ func (s Store) move(ctx context.Context, owner, id, toColumn string, pos int, o 
 				-- ponytail: reordering columns doesn't restamp; Done is still decided by DoneSQL
 				done_at = CASE WHEN $3 = (SELECT dc.id FROM columns dc WHERE dc.board_id = $2 ORDER BY dc.position DESC LIMIT 1)
 					THEN COALESCE(t.done_at, now()) END
-			WHERE t.id = $1`, id, boardID, toColumn, sprint, estimate); err != nil {
+			WHERE t.id = $1`, id, boardID, toColumn, sprint, estimate, o.review); err != nil {
 			return err
 		}
 		if err := renumber(ctx, tx, ids); err != nil {
@@ -431,7 +452,7 @@ func (s Store) ToBacklog(ctx context.Context, owner, id string) error {
 		if from == nil {
 			return nil // already in the backlog
 		}
-		if _, err := tx.Exec(ctx, `UPDATE tickets t SET board_id = NULL, column_id = NULL, sprint_id = NULL, estimate = NULL, done_at = NULL, updated_at = now(),
+		if _, err := tx.Exec(ctx, `UPDATE tickets t SET board_id = NULL, column_id = NULL, sprint_id = NULL, estimate = NULL, done_at = NULL, review_requested_at = NULL, updated_at = now(),
 				position = COALESCE((SELECT max(position) + 1 FROM tickets x WHERE x.project_id = t.project_id AND x.board_id IS NULL), 0)
 			WHERE t.id = $1`, id); err != nil {
 			return err

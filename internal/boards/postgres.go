@@ -30,7 +30,7 @@ type Ticket struct {
 	ResolvedAt  *string  `json:"resolved_at"` // closed in the backlog without a board; counts as done
 	CreatedAt   string   `json:"created_at"`
 	UpdatedAt   string   `json:"updated_at"`
-	DoneAt      *string  `json:"done_at"` // when it reached Done (or was resolved); null while open
+	DoneAt      *string  `json:"done_at"`    // when it reached Done (or was resolved); null while open
 	StartedAt   *string  `json:"started_at"` // first move out of the board's first column; null when unknown
 	// PlannedSprintID: a backlog ticket planned into a board's upcoming sprint (refinement)
 	PlannedSprintID *string `json:"planned_sprint_id"`
@@ -38,6 +38,8 @@ type Ticket struct {
 	// where a ticket made by another tool came from (e.g. a Bugfixes report); nil for our own
 	ExternalSource *string `json:"external_source"`
 	ExternalURL    *string `json:"external_url"`
+	// an agent finished it on a board with agent review: it waits (in the column before Done) for a person
+	ReviewRequestedAt *string `json:"review_requested_at"`
 }
 
 // TicketCols + ScanTicket read a ticket row; shared with the tickets package. The last column
@@ -50,7 +52,8 @@ var TicketCols = `t.id, t.created_by, t.assigned_to, t.project_id, t.column_id, 
 	to_char(t.done_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
 	to_char(t.started_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'), t.planned_sprint_id,
 	(SELECT kp.key_prefix FROM projects kp WHERE kp.id = t.project_id) || '-' || t.number,
-	t.external_source, t.external_url`
+	t.external_source, t.external_url,
+	to_char(t.review_requested_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')`
 
 func ScanTicket(row pgx.Row) (Ticket, error) {
 	var t Ticket
@@ -74,7 +77,7 @@ var TicketBlockedSQL = `EXISTS (SELECT 1 FROM ticket_dependencies td JOIN ticket
 
 // TicketDest lists scan targets matching TicketCols, for queries that select extra columns after them.
 func TicketDest(t *Ticket) []any {
-	return []any{&t.ID, &t.CreatedBy, &t.AssignedTo, &t.ProjectID, &t.ColumnID, &t.SprintID, &t.Type, &t.Title, &t.Description, &t.Priority, &t.Estimate, &t.Position, &t.Blocked, &t.Labels, &t.ResolvedAt, &t.CreatedAt, &t.UpdatedAt, &t.DoneAt, &t.StartedAt, &t.PlannedSprintID, &t.Key, &t.ExternalSource, &t.ExternalURL}
+	return []any{&t.ID, &t.CreatedBy, &t.AssignedTo, &t.ProjectID, &t.ColumnID, &t.SprintID, &t.Type, &t.Title, &t.Description, &t.Priority, &t.Estimate, &t.Position, &t.Blocked, &t.Labels, &t.ResolvedAt, &t.CreatedAt, &t.UpdatedAt, &t.DoneAt, &t.StartedAt, &t.PlannedSprintID, &t.Key, &t.ExternalSource, &t.ExternalURL, &t.ReviewRequestedAt}
 }
 
 // Sprint is a board's time box; only the open one is shown on the board.
@@ -116,6 +119,7 @@ type Board struct {
 	Description   string   `json:"description"`
 	EstimateScale string   `json:"estimate_scale"`
 	Style         string   `json:"style"`
+	AgentReview   bool     `json:"agent_review"`          // agents' moves into Done wait for a person's review
 	TeamID        *string  `json:"team_id"`               // the team whose leaders run this board                 // sprints | kanban
 	HiddenDone    int      `json:"hidden_done,omitempty"` // kanban: Done tickets older than KanbanDoneDays, left off the view // a key of Scales
 	CreatedAt     string   `json:"created_at"`
@@ -140,13 +144,13 @@ type Stats struct {
 
 type Store struct{ DB *pgxpool.Pool }
 
-const cols = `id, project_id, owner_clerk_id, name, description, estimate_scale, style, team_id,
+const cols = `id, project_id, owner_clerk_id, name, description, estimate_scale, style, team_id, agent_review,
 	to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
 	to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')`
 
 func scan(row pgx.Row) (Board, error) {
 	var b Board
-	err := row.Scan(&b.ID, &b.ProjectID, &b.OwnerClerkID, &b.Name, &b.Description, &b.EstimateScale, &b.Style, &b.TeamID, &b.CreatedAt, &b.UpdatedAt)
+	err := row.Scan(&b.ID, &b.ProjectID, &b.OwnerClerkID, &b.Name, &b.Description, &b.EstimateScale, &b.Style, &b.TeamID, &b.AgentReview, &b.CreatedAt, &b.UpdatedAt)
 	return b, notFound(err)
 }
 
@@ -167,7 +171,7 @@ func (s Store) Create(ctx context.Context, owner, projectID, name, desc string) 
 
 // ListByProject lists a project's boards (without columns); callers check ownership.
 func (s Store) ListByProject(ctx context.Context, projectID string) ([]Board, error) {
-	rows, err := s.DB.Query(ctx, `SELECT boards.id, boards.project_id, boards.owner_clerk_id, boards.name, boards.description, boards.estimate_scale, boards.style, boards.team_id,
+	rows, err := s.DB.Query(ctx, `SELECT boards.id, boards.project_id, boards.owner_clerk_id, boards.name, boards.description, boards.estimate_scale, boards.style, boards.team_id, boards.agent_review,
 		to_char(boards.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
 		to_char(boards.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
 		count(t.tid) FILTER (WHERE NOT t.done),
@@ -187,7 +191,7 @@ func (s Store) ListByProject(ctx context.Context, projectID string) ([]Board, er
 	}
 	out, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (Board, error) {
 		b, st := Board{}, Stats{}
-		err := row.Scan(&b.ID, &b.ProjectID, &b.OwnerClerkID, &b.Name, &b.Description, &b.EstimateScale, &b.Style, &b.TeamID, &b.CreatedAt, &b.UpdatedAt,
+		err := row.Scan(&b.ID, &b.ProjectID, &b.OwnerClerkID, &b.Name, &b.Description, &b.EstimateScale, &b.Style, &b.TeamID, &b.AgentReview, &b.CreatedAt, &b.UpdatedAt,
 			&st.Open, &st.InProgress, &st.Done, &st.Urgent, &st.Active, &st.SprintNumber, &st.SprintEndsAt)
 		b.Stats = &st
 		return b, err
@@ -241,6 +245,18 @@ const KanbanDoneDays = 14
 // SetStyle switches the board between sprints and kanban. Going kanban ends the open sprint, if
 // any: it closes now with no successor, its done tickets stay with it (velocity history) and the
 // rest leave it, so they show on the kanban board.
+// SetAgentReview turns agent review on or off. Tickets already waiting keep waiting (a person settles them).
+func (s Store) SetAgentReview(ctx context.Context, id, owner string, on bool) error {
+	tag, err := s.DB.Exec(ctx, `UPDATE boards SET agent_review = $3, updated_at = now() WHERE id = $1 AND owner_clerk_id = $2`, id, owner, on)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 func (s Store) SetStyle(ctx context.Context, id, owner, style string) error {
 	return pgx.BeginFunc(ctx, s.DB, func(tx pgx.Tx) error {
 		if err := tx.QueryRow(ctx, `SELECT id FROM boards WHERE id = $1 AND owner_clerk_id = $2 FOR UPDATE`, id, owner).Scan(&id); err != nil {

@@ -105,12 +105,13 @@ func (h System) Update(w http.ResponseWriter, r *http.Request) {
 		Name          *string `json:"name"`
 		EstimateScale *string `json:"estimate_scale"`
 		Style         *string `json:"style"` // sprints | kanban
+		AgentReview   *bool   `json:"agent_review"`
 	}
 	if !httpx.Decode(w, r, &in) {
 		return
 	}
-	if in.Name == nil && in.EstimateScale == nil && in.Style == nil {
-		http.Error(w, "name, estimate_scale or style is required", http.StatusBadRequest)
+	if in.Name == nil && in.EstimateScale == nil && in.Style == nil && in.AgentReview == nil {
+		http.Error(w, "name, estimate_scale, style or agent_review is required", http.StatusBadRequest)
 		return
 	}
 	name := ""
@@ -133,6 +134,12 @@ func (h System) Update(w http.ResponseWriter, r *http.Request) {
 	}
 	if in.Style != nil {
 		if err := h.store.SetStyle(r.Context(), r.PathValue("id"), auth.OrgID(r.Context()), *in.Style); err != nil {
+			writeErr(w, err)
+			return
+		}
+	}
+	if in.AgentReview != nil {
+		if err := h.store.SetAgentReview(r.Context(), r.PathValue("id"), auth.OrgID(r.Context()), *in.AgentReview); err != nil {
 			writeErr(w, err)
 			return
 		}

@@ -169,6 +169,7 @@ func (s *Service) Handler() http.Handler {
 	mux.Handle("GET /api/assignees", signedIn(t.Assignees))
 	mux.Handle("DELETE /api/tickets/{id}", signedIn(t.Delete))
 	mux.Handle("POST /api/tickets/{id}/move", signedIn(t.Move)) // also pulls a ticket out of the backlog
+	mux.Handle("POST /api/tickets/{id}/review", signedIn(t.ReviewTicket))
 	mux.Handle("POST /api/tickets/{id}/backlog", signedIn(t.ToBacklog))
 	mux.Handle("POST /api/tickets/{id}/resolve", signedIn(t.Resolve))        // close a backlog ticket in place; completes finished parents
 	mux.Handle("PUT /api/tickets/{id}/parent", signedIn(t.SetParent))        // sub-tickets; null detaches

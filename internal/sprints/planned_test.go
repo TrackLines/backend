@@ -208,7 +208,7 @@ func TestPlannedSprints(t *testing.T) {
 		t.Fatalf("t-shirt estimate: %v %q", err, estimate(e))
 	}
 	// moving a planned ticket onto its board by hand leaves the plan and keeps the estimate
-	if err := ts.MoveEstimated(ctx, "pl1", e, other.Columns[0].ID, 0, nil, true); err != nil || estimate(e) != "M" {
+	if _, err := ts.MoveEstimated(ctx, "pl1", e, other.Columns[0].ID, 0, nil, true, false); err != nil || estimate(e) != "M" {
 		t.Fatalf("move planned ticket: %v %q", err, estimate(e))
 	}
 	if got, _ := ts.Get(ctx, "pl1", e); got.PlannedSprintID != nil {

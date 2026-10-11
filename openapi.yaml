@@ -744,6 +744,7 @@ paths:
                 name: { type: string, minLength: 1 }
                 estimate_scale: { $ref: '#/components/schemas/EstimateScale' }
                 style: { type: string, enum: [sprints, kanban] }
+                agent_review: { type: boolean, description: "Agents' moves into Done wait for a person's review." }
       responses:
         '204': { description: Board updated. }
         '400': { $ref: '#/components/responses/BadRequest' }
@@ -958,6 +959,26 @@ paths:
                       file: { type: string }
                       line: { type: integer }
         '404': { description: The ticket didn't come from Bugfixes. }
+
+  /tickets/{ticketId}/review:
+    parameters:
+      - $ref: '#/components/parameters/TicketId'
+    post:
+      tags: [Tickets]
+      operationId: reviewTicket
+      summary: Approve an agent's finished ticket (to Done) or send it back (to the first column)
+      description: People only. The comment, if given, is added to the ticket by the reviewer.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [approve], properties: { approve: { type: boolean }, comment: { type: string, maxLength: 10000 } } }
+      responses:
+        '204': { description: Reviewed. }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { description: Agents (API keys) can't review. }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: The ticket isn't waiting for review. }
 
   /tickets/{ticketId}/external:
     parameters:
@@ -1588,6 +1609,9 @@ paths:
       responses:
         '204':
           description: Ticket moved.
+        '200':
+          description: "An agent (API key) moved it into Done on a board with agent review: it waits in the column before Done for a person's review (see /tickets/{ticketId}/review)."
+          content: { application/json: { schema: { type: object, properties: { needs_review: { type: boolean }, message: { type: string } } } } }
         '409':
           description: The target board's sprint ends today, so its scope is locked.
         '400':
@@ -2643,6 +2667,7 @@ components:
         key: { type: string, example: TL-123, description: "The project's key prefix and the ticket's number in the project, assigned on create. For branch names, PR titles and search." }
         external_source: { type: [string, 'null'], description: Where an integration made it (bugfixes); null for our own tickets. }
         external_url: { type: [string, 'null'], description: Link to it there (e.g. the Bugfixes report). }
+        review_requested_at: { type: [string, 'null'], format: date-time, description: "Set while an agent's finished ticket waits for a person's review (in the column before Done)." }
     Column:
       type: object
       properties:
@@ -3015,6 +3040,7 @@ components:
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
         style: { type: string, enum: [sprints, kanban] }
+        agent_review: { type: boolean, description: "Agents' moves into Done wait for a person's review." }
         hidden_done: { type: integer, description: "Kanban only. Done tickets finished more than 14 days ago, left off the board." }
         team_id: { type: [string, 'null'], format: uuid, description: The team whose leaders run this board. }
         sprint: { $ref: '#/components/schemas/Sprint' }
