@@ -133,8 +133,10 @@ func TestBugfixesPanel(t *testing.T) {
 	if bytes.Contains(sealed, []byte("bfx_token")) {
 		t.Fatal("token stored in the clear")
 	}
-	if rec := call(h.Connection, session("admin"), "GET", "", "", bugfixes); rec.Code != 200 || strings.Contains(rec.Body.String(), "bfx_token") || !strings.Contains(rec.Body.String(), `"connected":true`) {
-		t.Fatalf("connection: %d %s", rec.Code, rec.Body)
+	for _, who := range []string{"admin", "member"} { // members see the status too (never the token)
+		if rec := call(h.Connection, session(who), "GET", "", "", bugfixes); rec.Code != 200 || strings.Contains(rec.Body.String(), "bfx_token") || !strings.Contains(rec.Body.String(), `"connected":true`) {
+			t.Fatalf("connection as %s: %d %s", who, rec.Code, rec.Body)
+		}
 	}
 
 	// connected: the report's details; open + seen after the ticket was done = regressed

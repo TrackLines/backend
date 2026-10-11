@@ -1129,7 +1129,7 @@ paths:
     get:
       tags: [Organizations]
       operationId: getIntegration
-      summary: Whether the org is connected to a provider (org admins); never returns the secret
+      summary: Whether the org is connected to a provider (any org member); never returns the secret
       responses:
         '200':
           description: Connection status.

@@ -13,6 +13,7 @@ import (
 	"github.com/bugfixes/go-bugfixes/logs"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/tracklines/backend/internal/auth"
 	"github.com/tracklines/backend/internal/httpx"
 	"github.com/tracklines/backend/internal/organizations"
 	"github.com/tracklines/backend/internal/secrets"
@@ -103,9 +104,11 @@ type System struct {
 }
 
 // Connection: GET /api/integrations/{provider}: whether the org is connected (never the secret).
+// Any org member can see it; connecting and disconnecting are for admins.
 func (h System) Connection(w http.ResponseWriter, r *http.Request) {
-	org, _, ok := h.admins.RequireAdmin(w, r)
-	if !ok {
+	org := auth.OrgID(r.Context())
+	if org == "" {
+		http.Error(w, "sign in to an organization", http.StatusForbidden)
 		return
 	}
 	c, err := h.store.Get(r.Context(), org, r.PathValue("provider"))
