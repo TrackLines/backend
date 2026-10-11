@@ -13,6 +13,17 @@ type Stripe struct {
 	PriceID       string `env:"STRIPE_PRICE_ID"`
 }
 
+// Git is the GitHub App and Bitbucket OAuth consumer; a provider with missing settings stays off.
+type Git struct {
+	GitHubAppID         string `env:"GITHUB_APP_ID"`
+	GitHubAppSlug       string `env:"GITHUB_APP_SLUG"`        // github.com/apps/<slug>
+	GitHubPrivateKey    string `env:"GITHUB_APP_PRIVATE_KEY"` // the app's PEM key (newlines as \n are fine)
+	GitHubWebhookSecret string `env:"GITHUB_WEBHOOK_SECRET"`
+	BitbucketClientID   string `env:"BITBUCKET_CLIENT_ID"`
+	BitbucketSecret     string `env:"BITBUCKET_CLIENT_SECRET"`
+	BitbucketWebhook    string `env:"BITBUCKET_WEBHOOK_SECRET"`
+}
+
 // Project is the tracklines-specific config; go-config owns Postgres, Clerk, Bugfixes, Flags, Local.
 type Project struct {
 	Stripe             Stripe
@@ -20,8 +31,10 @@ type Project struct {
 	ValkeyURL          string `env:"VALKEY_URL" envDefault:"redis://localhost:6379"`
 	RailwayPort        string `env:"PORT"` // Railway injects PORT; overrides HTTP_PORT
 	BugfixesLogLevel   string `env:"BUGFIXES_LOG_LEVEL" envDefault:"info"`
-	ClerkWebhookSecret string `env:"CLERK_WEBHOOK_SECRET"`                // whsec_…; /api/webhooks/clerk answers 503 without it
-	UploadThingToken   string `env:"UPLOADTHING_TOKEN"`                   // ticket attachments; used to delete stored files
+	ClerkWebhookSecret string `env:"CLERK_WEBHOOK_SECRET"`  // whsec_…; /api/webhooks/clerk answers 503 without it
+	UploadThingToken   string `env:"UPLOADTHING_TOKEN"`     // ticket attachments; used to delete stored files
+	SecretKey          string `env:"TRACKLINES_SECRET_KEY"` // 32 bytes base64: seals integration tokens; integrations stay off without it
+	Git                Git
 	RateLimit          int    `env:"API_KEY_RATE_LIMIT" envDefault:"300"` // requests per minute per API key; 0 turns it off
 	ChewedFeedURL      string `env:"CHEWEDFEED_API_URL"`                  // HQ customer sync; off when unset
 	ChewedFeedKey      string `env:"CHEWEDFEED_ENQUIRY_KEY"`              // tracklines project's enquiry key in ChewedFeed

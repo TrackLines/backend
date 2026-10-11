@@ -37,6 +37,7 @@ type ticketInput struct {
 	Priority    string    `json:"priority"` // low | medium | high | urgent; defaults to medium on create
 	Labels      *[]string `json:"labels"`   // optional; omitted = unchanged, [] clears
 	Estimate    *string   `json:"estimate"` // on the board's scale; omitted = unchanged, "" clears
+	External    *External `json:"external"` // backlog create from an API key (e.g. Bugfixes): where it came from
 }
 
 func (in ticketInput) createType() string {
@@ -113,7 +114,7 @@ func writeErr(w http.ResponseWriter, err error) {
 	case errors.Is(err, ErrNotFound):
 		http.Error(w, "not found", http.StatusNotFound)
 		return
-	case errors.Is(err, ErrInvalidType):
+	case errors.Is(err, ErrInvalidType), errors.Is(err, ErrBadPriority), errors.Is(err, ErrBadExternal):
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	case errors.Is(err, ErrOnBoard):
@@ -226,7 +227,7 @@ func (h System) Backlog(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusOK, out)
 }
 
-// PageBacklog: GET /api/projects/{id}/backlog/page?type=&label=a&label=b&page=1&per_page=25.
+// PageBacklog: GET /api/projects/{id}/backlog/page?type=&label=a&priority=high&page=1&per_page=25.
 func (h System) PageBacklog(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	page, ok := intParam(w, q.Get("page"), "page", 1, 0)
@@ -238,7 +239,7 @@ func (h System) PageBacklog(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	org := auth.OrgID(r.Context())
-	out, err := h.store.PageBacklog(r.Context(), org, r.PathValue("id"), q.Get("type"), q["label"], page, perPage)
+	out, err := h.store.PageBacklog(r.Context(), org, r.PathValue("id"), q.Get("type"), q["label"], page, perPage, q["priority"]...)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -274,7 +275,20 @@ func (h System) CreateBacklog(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	org := auth.OrgID(r.Context())
+	if in.External != nil && !auth.ViaAPIKey(r.Context()) {
+		http.Error(w, "external is set by integrations (API keys)", http.StatusForbidden)
+		return
+	}
+	if in.External != nil && !in.External.valid() {
+		writeErr(w, ErrBadExternal)
+		return
+	}
 	t, err := h.store.CreateBacklogAs(r.Context(), org, auth.ActorID(r.Context()), r.PathValue("id"), in.createType(), in.Title, in.Description)
+	if err == nil && in.External != nil {
+		if err = h.store.SetExternal(r.Context(), org, t.ID, in.External); err == nil {
+			t.ExternalSource, t.ExternalURL = &in.External.Source, &in.External.URL
+		}
+	}
 	if err == nil {
 		err = h.applyLabels(r, org, t.ID, in, t)
 	}
@@ -329,6 +343,22 @@ func (h System) ToBacklog(w http.ResponseWriter, r *http.Request) {
 }
 
 // Get returns ticket {id} with its context (project, board, column, sprint) so it can be linked to.
+// GetByKey: GET /api/ticket-keys/{key}, e.g. TL-123.
+func (h System) GetByKey(w http.ResponseWriter, r *http.Request) {
+	org := auth.OrgID(r.Context())
+	id, err := h.store.IDByKey(r.Context(), org, r.PathValue("key"))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	d, err := h.store.Get(r.Context(), org, id)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, d)
+}
+
 func (h System) Get(w http.ResponseWriter, r *http.Request) {
 	org := auth.OrgID(r.Context())
 	d, err := h.store.Get(r.Context(), org, r.PathValue("id"))
@@ -365,6 +395,24 @@ func (h System) SetParent(w http.ResponseWriter, r *http.Request) {
 	}
 	org := auth.OrgID(r.Context())
 	if err := h.store.SetParent(r.Context(), org, r.PathValue("id"), in.ParentID); err != nil {
+		writeErr(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// SetExternal: PUT /api/tickets/{id}/external {source, project, id, url} (null body clears).
+// For integrations (API keys) linking tickets they made earlier, e.g. Bugfixes backfilling reports.
+func (h System) SetExternal(w http.ResponseWriter, r *http.Request) {
+	if !auth.ViaAPIKey(r.Context()) {
+		http.Error(w, "external is set by integrations (API keys)", http.StatusForbidden)
+		return
+	}
+	var in *External
+	if !httpx.Decode(w, r, &in) {
+		return
+	}
+	if err := h.store.SetExternal(r.Context(), auth.OrgID(r.Context()), r.PathValue("id"), in); err != nil {
 		writeErr(w, err)
 		return
 	}

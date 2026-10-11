@@ -72,13 +72,13 @@ func TestPlannedSprints(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Plan(ctx, "pl1", b.ID, 7); err != nil {
+	if _, err := s.Plan(ctx, "pl1", b.ID, 7, ""); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Plan(ctx, "pl1", b.ID, 14); err != nil {
+	if _, err := s.Plan(ctx, "pl1", b.ID, 14, ""); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Plan(ctx, "pl1", b.ID, 14); !errors.Is(err, ErrTooManyPlanned) {
+	if _, err := s.Plan(ctx, "pl1", b.ID, 14, ""); !errors.Is(err, ErrTooManyPlanned) {
 		t.Fatalf("third plan: %v", err)
 	}
 	ps := plans()
@@ -197,7 +197,7 @@ func TestPlannedSprints(t *testing.T) {
 	if err := s.PlanTicket(ctx, "pl1", e, &later, str("8")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Plan(ctx, "pl1", other.ID, 14); err != nil {
+	if _, err := s.Plan(ctx, "pl1", other.ID, 14, ""); err != nil {
 		t.Fatal(err)
 	}
 	op, _ := s.Planned(ctx, "pl1", other.ID)
@@ -239,7 +239,7 @@ func TestPlannedSprints(t *testing.T) {
 	if _, err := db.Exec(ctx, `UPDATE boards SET style = 'kanban' WHERE id = $1`, other.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Plan(ctx, "pl1", other.ID, 7); !errors.Is(err, ErrKanban) {
+	if _, err := s.Plan(ctx, "pl1", other.ID, 7, ""); !errors.Is(err, ErrKanban) {
 		t.Fatalf("kanban: %v", err)
 	}
 }

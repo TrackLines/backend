@@ -562,6 +562,7 @@ paths:
       tags: [Projects]
       operationId: updateProject
       summary: Update a project
+      description: key_prefix (optional) renames every ticket key in the project (TL-123 → TRK-123); 2–6 capital letters or digits starting with a letter; 409 if another project in the org uses it.
       requestBody:
         required: true
         content:
@@ -569,6 +570,7 @@ paths:
             schema: { $ref: '#/components/schemas/ProjectInput' }
       responses:
         '204': { description: Project updated. }
+        '409': { description: key_prefix is used by another project in the organization. }
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
@@ -877,6 +879,282 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '500': { $ref: '#/components/responses/InternalError' }
 
+  /search:
+    get:
+      tags: [Tickets]
+      operationId: searchTickets
+      summary: Search the organization's tickets
+      description: >-
+        Full-text over titles (weighted highest), descriptions and comments. Every word must match, as a prefix, so it works while
+        typing; punctuation is ignored. A ticket key in q (TL-123, case-insensitive) returns just that ticket. Ranked by relevance,
+        then most recently changed. Without q it lists by recent change, filtered. The MCP tool search_tickets maps to this.
+      parameters:
+        - { name: q, in: query, schema: { type: string } }
+        - { name: project, in: query, schema: { type: string, format: uuid } }
+        - { name: board, in: query, schema: { type: string, format: uuid } }
+        - { name: type, in: query, schema: { type: array, items: { type: string, enum: [bug, feature, task] } }, style: form, explode: true, description: Any of. }
+        - { name: priority, in: query, schema: { type: array, items: { type: string, enum: [low, medium, high, urgent] } }, style: form, explode: true, description: Any of. }
+        - { name: label, in: query, schema: { type: array, items: { type: string } }, style: form, explode: true, description: Any of (case-insensitive). }
+        - { name: assignee, in: query, schema: { type: string }, description: "me (the caller), unassigned, or a user id / agent name." }
+        - { name: status, in: query, schema: { type: string, enum: [open, done] } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 50, default: 20 } }
+      responses:
+        '200':
+          description: Matching tickets, best first.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  allOf:
+                    - $ref: '#/components/schemas/Ticket'
+                    - type: object
+                      properties:
+                        project_name: { type: string }
+                        board_id: { type: [string, 'null'], format: uuid, description: Null in the backlog. }
+                        board_name: { type: [string, 'null'] }
+                        column_name: { type: [string, 'null'] }
+                        done: { type: boolean }
+                        snippet: { type: string, description: Where the words matched in the description or a comment; empty when only the title matched. }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /tickets/{ticketId}/bugfixes:
+    parameters:
+      - $ref: '#/components/parameters/TicketId'
+    get:
+      tags: [Tickets]
+      operationId: getTicketBugfixes
+      summary: The Bugfixes panel for a ticket Bugfixes created
+      description: >-
+        The linked crash report's live details, fetched server-side with the org's Bugfixes connection and cached for a
+        minute. regressed is true when the report is open and was seen after the ticket was done. When the org hasn't
+        connected Bugfixes (reason not_connected) or Bugfixes can't be reached (unavailable), available is false but the
+        link is still returned.
+      responses:
+        '200':
+          description: The panel.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  source: { type: string, enum: [bugfixes] }
+                  project: { type: string }
+                  report_id: { type: string }
+                  url: { type: string }
+                  available: { type: boolean }
+                  reason: { type: string, enum: [not_connected, unavailable] }
+                  regressed: { type: boolean }
+                  report:
+                    type: object
+                    properties:
+                      title: { type: string }
+                      occurrences: { type: integer }
+                      status: { type: string, enum: [open, resolved, ignored] }
+                      last_seen: { type: string, format: date-time }
+                      levels: { type: array, items: { type: string } }
+                      file: { type: string }
+                      line: { type: integer }
+        '404': { description: The ticket didn't come from Bugfixes. }
+
+  /tickets/{ticketId}/external:
+    parameters:
+      - $ref: '#/components/parameters/TicketId'
+    put:
+      tags: [Tickets]
+      operationId: setTicketExternal
+      summary: Link a ticket to where an integration made it (API keys only), e.g. a Bugfixes report
+      description: The same object can be sent as `external` when creating a backlog ticket with an API key. A null body clears it.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ExternalRef' }
+      responses:
+        '204': { description: Linked. }
+        '400': { description: Invalid reference (source must be bugfixes; project and id required; url http(s)). }
+        '403': { description: Only integrations (API keys) set references. }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /integrations/{provider}/connect:
+    parameters:
+      - { name: provider, in: path, required: true, schema: { type: string, enum: [github, bitbucket] } }
+    get:
+      tags: [Organizations]
+      operationId: integrationConnectURL
+      summary: Where an org admin goes to install the GitHub App or authorize Bitbucket
+      description: The link carries a sealed state tied to the org (15 minutes). 503 when the provider isn't configured on the server.
+      responses:
+        '200': { description: The link., content: { application/json: { schema: { type: object, properties: { url: { type: string } } } } } }
+        '403': { description: Not a signed-in org admin. }
+        '503': { description: Provider not configured. }
+
+  /integrations/{provider}/complete:
+    parameters:
+      - { name: provider, in: path, required: true, schema: { type: string, enum: [github, bitbucket] } }
+    post:
+      tags: [Organizations]
+      operationId: integrationComplete
+      summary: Finish connecting after the provider sends the admin back
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [state]
+              properties:
+                state: { type: string }
+                installation_id: { type: string, description: GitHub. Checked with the app before it's stored. }
+                code: { type: string, description: Bitbucket OAuth code. }
+      responses:
+        '204': { description: Connected. }
+        '400': { description: The state expired or is for another org. }
+        '403': { description: Not a signed-in org admin. }
+        '502': { description: The provider refused (e.g. not this app's installation, bad code). }
+
+  /integrations/{provider}/repos:
+    parameters:
+      - { name: provider, in: path, required: true, schema: { type: string, enum: [github, bitbucket] } }
+    get:
+      tags: [Organizations]
+      operationId: integrationRepos
+      summary: Repositories the org's connection can see (org admins), first 100
+      responses:
+        '200':
+          description: Repositories.
+          content:
+            application/json:
+              schema: { type: array, items: { type: object, properties: { full_name: { type: string }, default_branch: { type: string }, private: { type: boolean } } } }
+        '409': { description: Not connected. }
+
+  /projects/{projectId}/repos:
+    parameters:
+      - $ref: '#/components/parameters/ProjectId'
+    get:
+      tags: [Projects]
+      operationId: projectRepos
+      summary: Repositories linked to the project
+      responses:
+        '200':
+          description: Linked repositories.
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/ProjectRepo' } }
+    post:
+      tags: [Projects]
+      operationId: linkProjectRepo
+      summary: Link a repository the org's connection can see (org admins); one project per repo in an org
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [provider, full_name], properties: { provider: { type: string, enum: [github, bitbucket] }, full_name: { type: string } } }
+      responses:
+        '201': { description: Linked., content: { application/json: { schema: { $ref: '#/components/schemas/ProjectRepo' } } } }
+        '400': { description: The connection can't see that repository. }
+        '409': { description: Already linked to a project in this org, or not connected. }
+    delete:
+      tags: [Projects]
+      operationId: unlinkProjectRepo
+      summary: Unlink a repository (org admins)
+      parameters:
+        - { name: provider, in: query, required: true, schema: { type: string, enum: [github, bitbucket] } }
+        - { name: full_name, in: query, required: true, schema: { type: string } }
+      responses:
+        '204': { description: Unlinked. }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /webhooks/github:
+    post:
+      tags: [Organizations]
+      operationId: githubWebhook
+      summary: GitHub App webhook (X-Hub-Signature-256 with GITHUB_WEBHOOK_SECRET)
+      description: An uninstalled app disconnects the org. Pull request events link PRs to tickets.
+      security: []
+      responses:
+        '204': { description: Accepted. }
+        '400': { description: Bad signature. }
+        '503': { description: Not configured. }
+
+  /webhooks/bitbucket:
+    post:
+      tags: [Organizations]
+      operationId: bitbucketWebhook
+      summary: Bitbucket repository webhook (X-Hub-Signature with BITBUCKET_WEBHOOK_SECRET)
+      security: []
+      responses:
+        '204': { description: Accepted. }
+        '400': { description: Bad signature. }
+        '503': { description: Not configured. }
+
+  /integrations/{provider}:
+    parameters:
+      - { name: provider, in: path, required: true, schema: { type: string, enum: [bugfixes] } }
+    get:
+      tags: [Organizations]
+      operationId: getIntegration
+      summary: Whether the org is connected to a provider (org admins); never returns the secret
+      responses:
+        '200':
+          description: Connection status.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  provider: { type: string }
+                  connected: { type: boolean }
+                  base_url: { type: string }
+                  updated_by: { type: string }
+                  updated_at: { type: string, format: date-time }
+        '403': { description: Not a signed-in org admin. }
+    put:
+      tags: [Organizations]
+      operationId: connectIntegration
+      summary: Connect the org to a provider (org admins). Bugfixes takes an access token from its settings.
+      description: The token is sealed (AES-GCM) with the server's TRACKLINES_SECRET_KEY before it's stored; 503 when the server has no key.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token]
+              properties:
+                token: { type: string }
+                base_url: { type: string, default: 'https://api.bugfix.es' }
+      responses:
+        '204': { description: Connected. }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { description: Not a signed-in org admin. }
+        '503': { description: Integrations aren't configured on this server. }
+    delete:
+      tags: [Organizations]
+      operationId: disconnectIntegration
+      summary: Disconnect the org from a provider (org admins)
+      responses:
+        '204': { description: Disconnected. }
+        '403': { description: Not a signed-in org admin. }
+
+  /ticket-keys/{key}:
+    get:
+      tags: [Tickets]
+      operationId: getTicketByKey
+      summary: A ticket by its key (e.g. TL-123, case-insensitive), same as GET /tickets/{ticketId}
+      description: MCP tools also accept keys wherever they take a ticket_id, parent_id or ticket_ids.
+      parameters:
+        - { name: key, in: path, required: true, schema: { type: string, example: TL-123 } }
+      responses:
+        '200':
+          description: The ticket with where it lives.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TicketDetail' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /tickets/{ticketId}:
     parameters:
       - $ref: '#/components/parameters/TicketId'
@@ -1032,6 +1310,7 @@ paths:
           in: query
           schema: { type: string, enum: [exclude] }
           description: exclude leaves out tickets waiting on unfinished work.
+        - { name: priority, in: query, schema: { type: array, items: { type: string, enum: [low, medium, high, urgent] } }, style: form, explode: true, description: Any of these priorities. }
       responses:
         '200':
           description: Open tickets.
@@ -1063,8 +1342,9 @@ paths:
       tags: [Tickets]
       operationId: pageBacklog
       summary: One page of the backlog, filtered and ordered by the server
-      description: Ready tickets first, then blocked ones; then by position. `counts` are per type with the label filter applied but not the type filter, for type tabs. The unpaged list stays at /projects/{projectId}/backlog.
+      description: Ready tickets first, then blocked ones; then by position. The `counts` field is per type and respects label and priority filters, but not the type filter, for type tabs. Label counts cover the whole backlog. The unpaged list stays at /projects/{projectId}/backlog.
       parameters:
+        - { name: priority, in: query, schema: { type: array, items: { type: string, enum: [low, medium, high, urgent] } }, style: form, explode: true, description: Any of these priorities; counts follow it. }
         - $ref: '#/components/parameters/ProjectId'
         - { name: type, in: query, schema: { type: string, enum: [bug, feature, task] } }
         - name: label
@@ -1387,6 +1667,7 @@ paths:
               required: [length_days]
               properties:
                 length_days: { type: integer, minimum: 1, maximum: 365 }
+                goal: { type: string, maxLength: 200, description: Optional one-line goal. }
       responses:
         '201':
           description: Sprint started.
@@ -1444,9 +1725,10 @@ paths:
           application/json:
             schema:
               type: object
-              required: [length_days]
+              description: Send length_days and/or goal.
               properties:
                 length_days: { type: integer, minimum: 1, maximum: 365 }
+                goal: { type: string, maxLength: 200, description: '"" clears it.' }
       responses:
         '200':
           description: Updated sprint.
@@ -1518,6 +1800,7 @@ paths:
               required: [length_days]
               properties:
                 length_days: { type: integer, minimum: 1, maximum: 365 }
+                goal: { type: string, maxLength: 200 }
       responses:
         '201':
           description: The board's planned sprints.
@@ -1528,9 +1811,117 @@ paths:
         '403': { description: Not an org admin or the board team's leader. }
         '409': { description: Already 2 planned sprints, or a kanban board. }
 
+  /boards/{boardId}/live:
+    parameters:
+      - $ref: '#/components/parameters/BoardId'
+    get:
+      tags: [Boards]
+      operationId: streamBoardLiveEvents
+      summary: Stream standup and refinement changes for a board
+      description: >-
+        Server-sent events fan out across backend instances through Valkey. Connects with the latest retained event,
+        then streams updates; sends a heartbeat comment every 20 seconds. Events are named `standup`,
+        `standup-ended`, or `refinement`.
+      responses:
+        '200':
+          description: Server-sent event stream.
+          content:
+            text/event-stream:
+              schema: { type: string }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: No active organization in the caller's session or API key. }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { description: Valkey is unavailable. }
+
+  /boards/{boardId}/live/standup:
+    parameters:
+      - $ref: '#/components/parameters/BoardId'
+    get:
+      tags: [Boards]
+      operationId: getLiveStandup
+      summary: Get the current board standup session
+      responses:
+        '200': { description: The active standup session, content: { application/json: { schema: { $ref: '#/components/schemas/LiveStandup' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { description: Valkey is unavailable. }
+    post:
+      tags: [Boards]
+      operationId: startLiveStandup
+      summary: Start or replace the board standup session
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [people]
+              properties:
+                people:
+                  type: array
+                  items:
+                    type: object
+                    required: [id, label]
+                    properties:
+                      id: { type: string }
+                      label: { type: string }
+      responses:
+        '201': { description: Started session, content: { application/json: { schema: { $ref: '#/components/schemas/LiveStandup' } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { description: Valkey is unavailable. }
+
+  /boards/{boardId}/live/standup/action:
+    parameters:
+      - $ref: '#/components/parameters/BoardId'
+    post:
+      tags: [Boards]
+      operationId: actOnLiveStandup
+      summary: Advance, jump, pause, resume, or end the current standup
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [action]
+              properties:
+                action: { type: string, enum: [next, previous, jump, pause, resume, end] }
+                index: { type: integer, description: Required for jump; clamped to the participant list and review turn. }
+      responses:
+        '200': { description: Updated session, content: { application/json: { schema: { $ref: '#/components/schemas/LiveStandup' } } } }
+        '204': { description: Session ended. }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { description: Valkey is unavailable. }
+
   /planned-sprints/{plannedSprintId}:
     parameters:
       - { name: plannedSprintId, in: path, required: true, schema: { type: string, format: uuid } }
+    patch:
+      tags: [Sprints]
+      operationId: updatePlannedSprint
+      summary: Change a planned sprint's length and/or goal (org admins and the board team's leaders)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                length_days: { type: integer, minimum: 1, maximum: 365 }
+                goal: { type: string, maxLength: 200 }
+      responses:
+        '200':
+          description: The board's planned sprints.
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/PlannedSprint' } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { description: Not an org admin or the board team's leader. }
+        '404': { $ref: '#/components/responses/NotFound' }
     delete:
       tags: [Sprints]
       operationId: unplanSprint
@@ -2012,6 +2403,7 @@ components:
       properties:
         name: { type: string, minLength: 1 }
         description: { type: string }
+        key_prefix: { type: string, pattern: '^[A-Z][A-Z0-9]{1,5}$', description: "Update only; lower case is upper-cased. Omitted = unchanged." }
     BoardInput:
       type: object
       required: [name]
@@ -2114,11 +2506,12 @@ components:
         labels: { $ref: '#/components/schemas/Labels' }
     Project:
       type: object
-      required: [id, name, description, created_at, updated_at]
+      required: [id, name, description, key_prefix, created_at, updated_at]
       properties:
         id: { type: string, format: uuid }
         name: { type: string }
         description: { type: string }
+        key_prefix: { type: string, example: TL, description: "Ticket keys are <key_prefix>-<number>. Worked out from the name on create (its capitals, e.g. TrackLines → TL), unique in the org." }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
         boards:
@@ -2185,6 +2578,9 @@ components:
         updated_at: { type: string, format: date-time }
         done_at: { type: [string, 'null'], format: date-time, description: "When it reached its board's Done column or was resolved; null while open." }
         planned_sprint_id: { type: [string, 'null'], format: uuid, description: A backlog ticket planned into a board's upcoming sprint (refinement). }
+        key: { type: string, example: TL-123, description: "The project's key prefix and the ticket's number in the project, assigned on create. For branch names, PR titles and search." }
+        external_source: { type: [string, 'null'], description: Where an integration made it (bugfixes); null for our own tickets. }
+        external_url: { type: [string, 'null'], description: Link to it there (e.g. the Bugfixes report). }
     Column:
       type: object
       properties:
@@ -2227,6 +2623,21 @@ components:
                 properties:
                   at: { type: string, format: date-time }
                   value: { type: number }
+    ProjectRepo:
+      type: object
+      properties:
+        provider: { type: string, enum: [github, bitbucket] }
+        full_name: { type: string, example: acme/shop }
+        default_branch: { type: string }
+        created_at: { type: string, format: date-time }
+    ExternalRef:
+      type: [object, 'null']
+      required: [source, project, id]
+      properties:
+        source: { type: string, enum: [bugfixes] }
+        project: { type: string, description: "The source's project id." }
+        id: { type: string, description: e.g. the Bugfixes report id. }
+        url: { type: string, format: uri }
     PlannedSprint:
       type: object
       properties:
@@ -2235,6 +2646,7 @@ components:
         position: { type: integer, description: 1 = the next sprint }
         number: { type: integer, description: The sprint number it will get }
         length_days: { type: integer }
+        goal: { type: string, maxLength: 200, description: Carried into the sprint when it starts. }
         tickets: { type: array, items: { $ref: '#/components/schemas/Ticket' } }
         capacity:
           type: object
@@ -2249,9 +2661,26 @@ components:
             approved_by: { type: [string, 'null'] }
             approved_at: { type: [string, 'null'], format: date-time }
             needs_approval: { type: boolean, description: Over capacity and not covered by an approval; it won't start until approved or trimmed. }
+    LiveStandup:
+      type: object
+      required: [people, index, spentMs, runningSince, startedBy]
+      properties:
+        people:
+          type: array
+          items:
+            type: object
+            required: [id, label]
+            properties:
+              id: { type: string }
+              label: { type: string }
+        index: { type: integer, description: Current participant; people.length is the clean-board review. }
+        spentMs: { type: integer, format: int64, description: Elapsed time before the current run. }
+        runningSince: { type: [integer, 'null'], format: int64, description: Unix milliseconds when the clock resumed; null while paused. }
+        startedBy: { type: string }
     Sprint:
       type: object
       properties:
+        goal: { type: string, maxLength: 200, description: 'One line the sprint is for; empty = none.' }
         id: { type: string, format: uuid }
         board_id: { type: string, format: uuid }
         number: { type: integer }

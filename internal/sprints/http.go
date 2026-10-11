@@ -10,17 +10,25 @@ import (
 	"github.com/tracklines/backend/internal/auth"
 	"github.com/tracklines/backend/internal/boards"
 	"github.com/tracklines/backend/internal/httpx"
+	"github.com/tracklines/backend/internal/live"
 	"github.com/tracklines/backend/internal/organizations"
+	"github.com/valkey-io/valkey-go"
 )
 
 type System struct {
 	store  Store
 	admins organizations.Admins
+	live   live.System
 }
 
 // NewSystem exposes the sprint handlers; routes are declared in internal/service.go.
 func NewSystem(db *pgxpool.Pool, admins organizations.Admins) System {
 	return System{store: Store{DB: db}, admins: admins}
+}
+
+func (h System) WithLive(vk valkey.Client) System {
+	h.live = live.New(vk, boards.Store{DB: h.store.DB})
+	return h
 }
 
 func writeErr(w http.ResponseWriter, err error) {
@@ -29,7 +37,7 @@ func writeErr(w http.ResponseWriter, err error) {
 		http.Error(w, "not found", http.StatusNotFound)
 	case errors.Is(err, ErrAlreadyOpen), errors.Is(err, ErrKanban), errors.Is(err, ErrTooManyPlanned), errors.Is(err, ErrNotBacklog):
 		http.Error(w, err.Error(), http.StatusConflict)
-	case errors.Is(err, ErrInvalidLength), errors.Is(err, ErrInvalidStart), errors.Is(err, boards.ErrBadEstimate):
+	case errors.Is(err, ErrInvalidLength), errors.Is(err, ErrInvalidStart), errors.Is(err, ErrInvalidGoal), errors.Is(err, boards.ErrBadEstimate):
 		http.Error(w, err.Error(), http.StatusBadRequest)
 	default:
 		logs.Errorf("sprints: %v", err)
@@ -43,12 +51,25 @@ func (h System) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in struct {
-		LengthDays int `json:"length_days"`
+		LengthDays *int    `json:"length_days"`
+		Goal       *string `json:"goal"`
 	}
 	if !httpx.Decode(w, r, &in) {
 		return
 	}
-	sp, err := h.store.UpdateLength(r.Context(), auth.OrgID(r.Context()), r.PathValue("id"), in.LengthDays)
+	if in.LengthDays == nil && in.Goal == nil {
+		http.Error(w, "send length_days and/or goal", http.StatusBadRequest)
+		return
+	}
+	org, id := auth.OrgID(r.Context()), r.PathValue("id")
+	var sp *Sprint
+	var err error
+	if in.LengthDays != nil {
+		sp, err = h.store.UpdateLength(r.Context(), org, id, *in.LengthDays)
+	}
+	if err == nil && in.Goal != nil {
+		sp, err = h.store.SetGoal(r.Context(), org, id, *in.Goal)
+	}
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -62,13 +83,21 @@ func (h System) Start(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in struct {
-		LengthDays int `json:"length_days"`
+		LengthDays int    `json:"length_days"`
+		Goal       string `json:"goal"`
 	}
 	if !httpx.Decode(w, r, &in) {
 		return
 	}
+	if _, err := cleanGoal(in.Goal); err != nil {
+		writeErr(w, err)
+		return
+	}
 	org := auth.OrgID(r.Context())
 	sp, err := h.store.Start(r.Context(), org, r.PathValue("id"), in.LengthDays)
+	if err == nil && in.Goal != "" {
+		sp, err = h.store.SetGoal(r.Context(), org, sp.ID, in.Goal)
+	}
 	if err != nil {
 		writeErr(w, err)
 		return

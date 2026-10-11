@@ -3,7 +3,9 @@ package tickets
 import (
 	"context"
 	"errors"
+	"regexp"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -141,18 +143,23 @@ func (s Store) Backlog(ctx context.Context, owner, projectID, typ string) ([]Tic
 // BacklogPage is one page of a project's backlog plus how many tickets match each type tab.
 type BacklogPage struct {
 	Tickets []Ticket       `json:"tickets"`
-	Counts  map[string]int `json:"counts"` // all, bug, feature, task: label filter applied, type filter not
+	Counts  map[string]int `json:"counts"` // all, bug, feature, task: label and priority filters applied, type filter not
 	Labels  []LabelCount   `json:"labels"` // labels in the whole backlog (no filters), for the label filter
 }
 
 const MaxPerPage = 100
 
-// PageBacklog returns page (1-based) of the backlog filtered by typ ("" = all) and labels (any match,
-// case-insensitive), ready tickets before blocked ones. Backlog stays the unpaged list.
-func (s Store) PageBacklog(ctx context.Context, owner, projectID, typ string, labels []string, page, perPage int) (*BacklogPage, error) {
+// PageBacklog returns page (1-based) of the backlog filtered by typ ("" = all), labels (any match,
+// case-insensitive) and priorities (any of; none = all), ready tickets before blocked ones. Backlog
+// stays the unpaged list.
+func (s Store) PageBacklog(ctx context.Context, owner, projectID, typ string, labels []string, page, perPage int, priorities ...string) (*BacklogPage, error) {
 	if typ != "" && !ValidType(typ) {
 		return nil, ErrInvalidType
 	}
+	if !ValidPriorities(priorities) {
+		return nil, ErrBadPriority
+	}
+	priorities = nonNil(priorities)
 	var ok bool
 	if err := s.DB.QueryRow(ctx, `SELECT true FROM projects WHERE id = $1 AND owner_clerk_id = $2`, projectID, owner).Scan(&ok); err != nil {
 		return nil, notFound(err)
@@ -162,10 +169,11 @@ func (s Store) PageBacklog(ctx context.Context, owner, projectID, typ string, la
 		lower[i] = strings.ToLower(l)
 	}
 	const where = `t.project_id = $1 AND t.board_id IS NULL AND t.resolved_at IS NULL AND (cardinality($2::text[]) = 0 OR EXISTS (
-		SELECT 1 FROM ticket_labels l WHERE l.ticket_id = t.id AND lower(l.label) = ANY($2)))`
+		SELECT 1 FROM ticket_labels l WHERE l.ticket_id = t.id AND lower(l.label) = ANY($2)))
+		AND (cardinality($3::text[]) = 0 OR t.priority::text = ANY($3))`
 
 	out := &BacklogPage{Counts: map[string]int{"all": 0, "bug": 0, "feature": 0, "task": 0}}
-	rows, err := s.DB.Query(ctx, `SELECT t.type::text, count(*) FROM tickets t WHERE `+where+` GROUP BY 1`, projectID, lower)
+	rows, err := s.DB.Query(ctx, `SELECT t.type::text, count(*) FROM tickets t WHERE `+where+` GROUP BY 1`, projectID, lower, priorities)
 	if err != nil {
 		return nil, err
 	}
@@ -195,9 +203,9 @@ func (s Store) PageBacklog(ctx context.Context, owner, projectID, typ string, la
 	}
 
 	rows, err = s.DB.Query(ctx, `SELECT `+boards.TicketCols+` FROM tickets t
-		WHERE `+where+` AND ($3 = '' OR t.type::text = $3)
-		ORDER BY `+boards.TicketBlockedSQL+`, t.position, t.created_at LIMIT $4 OFFSET $5`,
-		projectID, lower, typ, perPage, (page-1)*perPage)
+		WHERE `+where+` AND ($4 = '' OR t.type::text = $4)
+		ORDER BY `+boards.TicketBlockedSQL+`, t.position, t.created_at LIMIT $5 OFFSET $6`,
+		projectID, lower, priorities, typ, perPage, (page-1)*perPage)
 	if err != nil {
 		return nil, err
 	}
@@ -589,4 +597,79 @@ func (s Store) ChildrenFor(ctx context.Context, id string) ([]Child, error) {
 		out = []Child{}
 	}
 	return out, err
+}
+
+// keyPattern is a ticket key, e.g. TL-123 (case-insensitive).
+var keyPattern = regexp.MustCompile(`^(?i)([a-z][a-z0-9]{1,5})-([0-9]+)$`)
+
+// IsKey reports whether s looks like a ticket key rather than an id.
+func IsKey(s string) bool { return keyPattern.MatchString(s) }
+
+// IDByKey resolves a ticket key (TL-123) in the owner's org to the ticket's id.
+func (s Store) IDByKey(ctx context.Context, owner, key string) (string, error) {
+	m := keyPattern.FindStringSubmatch(strings.TrimSpace(key))
+	if m == nil {
+		return "", ErrNotFound
+	}
+	var id string
+	err := s.DB.QueryRow(ctx, `SELECT t.id FROM tickets t JOIN projects p ON p.id = t.project_id
+		WHERE p.owner_clerk_id = $1 AND p.key_prefix = upper($2) AND t.number = $3::int`, owner, m[1], m[2]).Scan(&id)
+	return id, notFound(err)
+}
+
+// External is where a ticket made by another tool came from, e.g. a Bugfixes report.
+type External struct {
+	Source  string `json:"source"`  // bugfixes
+	Project string `json:"project"` // the source's project id
+	ID      string `json:"id"`      // e.g. the report id
+	URL     string `json:"url"`
+}
+
+var ErrBadExternal = errors.New("external needs source (bugfixes), project and id; url must be http(s)")
+
+func (e External) valid() bool {
+	ok := func(s string, max int) bool { return s != "" && len(s) <= max && !strings.ContainsAny(s, "/?# ") }
+	return e.Source == "bugfixes" && ok(e.Project, 64) && ok(e.ID, 64) &&
+		(e.URL == "" || (len(e.URL) <= 500 && (strings.HasPrefix(e.URL, "https://") || strings.HasPrefix(e.URL, "http://"))))
+}
+
+// SetExternal records where ticket id came from (nil clears it).
+func (s Store) SetExternal(ctx context.Context, owner, id string, e *External) error {
+	if e != nil && !e.valid() {
+		return ErrBadExternal
+	}
+	var src, project, ext, url *string
+	if e != nil {
+		src, project, ext, url = &e.Source, &e.Project, &e.ID, &e.URL
+		if e.URL == "" {
+			url = nil
+		}
+	}
+	return exec(s.DB.Exec(ctx, `UPDATE tickets t SET external_source = $3, external_project = $4, external_id = $5, external_url = $6, updated_at = now()
+		FROM projects p WHERE t.id = $1 AND p.id = t.project_id AND p.owner_clerk_id = $2`, id, owner, src, project, ext, url))
+}
+
+// ExternalOf returns where ticket id came from, its done time (if done) and nil when it's our own.
+func (s Store) ExternalOf(ctx context.Context, owner, id string) (*External, *time.Time, error) {
+	var src, project, ext, url *string
+	var done *time.Time
+	err := s.DB.QueryRow(ctx, `SELECT t.external_source, t.external_project, t.external_id, t.external_url,
+			CASE WHEN `+boards.TicketDoneSQL+` THEN COALESCE(t.done_at, t.resolved_at, t.updated_at) END
+		FROM tickets t JOIN projects p ON p.id = t.project_id AND p.owner_clerk_id = $2 WHERE t.id = $1`, id, owner).
+		Scan(&src, &project, &ext, &url, &done)
+	if err != nil {
+		return nil, nil, notFound(err)
+	}
+	if src == nil { // our own ticket: nothing to link to
+		return nil, nil, ErrNotFound
+	}
+	e := &External{Source: *src, Project: deref(project), ID: deref(ext), URL: deref(url)}
+	return e, done, nil
+}
+
+func deref(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
 }

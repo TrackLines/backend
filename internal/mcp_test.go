@@ -99,6 +99,15 @@ func TestMCP(t *testing.T) {
 	if res := call("list_open_tickets", map[string]any{"project_id": pid, "assignee": "unassigned", "blocked": "exclude"}); res.IsError || strings.Contains(text(res), tk.ID) {
 		t.Fatalf("list_open_tickets claimable: %s", text(res))
 	}
+	if res := call("create_backlog_ticket", map[string]any{"project_id": pid, "title": "Urgent backlog", "type": "bug", "priority": "urgent"}); res.IsError {
+		t.Fatalf("create urgent backlog ticket: %s", text(res))
+	}
+	if res := call("create_backlog_ticket", map[string]any{"project_id": pid, "title": "Low backlog", "priority": "low"}); res.IsError {
+		t.Fatalf("create low backlog ticket: %s", text(res))
+	}
+	if res := call("list_backlog", map[string]any{"project_id": pid, "priority": []any{"urgent"}, "page": 1, "per_page": 25}); res.IsError || !strings.Contains(text(res), "Urgent backlog") || strings.Contains(text(res), "Low backlog") {
+		t.Fatalf("list_backlog priority: %s", text(res))
+	}
 	// update with only a title keeps the description
 	if res := call("update_ticket", map[string]any{"ticket_id": tk.ID, "title": "Fixed", "priority": "high"}); res.IsError {
 		t.Fatalf("update: %s", text(res))
@@ -125,6 +134,16 @@ func TestMCP(t *testing.T) {
 		t.Fatalf("resolving a board ticket should be refused: %s", text(res))
 	}
 	// errors come back as tool errors with the REST status, and org scoping holds
+	// tools take ticket keys (TL-123) as well as ids
+	if res := call("get_ticket", map[string]any{"ticket_id": tk.Key}); res.IsError || !strings.Contains(text(res), tk.ID) {
+		t.Fatalf("get_ticket by key %s: %s", tk.Key, text(res))
+	}
+	if res := call("search_tickets", map[string]any{"q": tk.Key, "priority": []any{"low", "medium", "high", "urgent"}}); res.IsError || !strings.Contains(text(res), tk.ID) {
+		t.Fatalf("search_tickets: %s", text(res))
+	}
+	if res := call("get_ticket", map[string]any{"ticket_id": "NOPE-99999"}); !res.IsError || !strings.Contains(text(res), "no ticket NOPE-99999") {
+		t.Fatalf("unknown key: %s", text(res))
+	}
 	if res := call("get_ticket", map[string]any{"ticket_id": "00000000-0000-0000-0000-000000000000"}); !res.IsError || !strings.Contains(text(res), "404") {
 		t.Fatalf("missing ticket: %+v", res)
 	}

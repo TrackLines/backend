@@ -26,6 +26,10 @@ func writeErr(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, ErrNotFound):
 		http.Error(w, "not found", http.StatusNotFound)
+	case errors.Is(err, ErrBadKeyPrefix):
+		http.Error(w, err.Error(), http.StatusBadRequest)
+	case errors.Is(err, ErrKeyPrefixTaken):
+		http.Error(w, err.Error(), http.StatusConflict)
 	case errors.Is(err, ErrLimit):
 		http.Error(w, "free plan allows 1 project — upgrade for unlimited", http.StatusPaymentRequired)
 	default:
@@ -35,8 +39,9 @@ func writeErr(w http.ResponseWriter, err error) {
 }
 
 type projectInput struct {
-	Name        string `json:"name"`
-	Description string `json:"description"`
+	Name        string  `json:"name"`
+	Description string  `json:"description"`
+	KeyPrefix   *string `json:"key_prefix"` // update only: omitted = unchanged
 }
 
 func (in *projectInput) valid(w http.ResponseWriter) bool {
@@ -93,7 +98,11 @@ func (h System) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	org := auth.OrgID(r.Context())
-	if err := h.store.Update(r.Context(), r.PathValue("id"), org, in.Name, in.Description); err != nil {
+	err := h.store.Update(r.Context(), r.PathValue("id"), org, in.Name, in.Description)
+	if err == nil && in.KeyPrefix != nil {
+		err = h.store.SetKeyPrefix(r.Context(), r.PathValue("id"), org, strings.ToUpper(strings.TrimSpace(*in.KeyPrefix)))
+	}
+	if err != nil {
 		writeErr(w, err)
 		return
 	}

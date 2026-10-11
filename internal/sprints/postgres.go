@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/bugfixes/go-bugfixes/logs"
@@ -19,6 +20,7 @@ var (
 	ErrInvalidLength = errors.New("length_days must be between 1 and 365")
 	ErrInvalidStart  = errors.New("next_starts_at must be in the future")
 	ErrKanban        = errors.New("kanban boards don't run sprints")
+	ErrInvalidGoal   = errors.New("goal must be at most 200 characters")
 )
 
 type Sprint = boards.Sprint
@@ -165,10 +167,14 @@ func closeSprint(ctx context.Context, tx pgx.Tx, id string, options CloseOptions
 	if plan != nil && options.NextLengthDays == 0 {
 		options.NextLengthDays = plan.LengthDays
 	}
-	next, err := boards.ScanSprint(tx.QueryRow(ctx, `INSERT INTO sprints (board_id, number, length_days, starts_at, ends_at)
+	goal := "" // a promoted plan brings its goal; otherwise the next sprint starts without one
+	if plan != nil {
+		goal = plan.Goal
+	}
+	next, err := boards.ScanSprint(tx.QueryRow(ctx, `INSERT INTO sprints (board_id, number, length_days, starts_at, ends_at, goal)
 		SELECT board_id, number + 1, COALESCE(NULLIF($2, 0), length_days), COALESCE($3::timestamptz, now()),
-			COALESCE($3::timestamptz, now()) + make_interval(days => COALESCE(NULLIF($2, 0), length_days))
-		FROM sprints WHERE id = $1 RETURNING `+boards.SprintCols, id, options.NextLengthDays, options.NextStartsAt))
+			COALESCE($3::timestamptz, now()) + make_interval(days => COALESCE(NULLIF($2, 0), length_days)), $4
+		FROM sprints WHERE id = $1 RETURNING `+boards.SprintCols, id, options.NextLengthDays, options.NextStartsAt, goal))
 	if err != nil {
 		return Sprint{}, err
 	}
@@ -219,7 +225,7 @@ func (s Store) RunAutoClose(ctx context.Context, every time.Duration) {
 	t := time.NewTicker(every)
 	defer t.Stop()
 	for {
-		if n, err := s.AutoClose(ctx); err != nil {
+		if n, err := s.AutoClose(ctx); err != nil && ctx.Err() == nil { // shutting down isn't an error
 			logs.Errorf("sprints: auto-close: %v", err)
 		} else if n > 0 {
 			logs.Logf("sprints: auto-closed %d overdue sprint(s)", n)
@@ -230,4 +236,29 @@ func (s Store) RunAutoClose(ctx context.Context, every time.Duration) {
 		case <-t.C:
 		}
 	}
+}
+
+// cleanGoal trims a goal and checks its length (one line, ≤ 200 characters).
+func cleanGoal(goal string) (string, error) {
+	goal = strings.Join(strings.Fields(goal), " ")
+	if len([]rune(goal)) > 200 {
+		return "", ErrInvalidGoal
+	}
+	return goal, nil
+}
+
+// SetGoal sets ("" clears) the goal of the owner's open or scheduled sprint.
+func (s Store) SetGoal(ctx context.Context, owner, sprintID, goal string) (*Sprint, error) {
+	goal, err := cleanGoal(goal)
+	if err != nil {
+		return nil, err
+	}
+	sp, err := boards.ScanSprint(s.DB.QueryRow(ctx, `UPDATE sprints sp SET goal = $3
+		WHERE sp.id = $1 AND sp.closed_at IS NULL AND EXISTS (
+			SELECT 1 FROM boards b JOIN projects p ON p.id = b.project_id WHERE b.id = sp.board_id AND p.owner_clerk_id = $2)
+		RETURNING `+boards.SprintCols, sprintID, owner, goal))
+	if err != nil {
+		return nil, notFound(err)
+	}
+	return &sp, nil
 }

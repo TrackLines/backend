@@ -3,6 +3,7 @@ package projects
 import (
 	"context"
 	"errors"
+	"regexp"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -21,6 +22,7 @@ type Project struct {
 	ID          string             `json:"id"`
 	Name        string             `json:"name"`
 	Description string             `json:"description"`
+	KeyPrefix   string             `json:"key_prefix"` // tickets are <prefix>-<number>, e.g. TL-123
 	CreatedAt   string             `json:"created_at"`
 	UpdatedAt   string             `json:"updated_at"`
 	Boards      []boards.Board     `json:"boards,omitempty"`
@@ -42,13 +44,13 @@ type Stats struct {
 
 type Store struct{ DB *pgxpool.Pool }
 
-const cols = `id, name, description,
+const cols = `id, name, description, key_prefix,
 	to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
 	to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')`
 
 func scan(row pgx.Row) (Project, error) {
 	var p Project
-	err := row.Scan(&p.ID, &p.Name, &p.Description, &p.CreatedAt, &p.UpdatedAt)
+	err := row.Scan(&p.ID, &p.Name, &p.Description, &p.KeyPrefix, &p.CreatedAt, &p.UpdatedAt)
 	return p, notFound(err)
 }
 
@@ -108,7 +110,7 @@ func (s Store) List(ctx context.Context, owner string) ([]Project, error) {
 	}
 	out, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (Project, error) {
 		p, st := Project{}, Stats{}
-		err := row.Scan(&p.ID, &p.Name, &p.Description, &p.CreatedAt, &p.UpdatedAt,
+		err := row.Scan(&p.ID, &p.Name, &p.Description, &p.KeyPrefix, &p.CreatedAt, &p.UpdatedAt,
 			&st.Boards, &st.Roadmaps, &st.Open, &st.Done, &st.Backlog, &st.Urgent, &st.Active)
 		p.Stats = &st
 		return p, err
@@ -138,6 +140,27 @@ func (s Store) Update(ctx context.Context, id, owner, name, desc string) error {
 	return exec(s.DB.Exec(ctx, `UPDATE projects SET name = $3, description = $4, updated_at = now()
 		WHERE id = $1 AND owner_clerk_id = $2`, id, owner, name, desc))
 }
+
+var (
+	ErrBadKeyPrefix   = errors.New("key prefix must be 2–6 capital letters or digits, starting with a letter")
+	ErrKeyPrefixTaken = errors.New("another project in this organization already uses that key prefix")
+)
+
+// SetKeyPrefix renames the project's ticket keys (TL-123 → TRK-123). Old keys in branch names or
+// PR titles stop matching. ponytail: no alias history; add one if renames turn out common.
+func (s Store) SetKeyPrefix(ctx context.Context, id, owner, prefix string) error {
+	if !keyPrefix.MatchString(prefix) {
+		return ErrBadKeyPrefix
+	}
+	err := exec(s.DB.Exec(ctx, `UPDATE projects SET key_prefix = $3, updated_at = now() WHERE id = $1 AND owner_clerk_id = $2`, id, owner, prefix))
+	var pg *pgconn.PgError
+	if errors.As(err, &pg) && pg.Code == "23505" {
+		return ErrKeyPrefixTaken
+	}
+	return err
+}
+
+var keyPrefix = regexp.MustCompile(`^[A-Z][A-Z0-9]{1,5}$`) // same as projects_key_prefix_format
 
 // Delete removes the project and (cascade) its boards, tickets and roadmaps.
 func (s Store) Delete(ctx context.Context, id, owner string) error {

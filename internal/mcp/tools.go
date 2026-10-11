@@ -8,7 +8,12 @@ import (
 )
 
 func str(desc string) map[string]any { return map[string]any{"type": "string", "description": desc} }
-func id(what string) map[string]any  { return str(what + " UUID") }
+func id(what string) map[string]any {
+	if what == "Ticket" || what == "Parent ticket" {
+		return str(what + " UUID or key (e.g. TL-123)")
+	}
+	return str(what + " UUID")
+}
 
 var (
 	ticketType = map[string]any{"type": "string", "enum": []string{"bug", "feature", "task"}}
@@ -16,6 +21,7 @@ var (
 	labels     = map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Free-form labels; [] clears"}
 	estimate   = str("Estimate on the board's scale (see the board's estimate_scale); \"\" clears")
 	position   = map[string]any{"type": "integer", "minimum": 0, "description": "0 = top of the column"}
+	goal       = map[string]any{"type": "string", "maxLength": 200, "description": "One line the sprint is for"}
 )
 
 // tools is everything a bot can do over MCP. Org administration, API keys, billing and editing
@@ -30,9 +36,10 @@ var tools = []tool{
 		method: "GET", path: "/api/projects/{project_id}", props: map[string]any{"project_id": id("Project")}, required: []string{"project_id"}, readOnly: true},
 	{name: "get_board", title: "Get board", description: "A board with its columns (in order; the last is Done) and their tickets, plus its open sprint, style and estimate scale.",
 		method: "GET", path: "/api/boards/{board_id}", props: map[string]any{"board_id": id("Board")}, required: []string{"board_id"}, readOnly: true},
-	{name: "list_backlog", title: "List backlog", description: "A page of a project's backlog (tickets not on a board), blocked tickets last, with per-type counts and label counts.",
-		method: "GET", path: "/api/projects/{project_id}/backlog/page", query: []string{"type", "label", "page", "per_page"},
+	{name: "list_backlog", title: "List backlog", description: "A page of a project's backlog (tickets not on a board), optionally filtered by type, label, and priority. Blocked tickets last; per-type counts respect label and priority filters, while label counts cover the whole backlog.",
+		method: "GET", path: "/api/projects/{project_id}/backlog/page", query: []string{"type", "label", "priority", "page", "per_page"},
 		props: map[string]any{"project_id": id("Project"), "type": ticketType,
+			"priority": map[string]any{"type": "array", "items": priority, "description": "Only tickets with any of these priorities"},
 			"label":    map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Only tickets with any of these labels"},
 			"page":     map[string]any{"type": "integer", "minimum": 1},
 			"per_page": map[string]any{"type": "integer", "minimum": 1, "maximum": 100}},
@@ -42,11 +49,28 @@ var tools = []tool{
 		"out-of-sprint tickets follow, ordered by priority urgent→low, then on a board before the backlog, then oldest). " +
 		"in_sprint marks tickets in their board's open sprint. " +
 		"Use assignee=unassigned and blocked=exclude for claimable work, or assignee=me for what you hold; then get_ticket for details.",
-		method: "GET", path: "/api/projects/{project_id}/open-tickets", query: []string{"assignee", "blocked"},
+		method: "GET", path: "/api/projects/{project_id}/open-tickets", query: []string{"assignee", "blocked", "priority"},
 		props: map[string]any{"project_id": id("Project"),
 			"assignee": map[string]any{"type": "string", "enum": []string{"unassigned", "me"}, "description": "unassigned, or me (the caller's agent name / user id); omit for everyone"},
-			"blocked":  map[string]any{"type": "string", "enum": []string{"exclude"}, "description": "exclude leaves out tickets waiting on unfinished work"}},
+			"blocked":  map[string]any{"type": "string", "enum": []string{"exclude"}, "description": "exclude leaves out tickets waiting on unfinished work"},
+			"priority": map[string]any{"type": "array", "items": priority, "description": "Only tickets with any of these priorities"}},
 		required: []string{"project_id"}, readOnly: true},
+	{name: "search_tickets", title: "Search tickets", description: "Find tickets in the caller's organization by words in their title, description or comments " +
+		"(every word, matched as a prefix), or by key (TL-123, found exactly). Ranked by relevance, then most recently changed; with no q it just filters. " +
+		"Each result says where the ticket lives (project, board/column or backlog) and whether it's done.",
+		method: "GET", path: "/api/search", query: []string{"q", "project", "board", "type", "priority", "label", "assignee", "status", "limit"},
+		props: map[string]any{"q": str("Words or a ticket key"), "project": id("Project"), "board": id("Board"),
+			"type":     map[string]any{"type": "array", "items": ticketType, "description": "Any of these types"},
+			"priority": map[string]any{"type": "array", "items": priority, "description": "Any of these priorities"},
+			"label":    map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Any of these labels"},
+			"assignee": str("me, unassigned, or a user id / agent name"),
+			"status":   map[string]any{"type": "string", "enum": []string{"open", "done"}},
+			"limit":    map[string]any{"type": "integer", "minimum": 1, "maximum": 50}},
+		readOnly: true},
+	{name: "get_ticket_bugfixes", title: "Get ticket's Bugfixes report", description: "For a ticket Bugfixes created: its crash report's live details " +
+		"(title, occurrences, status, last seen, levels, file:line, link) and whether it regressed (seen again after the ticket was done). " +
+		"404 for tickets that didn't come from Bugfixes; available=false when the org hasn't connected Bugfixes or it's unreachable.",
+		method: "GET", path: "/api/tickets/{ticket_id}/bugfixes", props: map[string]any{"ticket_id": id("Ticket")}, required: []string{"ticket_id"}, readOnly: true},
 	{name: "get_ticket", title: "Get ticket", description: "A ticket with where it lives (project, board, column, sprint), its blockers, sub-tickets and parent.",
 		method: "GET", path: "/api/tickets/{ticket_id}", props: map[string]any{"ticket_id": id("Ticket")}, required: []string{"ticket_id"}, readOnly: true},
 	{name: "list_comments", title: "List comments", description: "A ticket's comments, oldest first.",
@@ -113,12 +137,12 @@ var tools = []tool{
 		method: "DELETE", path: "/api/tickets/{ticket_id}", props: map[string]any{"ticket_id": id("Ticket")}, required: []string{"ticket_id"}, destructive: true},
 
 	// sprints
-	{name: "start_sprint", title: "Start sprint", description: "Open a sprint on a (non-kanban) board; tickets already on it join.",
-		method: "POST", path: "/api/boards/{board_id}/sprints", body: []string{"length_days"},
-		props: map[string]any{"board_id": id("Board"), "length_days": map[string]any{"type": "integer", "minimum": 1, "maximum": 365}}, required: []string{"board_id", "length_days"}},
-	{name: "update_sprint_length", title: "Change sprint length", description: "Change an open or scheduled sprint's length in days; its start date stays fixed.",
-		method: "PATCH", path: "/api/sprints/{sprint_id}", body: []string{"length_days"},
-		props: map[string]any{"sprint_id": id("Sprint"), "length_days": map[string]any{"type": "integer", "minimum": 1, "maximum": 365}}, required: []string{"sprint_id", "length_days"}},
+	{name: "start_sprint", title: "Start sprint", description: "Open a sprint on a (non-kanban) board, optionally with a one-line goal; tickets already on it join.",
+		method: "POST", path: "/api/boards/{board_id}/sprints", body: []string{"length_days", "goal"},
+		props: map[string]any{"board_id": id("Board"), "length_days": map[string]any{"type": "integer", "minimum": 1, "maximum": 365}, "goal": goal}, required: []string{"board_id", "length_days"}},
+	{name: "update_sprint_length", title: "Change sprint length or goal", description: "Change an open or scheduled sprint's length in days (its start date stays fixed) and/or its goal (\"\" clears).",
+		method: "PATCH", path: "/api/sprints/{sprint_id}", body: []string{"length_days", "goal"},
+		props: map[string]any{"sprint_id": id("Sprint"), "length_days": map[string]any{"type": "integer", "minimum": 1, "maximum": 365}, "goal": goal}, required: []string{"sprint_id"}},
 	{name: "close_sprint", title: "Close sprint", description: "Close an open sprint and carry unfinished tickets forward. Optionally set next_length_days and next_starts_at (RFC3339); by default the next sprint starts now with the same length.",
 		method: "POST", path: "/api/sprints/{sprint_id}/close", body: []string{"next_length_days", "next_starts_at"},
 		props: map[string]any{"sprint_id": id("Sprint"), "next_length_days": map[string]any{"type": "integer", "minimum": 1, "maximum": 365}, "next_starts_at": map[string]any{"type": "string", "format": "date-time"}}, required: []string{"sprint_id"}},
@@ -127,9 +151,12 @@ var tools = []tool{
 	{name: "list_planned_sprints", title: "List planned sprints", description: "A board's planned sprints (up to 2, after the current one), with their tickets and capacity: " +
 		"velocity (average of the last 3 closed sprints), cap (velocity + 10%), used, unestimated, and whether it's over and needs approval.",
 		method: "GET", path: "/api/boards/{board_id}/planned-sprints", props: map[string]any{"board_id": id("Board")}, required: []string{"board_id"}, readOnly: true},
-	{name: "plan_sprint", title: "Plan a sprint", description: "Add a planned sprint after the board's current (and any planned) sprint; at most 2. Org admins and the board team's leaders.",
-		method: "POST", path: "/api/boards/{board_id}/planned-sprints", body: []string{"length_days"},
-		props: map[string]any{"board_id": id("Board"), "length_days": map[string]any{"type": "integer", "minimum": 1, "maximum": 365}}, required: []string{"board_id", "length_days"}},
+	{name: "plan_sprint", title: "Plan a sprint", description: "Add a planned sprint after the board's current (and any planned) sprint, optionally with a goal; at most 2. Org admins and the board team's leaders.",
+		method: "POST", path: "/api/boards/{board_id}/planned-sprints", body: []string{"length_days", "goal"},
+		props: map[string]any{"board_id": id("Board"), "length_days": map[string]any{"type": "integer", "minimum": 1, "maximum": 365}, "goal": goal}, required: []string{"board_id", "length_days"}},
+	{name: "update_planned_sprint", title: "Update planned sprint", description: "Change a planned sprint's length and/or goal; the goal carries into the sprint when it starts. Org admins and the board team's leaders.",
+		method: "PATCH", path: "/api/planned-sprints/{planned_sprint_id}", body: []string{"length_days", "goal"},
+		props: map[string]any{"planned_sprint_id": id("Planned sprint"), "length_days": map[string]any{"type": "integer", "minimum": 1, "maximum": 365}, "goal": goal}, required: []string{"planned_sprint_id"}},
 	{name: "plan_ticket", title: "Plan ticket into a sprint", description: "Put a backlog ticket into a planned sprint (it stays in the backlog until that sprint starts), sized with estimate " +
 		"on that board's scale; planned_sprint_id null takes it out. Going over capacity is allowed but the sprint then needs approval before it can start.",
 		method: "PUT", path: "/api/tickets/{ticket_id}/planned-sprint", body: []string{"planned_sprint_id", "estimate"},

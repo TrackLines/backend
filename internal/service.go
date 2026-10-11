@@ -27,12 +27,15 @@ import (
 	"github.com/tracklines/backend/internal/comments"
 	"github.com/tracklines/backend/internal/config"
 	"github.com/tracklines/backend/internal/httpx"
+	"github.com/tracklines/backend/internal/integrations"
 	"github.com/tracklines/backend/internal/invitations"
+	"github.com/tracklines/backend/internal/live"
 	"github.com/tracklines/backend/internal/mcp"
 	"github.com/tracklines/backend/internal/organizations"
 	"github.com/tracklines/backend/internal/projects"
 	"github.com/tracklines/backend/internal/ratelimit"
 	"github.com/tracklines/backend/internal/roadmaps"
+	"github.com/tracklines/backend/internal/secrets"
 	"github.com/tracklines/backend/internal/sprints"
 	"github.com/tracklines/backend/internal/teams"
 	"github.com/tracklines/backend/internal/tickets"
@@ -56,9 +59,13 @@ func New(cfg *ConfigBuilder.Config, db *pgxpool.Pool, vk valkey.Client, fl *goFl
 }
 
 func (s *Service) Start() error {
+	// one shutdown signal for the server and background work, so auto-close stops before main
+	// closes the database pool (it used to tick once more and log "closed pool" on every deploy)
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
 	// overdue sprints close themselves (manual close is POST /api/sprints/{id}/close)
-	go sprints.Store{DB: s.DB}.RunAutoClose(context.Background(), time.Minute)
-	return s.serve(s.Handler())
+	go sprints.Store{DB: s.DB}.RunAutoClose(ctx, time.Minute)
+	return s.serve(ctx, s.Handler())
 }
 
 // Handler is the whole API: routes plus the auth, logging and CORS middleware.
@@ -127,6 +134,31 @@ func (s *Service) Handler() http.Handler {
 	t := tickets.NewSystem(s.DB).CachingMembers(members)
 	mux.Handle("POST /api/columns/{id}/tickets", signedIn(t.Create))
 	mux.Handle("GET /api/tickets/{id}", signedIn(t.Get)) // one ticket + where it lives (deep links)
+	mux.Handle("GET /api/search", signedIn(t.Search))    // full-text over titles, descriptions, comments; exact keys first
+	mux.Handle("GET /api/ticket-keys/{key}", signedIn(t.GetByKey))
+	mux.Handle("PUT /api/tickets/{id}/external", signedIn(t.SetExternal)) // integrations link what they made (API keys only)
+	// Integrations: an org connects other tools (Bugfixes now); tickets they made show live details
+	box, err := secrets.New(config.Get(s.Config).SecretKey)
+	if err != nil {
+		logs.Errorf("integrations disabled: %v", err)
+	}
+	gc := config.Get(s.Config).Git
+	in := integrations.NewSystem(s.DB, box, s.Valkey, o.AdminModel(), integrations.Git{
+		GitHubAppID: gc.GitHubAppID, GitHubAppSlug: gc.GitHubAppSlug, GitHubPrivateKey: gc.GitHubPrivateKey,
+		BitbucketClientID: gc.BitbucketClientID, BitbucketSecret: gc.BitbucketSecret})
+	mux.Handle("GET /api/integrations/{provider}", signedIn(in.Connection)) // connected or not; never the secret
+	mux.Handle("PUT /api/integrations/{provider}", signedIn(in.Connect))    // org admins
+	mux.Handle("DELETE /api/integrations/{provider}", signedIn(in.Disconnect))
+	mux.Handle("GET /api/tickets/{id}/bugfixes", signedIn(in.TicketReport)) // the Bugfixes panel
+	// GitHub (App) and Bitbucket (OAuth): org admins connect, then link repos to projects
+	mux.Handle("GET /api/integrations/{provider}/connect", signedIn(in.ConnectURL)) // where to install/authorize
+	mux.Handle("POST /api/integrations/{provider}/complete", signedIn(in.Complete)) // back from the provider
+	mux.Handle("GET /api/integrations/{provider}/repos", signedIn(in.ListRepos))
+	mux.Handle("GET /api/projects/{id}/repos", signedIn(in.ProjectRepos))
+	mux.Handle("POST /api/projects/{id}/repos", signedIn(in.LinkRepo))
+	mux.Handle("DELETE /api/projects/{id}/repos", signedIn(in.UnlinkRepo)) // ?provider=&full_name=
+	mux.HandleFunc("POST /api/webhooks/github", in.GitHubWebhook(gc.GitHubWebhookSecret))
+	mux.HandleFunc("POST /api/webhooks/bitbucket", in.BitbucketWebhook(gc.BitbucketWebhook)) // the same, by key (TL-123)
 	mux.Handle("PATCH /api/tickets/{id}", signedIn(t.Update))
 	mux.Handle("POST /api/tickets/{id}/claim", signedIn(t.Claim))
 	mux.Handle("POST /api/tickets/{id}/release", signedIn(t.Release))
@@ -159,16 +191,22 @@ func (s *Service) Handler() http.Handler {
 	mux.Handle("GET /api/projects/{id}/labels", signedIn(t.ProjectLabels)) // labels in use, for suggestions
 
 	// Sprints — per team board; closing opens the next and carries unfinished tickets over
-	sp := sprints.NewSystem(s.DB, o.AdminModel())
+	sp := sprints.NewSystem(s.DB, o.AdminModel()).WithLive(s.Valkey)
+	lv := live.New(s.Valkey, boards.Store{DB: s.DB})
+	mux.Handle("POST /api/boards/{id}/live/standup", signedIn(lv.Start))
+	mux.Handle("GET /api/boards/{id}/live/standup", signedIn(lv.Get))
+	mux.Handle("POST /api/boards/{id}/live/standup/action", signedIn(lv.Act))
+	mux.Handle("GET /api/boards/{id}/live", signedIn(lv.Stream))
 	mux.Handle("GET /api/boards/{id}/sprints", signedIn(sp.List))
 	mux.Handle("POST /api/boards/{id}/sprints", signedIn(sp.Start))
 	mux.Handle("GET /api/boards/{id}/velocity", signedIn(sp.Velocity)) // per closed sprint + open sprint burn
 	mux.Handle("GET /api/sprints/{id}", signedIn(sp.Get))              // read-only: burn data and tickets
-	mux.Handle("PATCH /api/sprints/{id}", signedIn(sp.Update))         // change an open sprint's length
+	mux.Handle("PATCH /api/sprints/{id}", signedIn(sp.Update))         // change an open sprint's length and/or goal
 	mux.Handle("POST /api/sprints/{id}/close", signedIn(sp.Close))
 	// Refinement: up to 2 planned sprints per board; backlog tickets are planned and sized into them
 	mux.Handle("GET /api/boards/{id}/planned-sprints", signedIn(sp.ListPlanned)) // with tickets and capacity (velocity + 10%)
 	mux.Handle("POST /api/boards/{id}/planned-sprints", signedIn(sp.Plan))
+	mux.Handle("PATCH /api/planned-sprints/{id}", signedIn(sp.UpdatePlanned)) // length and/or goal
 	mux.Handle("DELETE /api/planned-sprints/{id}", signedIn(sp.Unplan))
 	mux.Handle("POST /api/planned-sprints/{id}/approve", signedIn(sp.Approve)) // accept the total over capacity
 	mux.Handle("PUT /api/tickets/{id}/planned-sprint", signedIn(sp.PlanTicket))
@@ -229,15 +267,14 @@ func (s *Service) health(w http.ResponseWriter, r *http.Request) {
 }
 
 // serve runs until SIGINT/SIGTERM, then drains in-flight requests.
-func (s *Service) serve(h http.Handler) error {
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
+func (s *Service) serve(ctx context.Context, h http.Handler) error {
 	srv := &http.Server{
 		Addr:              ":" + s.Port,
 		Handler:           h,
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       10 * time.Second,
-		WriteTimeout:      10 * time.Second,
+		// SSE connections stay open; per-response write deadlines would close every live view.
+		WriteTimeout: 0,
 	}
 	go func() {
 		<-ctx.Done()

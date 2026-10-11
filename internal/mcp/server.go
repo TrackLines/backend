@@ -15,6 +15,7 @@ import (
 	"strings"
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/tracklines/backend/internal/tickets"
 )
 
 // tool maps one MCP tool onto a REST route. {name} placeholders in path are filled from the
@@ -39,7 +40,8 @@ func Handler(api http.Handler, version string) http.Handler {
 			Instructions: "TrackLines boards, backlog and tickets. Work is organised as projects → boards (one per team) → columns → tickets; " +
 				"the last column of a board is Done. Typical flow: list_projects, list_open_tickets, claim_ticket, move_ticket, add_comment. " +
 				"Work like a member of the team: while a sprint is open, only pick tickets in it (in_sprint=true in list_open_tickets), and fix bugs before feature/task tickets in that sprint. " +
-				"Don't start backlog or out-of-sprint tickets unless no sprint ticket is claimable or the user asks for that ticket.",
+				"Don't start backlog or out-of-sprint tickets unless no sprint ticket is claimable or the user asks for that ticket. " +
+				"Tickets have keys like TL-123 (project prefix + number); any ticket_id argument takes a key or a UUID.",
 		})
 		call := requester(api, r.Header)
 		for _, t := range tools {
@@ -98,6 +100,9 @@ func (t tool) handler(call caller) sdk.ToolHandler {
 			if v, ok := args[name]; !ok || v == nil || v == "" {
 				return failed(name + " is required"), nil
 			}
+		}
+		if err := resolveKeys(ctx, call, args); err != nil {
+			return failed(err.Error()), nil
 		}
 		if t.prepare != nil {
 			if err := t.prepare(ctx, call, args); err != nil {
@@ -173,4 +178,42 @@ func (t tool) url(args map[string]any) (string, error) {
 
 func failed(msg string) *sdk.CallToolResult {
 	return &sdk.CallToolResult{IsError: true, Content: []sdk.Content{&sdk.TextContent{Text: msg}}}
+}
+
+// resolveKeys lets every tool take ticket keys (TL-123) wherever it takes ticket ids: ticket_id,
+// parent_id and ticket_ids are swapped for ids through GET /api/ticket-keys/{key}.
+func resolveKeys(ctx context.Context, call caller, args map[string]any) error {
+	resolve := func(v any) (any, error) {
+		key, ok := v.(string)
+		if !ok || !tickets.IsKey(key) {
+			return v, nil
+		}
+		status, out := call(ctx, http.MethodGet, "/api/ticket-keys/"+url.PathEscape(key), nil)
+		var t struct {
+			ID string `json:"id"`
+		}
+		if status != http.StatusOK || json.Unmarshal(out, &t) != nil || t.ID == "" {
+			return nil, fmt.Errorf("no ticket %s", key)
+		}
+		return t.ID, nil
+	}
+	for _, name := range []string{"ticket_id", "parent_id"} {
+		if v, ok := args[name]; ok {
+			id, err := resolve(v)
+			if err != nil {
+				return err
+			}
+			args[name] = id
+		}
+	}
+	if list, ok := args["ticket_ids"].([]any); ok {
+		for i, v := range list {
+			id, err := resolve(v)
+			if err != nil {
+				return err
+			}
+			list[i] = id
+		}
+	}
+	return nil
 }

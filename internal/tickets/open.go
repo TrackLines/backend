@@ -13,6 +13,7 @@ import (
 // OpenTicket is a ticket that isn't done, without its description: enough to choose what to work on.
 type OpenTicket struct {
 	ID         string   `json:"id"`
+	Key        string   `json:"key"` // e.g. TL-123
 	Title      string   `json:"title"`
 	Type       string   `json:"type"`
 	Priority   string   `json:"priority"`
@@ -36,6 +37,7 @@ type OpenFilter struct {
 	Assignee       string
 	Unassigned     bool
 	ExcludeBlocked bool
+	Priorities     []string // any of; none = all
 }
 
 // OpenTickets lists the project's tickets that aren't done (boards and backlog), in the order work
@@ -46,7 +48,7 @@ func (s Store) OpenTickets(ctx context.Context, owner, projectID string, f OpenF
 	if err := s.DB.QueryRow(ctx, `SELECT true FROM projects WHERE id = $1 AND owner_clerk_id = $2`, projectID, owner).Scan(&ok); err != nil {
 		return nil, notFound(err)
 	}
-	rows, err := s.DB.Query(ctx, `SELECT t.id, t.title, t.type::text, t.priority::text, t.estimate,
+	rows, err := s.DB.Query(ctx, `SELECT t.id, (SELECT kp.key_prefix FROM projects kp WHERE kp.id = t.project_id) || '-' || t.number, t.title, t.type::text, t.priority::text, t.estimate,
 			ARRAY(SELECT l.label FROM ticket_labels l WHERE l.ticket_id = t.id ORDER BY lower(l.label)),
 			t.assigned_to, `+boards.TicketBlockedSQL+`, `+inOpenSprint+`, t.board_id::text, b.name, t.column_id::text, c.name,
 			to_char(t.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'), to_char(t.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')
@@ -57,15 +59,16 @@ func (s Store) OpenTickets(ctx context.Context, owner, projectID string, f OpenF
 			AND ($2 = false OR t.assigned_to IS NULL)
 			AND ($3 = '' OR t.assigned_to = $3)
 			AND ($4 = false OR NOT `+boards.TicketBlockedSQL+`)
+			AND (cardinality($5::text[]) = 0 OR t.priority::text = ANY($5))
 		ORDER BY `+inOpenSprint+` DESC, (`+inOpenSprint+` AND t.type = 'bug') DESC,
 			t.priority DESC, t.board_id IS NULL, t.created_at`,
-		projectID, f.Unassigned, f.Assignee, f.ExcludeBlocked)
+		projectID, f.Unassigned, f.Assignee, f.ExcludeBlocked, nonNil(f.Priorities))
 	if err != nil {
 		return nil, err
 	}
 	out, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (OpenTicket, error) {
 		var t OpenTicket
-		return t, row.Scan(&t.ID, &t.Title, &t.Type, &t.Priority, &t.Estimate, &t.Labels, &t.AssignedTo, &t.Blocked, &t.InSprint,
+		return t, row.Scan(&t.ID, &t.Key, &t.Title, &t.Type, &t.Priority, &t.Estimate, &t.Labels, &t.AssignedTo, &t.Blocked, &t.InSprint,
 			&t.BoardID, &t.BoardName, &t.ColumnID, &t.ColumnName, &t.CreatedAt, &t.UpdatedAt)
 	})
 	if out == nil {
@@ -77,7 +80,11 @@ func (s Store) OpenTickets(ctx context.Context, owner, projectID string, f OpenF
 // OpenTickets: GET /api/projects/{id}/open-tickets?assignee=unassigned|me&blocked=exclude
 func (h System) OpenTickets(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	f := OpenFilter{ExcludeBlocked: q.Get("blocked") == "exclude"}
+	f := OpenFilter{ExcludeBlocked: q.Get("blocked") == "exclude", Priorities: q["priority"]}
+	if !ValidPriorities(f.Priorities) {
+		http.Error(w, ErrBadPriority.Error(), http.StatusBadRequest)
+		return
+	}
 	switch q.Get("assignee") {
 	case "":
 	case "unassigned":

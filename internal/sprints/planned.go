@@ -33,6 +33,7 @@ type PlannedSprint struct {
 	Position   int             `json:"position"` // 1 = the next sprint
 	Number     int             `json:"number"`   // the sprint number it will get
 	LengthDays int             `json:"length_days"`
+	Goal       string          `json:"goal"` // carried into the sprint when it starts
 	Tickets    []boards.Ticket `json:"tickets"`
 	Capacity   Capacity        `json:"capacity"`
 }
@@ -109,7 +110,7 @@ func planned(ctx context.Context, q querier, boardID string) ([]PlannedSprint, e
 			(SELECT max(number) FROM sprints WHERE board_id = b.id), 0) FROM boards b WHERE b.id = $1`, boardID).Scan(&scale, &base); err != nil {
 		return nil, notFound(err)
 	}
-	rows, err := q.Query(ctx, `SELECT id, board_id, position, length_days, approved_total::float8, approved_by,
+	rows, err := q.Query(ctx, `SELECT id, board_id, position, length_days, goal, approved_total::float8, approved_by,
 			to_char(approved_at AT TIME ZONE 'UTC', `+ts+`)
 		FROM planned_sprints WHERE board_id = $1 ORDER BY position`, boardID)
 	if err != nil {
@@ -123,7 +124,7 @@ func planned(ctx context.Context, q querier, boardID string) ([]PlannedSprint, e
 	var approvals []approval
 	var p PlannedSprint
 	var a approval
-	if _, err := pgx.ForEachRow(rows, []any{&p.ID, &p.BoardID, &p.Position, &p.LengthDays, &a.total, &a.by, &a.when}, func() error {
+	if _, err := pgx.ForEachRow(rows, []any{&p.ID, &p.BoardID, &p.Position, &p.LengthDays, &p.Goal, &a.total, &a.by, &a.when}, func() error {
 		p.Number = base + p.Position
 		out, approvals = append(out, p), append(approvals, a)
 		return nil
@@ -167,11 +168,15 @@ func (s Store) Planned(ctx context.Context, owner, boardID string) ([]PlannedSpr
 }
 
 // Plan adds a planned sprint after the board's last one (at most MaxPlanned); returns the board's plans.
-func (s Store) Plan(ctx context.Context, owner, boardID string, lengthDays int) ([]PlannedSprint, error) {
+func (s Store) Plan(ctx context.Context, owner, boardID string, lengthDays int, goal string) ([]PlannedSprint, error) {
 	if lengthDays < 1 || lengthDays > 365 {
 		return nil, ErrInvalidLength
 	}
-	err := pgx.BeginFunc(ctx, s.DB, func(tx pgx.Tx) error {
+	goal, err := cleanGoal(goal)
+	if err != nil {
+		return nil, err
+	}
+	err = pgx.BeginFunc(ctx, s.DB, func(tx pgx.Tx) error {
 		var style string
 		var count int
 		if err := tx.QueryRow(ctx, `SELECT b.style FROM boards b JOIN projects p ON p.id = b.project_id
@@ -187,7 +192,7 @@ func (s Store) Plan(ctx context.Context, owner, boardID string, lengthDays int) 
 		if count >= MaxPlanned {
 			return ErrTooManyPlanned
 		}
-		_, err := tx.Exec(ctx, `INSERT INTO planned_sprints (board_id, position, length_days) VALUES ($1, $2, $3)`, boardID, count+1, lengthDays)
+		_, err := tx.Exec(ctx, `INSERT INTO planned_sprints (board_id, position, length_days, goal) VALUES ($1, $2, $3, $4)`, boardID, count+1, lengthDays, goal)
 		return err
 	})
 	if err != nil {
@@ -325,6 +330,29 @@ func movePlanned(ctx context.Context, tx pgx.Tx, plan *PlannedSprint, next Sprin
 	return err
 }
 
+// UpdatePlanned changes a planned sprint's length and/or goal (nil = unchanged); returns the board's plans.
+func (s Store) UpdatePlanned(ctx context.Context, owner, id string, lengthDays *int, goal *string) ([]PlannedSprint, error) {
+	if lengthDays != nil && (*lengthDays < 1 || *lengthDays > 365) {
+		return nil, ErrInvalidLength
+	}
+	if goal != nil {
+		g, err := cleanGoal(*goal)
+		if err != nil {
+			return nil, err
+		}
+		goal = &g
+	}
+	boardID, err := s.plannedBoard(ctx, s.DB, owner, id)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := s.DB.Exec(ctx, `UPDATE planned_sprints SET length_days = COALESCE($2, length_days), goal = COALESCE($3, goal) WHERE id = $1`,
+		id, lengthDays, goal); err != nil {
+		return nil, err
+	}
+	return planned(ctx, s.DB, boardID)
+}
+
 // HTTP
 
 // ListPlanned: GET /api/boards/{id}/planned-sprints
@@ -343,17 +371,40 @@ func (h System) Plan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in struct {
-		LengthDays int `json:"length_days"`
+		LengthDays int    `json:"length_days"`
+		Goal       string `json:"goal"`
 	}
 	if !httpx.Decode(w, r, &in) {
 		return
 	}
-	out, err := h.store.Plan(r.Context(), auth.OrgID(r.Context()), r.PathValue("id"), in.LengthDays)
+	out, err := h.store.Plan(r.Context(), auth.OrgID(r.Context()), r.PathValue("id"), in.LengthDays, in.Goal)
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
+	_ = h.live.PublishRefinement(r.Context(), r.PathValue("id"), "plan")
 	httpx.JSON(w, http.StatusCreated, out)
+}
+
+// UpdatePlanned: PATCH /api/planned-sprints/{id} {"length_days"?, "goal"?}. Board managers only.
+func (h System) UpdatePlanned(w http.ResponseWriter, r *http.Request) {
+	if !h.admins.RequireResourceBoardManager(w, r, "planned_sprint", r.PathValue("id")) {
+		return
+	}
+	var in struct {
+		LengthDays *int    `json:"length_days"`
+		Goal       *string `json:"goal"`
+	}
+	if !httpx.Decode(w, r, &in) {
+		return
+	}
+	out, err := h.store.UpdatePlanned(r.Context(), auth.OrgID(r.Context()), r.PathValue("id"), in.LengthDays, in.Goal)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	h.publishPlanned(r, r.PathValue("id"), "update")
+	httpx.JSON(w, http.StatusOK, out)
 }
 
 // Unplan: DELETE /api/planned-sprints/{id}. Board managers only.
@@ -361,9 +412,14 @@ func (h System) Unplan(w http.ResponseWriter, r *http.Request) {
 	if !h.admins.RequireResourceBoardManager(w, r, "planned_sprint", r.PathValue("id")) {
 		return
 	}
+	var board string
+	_ = h.store.DB.QueryRow(r.Context(), `SELECT board_id FROM planned_sprints WHERE id = $1`, r.PathValue("id")).Scan(&board)
 	if err := h.store.Unplan(r.Context(), auth.OrgID(r.Context()), r.PathValue("id")); err != nil {
 		writeErr(w, err)
 		return
+	}
+	if board != "" {
+		_ = h.live.PublishRefinement(r.Context(), board, "unplan")
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -378,6 +434,7 @@ func (h System) Approve(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
+	_ = h.live.PublishRefinement(r.Context(), p.BoardID, "approve")
 	httpx.JSON(w, http.StatusOK, p)
 }
 
@@ -395,5 +452,16 @@ func (h System) PlanTicket(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
+	var board string
+	if err := h.store.DB.QueryRow(r.Context(), `SELECT board_id FROM tickets WHERE id = $1`, r.PathValue("id")).Scan(&board); err == nil {
+		_ = h.live.PublishRefinement(r.Context(), board, "ticket")
+	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h System) publishPlanned(r *http.Request, id, action string) {
+	var board string
+	if err := h.store.DB.QueryRow(r.Context(), `SELECT board_id FROM planned_sprints WHERE id = $1`, id).Scan(&board); err == nil {
+		_ = h.live.PublishRefinement(r.Context(), board, action)
+	}
 }

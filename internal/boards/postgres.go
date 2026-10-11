@@ -33,6 +33,10 @@ type Ticket struct {
 	DoneAt      *string  `json:"done_at"` // when it reached Done (or was resolved); null while open
 	// PlannedSprintID: a backlog ticket planned into a board's upcoming sprint (refinement)
 	PlannedSprintID *string `json:"planned_sprint_id"`
+	Key             string  `json:"key"` // e.g. TL-123: the project's key prefix and the ticket's number in it
+	// where a ticket made by another tool came from (e.g. a Bugfixes report); nil for our own
+	ExternalSource *string `json:"external_source"`
+	ExternalURL    *string `json:"external_url"`
 }
 
 // TicketCols + ScanTicket read a ticket row; shared with the tickets package. The last column
@@ -42,7 +46,9 @@ var TicketCols = `t.id, t.created_by, t.assigned_to, t.project_id, t.column_id, 
 	to_char(t.resolved_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
 	to_char(t.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
 	to_char(t.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
-	to_char(t.done_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'), t.planned_sprint_id`
+	to_char(t.done_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'), t.planned_sprint_id,
+	(SELECT kp.key_prefix FROM projects kp WHERE kp.id = t.project_id) || '-' || t.number,
+	t.external_source, t.external_url`
 
 func ScanTicket(row pgx.Row) (Ticket, error) {
 	var t Ticket
@@ -66,7 +72,7 @@ var TicketBlockedSQL = `EXISTS (SELECT 1 FROM ticket_dependencies td JOIN ticket
 
 // TicketDest lists scan targets matching TicketCols, for queries that select extra columns after them.
 func TicketDest(t *Ticket) []any {
-	return []any{&t.ID, &t.CreatedBy, &t.AssignedTo, &t.ProjectID, &t.ColumnID, &t.SprintID, &t.Type, &t.Title, &t.Description, &t.Priority, &t.Estimate, &t.Position, &t.Blocked, &t.Labels, &t.ResolvedAt, &t.CreatedAt, &t.UpdatedAt, &t.DoneAt, &t.PlannedSprintID}
+	return []any{&t.ID, &t.CreatedBy, &t.AssignedTo, &t.ProjectID, &t.ColumnID, &t.SprintID, &t.Type, &t.Title, &t.Description, &t.Priority, &t.Estimate, &t.Position, &t.Blocked, &t.Labels, &t.ResolvedAt, &t.CreatedAt, &t.UpdatedAt, &t.DoneAt, &t.PlannedSprintID, &t.Key, &t.ExternalSource, &t.ExternalURL}
 }
 
 // Sprint is a board's time box; only the open one is shown on the board.
@@ -78,16 +84,17 @@ type Sprint struct {
 	StartsAt   string  `json:"starts_at"`
 	EndsAt     string  `json:"ends_at"`
 	ClosedAt   *string `json:"closed_at"`
+	Goal       string  `json:"goal"` // one line the sprint is for; "" = none
 }
 
 const SprintCols = `id, board_id, number, length_days,
 	to_char(starts_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
 	to_char(ends_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
-	to_char(closed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')`
+	to_char(closed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'), goal`
 
 func ScanSprint(row pgx.Row) (Sprint, error) {
 	var s Sprint
-	err := row.Scan(&s.ID, &s.BoardID, &s.Number, &s.LengthDays, &s.StartsAt, &s.EndsAt, &s.ClosedAt)
+	err := row.Scan(&s.ID, &s.BoardID, &s.Number, &s.LengthDays, &s.StartsAt, &s.EndsAt, &s.ClosedAt, &s.Goal)
 	return s, err
 }
 
