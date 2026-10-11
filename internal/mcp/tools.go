@@ -143,8 +143,11 @@ var tools = []tool{
 	{name: "send_to_backlog", title: "Send to backlog", description: "Take a ticket off its board and put it at the bottom of the project backlog (clears its estimate).",
 		method: "POST", path: "/api/tickets/{ticket_id}/backlog", props: map[string]any{"ticket_id": id("Ticket")}, required: []string{"ticket_id"}},
 	{name: "resolve_ticket", title: "Resolve ticket", description: "Close a backlog ticket in place, without putting it on a board (a board ticket is finished by moving it to the board's last column). " +
-		"It counts as done, leaves the backlog and open-ticket lists, and stays readable by id. If it was the last unfinished sub-ticket, its parent is completed too.",
-		method: "POST", path: "/api/tickets/{ticket_id}/resolve", props: map[string]any{"ticket_id": id("Ticket")}, required: []string{"ticket_id"}},
+		"It counts as done, leaves the backlog and open-ticket lists, and stays readable by id. If it was the last unfinished sub-ticket, its parent is completed too. " +
+		"resolution wont_do marks it decided against (it stays, so whoever raised it can be told); reason is added as a comment.",
+		method: "POST", path: "/api/tickets/{ticket_id}/resolve", props: map[string]any{"ticket_id": id("Ticket"),
+			"resolution": map[string]any{"type": "string", "enum": []string{"done", "wont_do"}, "description": "default done"},
+			"reason":     str("Why (added as a comment)")}, required: []string{"ticket_id"}},
 	{name: "set_labels", title: "Set labels", description: "Replace a ticket's labels.",
 		method: "PUT", path: "/api/tickets/{ticket_id}/labels", body: []string{"labels"},
 		props: map[string]any{"ticket_id": id("Ticket"), "labels": labels}, required: []string{"ticket_id", "labels"}},

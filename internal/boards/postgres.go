@@ -40,6 +40,7 @@ type Ticket struct {
 	ExternalURL    *string `json:"external_url"`
 	// an agent finished it on a board with agent review: it waits (in the column before Done) for a person
 	ReviewRequestedAt *string `json:"review_requested_at"`
+	Resolution        *string `json:"resolution"` // a resolved backlog ticket: done (or null) or wont_do
 }
 
 // TicketCols + ScanTicket read a ticket row; shared with the tickets package. The last column
@@ -53,7 +54,7 @@ var TicketCols = `t.id, t.created_by, t.assigned_to, t.project_id, t.column_id, 
 	to_char(t.started_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'), t.planned_sprint_id,
 	(SELECT kp.key_prefix FROM projects kp WHERE kp.id = t.project_id) || '-' || t.number,
 	t.external_source, t.external_url,
-	to_char(t.review_requested_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')`
+	to_char(t.review_requested_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'), t.resolution`
 
 func ScanTicket(row pgx.Row) (Ticket, error) {
 	var t Ticket
@@ -77,7 +78,7 @@ var TicketBlockedSQL = `EXISTS (SELECT 1 FROM ticket_dependencies td JOIN ticket
 
 // TicketDest lists scan targets matching TicketCols, for queries that select extra columns after them.
 func TicketDest(t *Ticket) []any {
-	return []any{&t.ID, &t.CreatedBy, &t.AssignedTo, &t.ProjectID, &t.ColumnID, &t.SprintID, &t.Type, &t.Title, &t.Description, &t.Priority, &t.Estimate, &t.Position, &t.Blocked, &t.Labels, &t.ResolvedAt, &t.CreatedAt, &t.UpdatedAt, &t.DoneAt, &t.StartedAt, &t.PlannedSprintID, &t.Key, &t.ExternalSource, &t.ExternalURL, &t.ReviewRequestedAt}
+	return []any{&t.ID, &t.CreatedBy, &t.AssignedTo, &t.ProjectID, &t.ColumnID, &t.SprintID, &t.Type, &t.Title, &t.Description, &t.Priority, &t.Estimate, &t.Position, &t.Blocked, &t.Labels, &t.ResolvedAt, &t.CreatedAt, &t.UpdatedAt, &t.DoneAt, &t.StartedAt, &t.PlannedSprintID, &t.Key, &t.ExternalSource, &t.ExternalURL, &t.ReviewRequestedAt, &t.Resolution}
 }
 
 // Sprint is a board's time box; only the open one is shown on the board.

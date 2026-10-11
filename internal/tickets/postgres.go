@@ -412,7 +412,7 @@ func (s Store) move(ctx context.Context, owner, id, toColumn string, pos int, o 
 		}
 		pos = max(0, min(pos, len(ids)))
 		ids = append(ids[:pos], append([]string{id}, ids[pos:]...)...)
-		if _, err := tx.Exec(ctx, `UPDATE tickets t SET board_id = $2, column_id = $3, sprint_id = $4, resolved_at = NULL, updated_at = now(),
+		if _, err := tx.Exec(ctx, `UPDATE tickets t SET board_id = $2, column_id = $3, sprint_id = $4, resolved_at = NULL, resolution = NULL, updated_at = now(),
 				planned_sprint_id = NULL, -- on a board now: out of any plan
 				estimate = $5,
 				-- waiting for review only while an agent's finish is held; any other move clears it

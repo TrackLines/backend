@@ -1498,8 +1498,15 @@ paths:
         unfinished sub-ticket of its parent, the parent is completed too (resolved if it's in the backlog, moved to
         its board's Done column if it's on a board), and so on up the chain. A ticket on a board is finished by
         moving it to the board's last column instead (409). MCP tool resolve_ticket.
+        With resolution wont_do it's closed as decided against (the ticket's resolution says so; the reason, if given,
+        is added as a comment). No body resolves it as done.
       parameters:
         - $ref: '#/components/parameters/TicketId'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { type: object, properties: { resolution: { type: string, enum: [done, wont_do], default: done }, reason: { type: string, maxLength: 10000 } } }
       responses:
         '204': { description: Resolved. }
         '401': { $ref: '#/components/responses/Unauthorized' }
@@ -2667,6 +2674,7 @@ components:
         key: { type: string, example: TL-123, description: "The project's key prefix and the ticket's number in the project, assigned on create. For branch names, PR titles and search." }
         external_source: { type: [string, 'null'], description: Where an integration made it (bugfixes); null for our own tickets. }
         external_url: { type: [string, 'null'], description: Link to it there (e.g. the Bugfixes report). }
+        resolution: { type: [string, 'null'], enum: [done, wont_do, null], description: "How a resolved backlog ticket was closed (null = done)." }
         review_requested_at: { type: [string, 'null'], format: date-time, description: "Set while an agent's finished ticket waits for a person's review (in the column before Done)." }
     Column:
       type: object
