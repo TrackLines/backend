@@ -24,8 +24,8 @@ var (
 	goal       = map[string]any{"type": "string", "maxLength": 200, "description": "One line the sprint is for"}
 )
 
-// tools is everything a bot can do over MCP. Org administration, API keys, billing and editing
-// columns or roadmaps stay REST/web-only for now.
+// tools is everything a bot can do over MCP. Org administration, API keys, billing and column
+// editing stay REST/web-only for now.
 var tools = []tool{
 	// reading
 	{name: "whoami", title: "Who am I", description: "The caller's user id, active organization, whether they're an org admin, and the teams they lead.",
@@ -90,6 +90,24 @@ var tools = []tool{
 		method: "GET", path: "/api/roadmaps", readOnly: true},
 	{name: "get_roadmap", title: "Get roadmap", description: "A roadmap with its items and their linked tickets.",
 		method: "GET", path: "/api/roadmaps/{roadmap_id}", props: map[string]any{"roadmap_id": id("Roadmap")}, required: []string{"roadmap_id"}, readOnly: true},
+	{name: "create_roadmap", title: "Create roadmap", description: "Create a roadmap in a project. Visibility can be public (anyone with the link), login_only, or team; defaults to public.",
+		method: "POST", path: "/api/projects/{project_id}/roadmaps", body: []string{"title", "description", "visibility"},
+		props:    map[string]any{"project_id": id("Project"), "title": str("Roadmap title"), "description": str("Roadmap description (markdown)"), "visibility": map[string]any{"type": "string", "enum": []string{"public", "login_only", "team"}, "description": "Defaults to public"}},
+		required: []string{"project_id", "title"}},
+	{name: "update_roadmap", title: "Update roadmap", description: "Replace a roadmap's title, description and visibility; send all three fields.",
+		method: "PUT", path: "/api/roadmaps/{roadmap_id}", body: []string{"title", "description", "visibility"},
+		props:    map[string]any{"roadmap_id": id("Roadmap"), "title": str("Roadmap title"), "description": str("Roadmap description (markdown)"), "visibility": map[string]any{"type": "string", "enum": []string{"public", "login_only", "team"}}},
+		required: []string{"roadmap_id", "title", "description", "visibility"}},
+	{name: "replace_roadmap_items", title: "Replace roadmap items", description: "Replace a roadmap's complete ordered item list. Each item can include title, description, dates and manual_status; existing items are removed.",
+		method: "PUT", path: "/api/roadmaps/{roadmap_id}/items", rawBody: "items",
+		props: map[string]any{"roadmap_id": id("Roadmap"), "items": map[string]any{"type": "array", "items": map[string]any{"type": "object", "properties": map[string]any{
+			"title": str("Item title"), "description": str("Item description"), "start_date": map[string]any{"type": []string{"string", "null"}, "format": "date"},
+			"target_date": map[string]any{"type": []string{"string", "null"}, "format": "date"}, "manual_status": map[string]any{"type": "string", "enum": []string{"not_started", "in_progress", "done"}}}, "required": []string{"title"}}}},
+		required: []string{"roadmap_id", "items"}, destructive: true},
+	{name: "set_roadmap_item_tickets", title: "Link tickets to roadmap item", description: "Replace the tickets linked to a roadmap item. Accepts ticket UUIDs or keys (e.g. TL-123); [] clears the links.",
+		method: "PUT", path: "/api/roadmaps/{roadmap_id}/items/{item_id}/tickets", body: []string{"ticket_ids"},
+		props:    map[string]any{"roadmap_id": id("Roadmap"), "item_id": id("Roadmap item"), "ticket_ids": map[string]any{"type": "array", "items": str("Ticket UUID or key")}},
+		required: []string{"roadmap_id", "item_id", "ticket_ids"}},
 
 	// tickets
 	{name: "create_ticket", title: "Create ticket", description: "Create a ticket in a board column (joins the board's open sprint). " +

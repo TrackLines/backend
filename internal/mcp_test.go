@@ -90,6 +90,34 @@ func TestMCP(t *testing.T) {
 	if res := call("get_board", map[string]any{"board_id": b.ID}); res.IsError || !strings.Contains(text(res), "Broken") {
 		t.Fatalf("get_board: %s", text(res))
 	}
+	createdRoadmap := call("create_roadmap", map[string]any{"project_id": pid, "title": "Launch", "visibility": "public"})
+	if createdRoadmap.IsError || !strings.Contains(text(createdRoadmap), `"visibility":"public"`) {
+		t.Fatalf("create public roadmap: %s", text(createdRoadmap))
+	}
+	var rm struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal([]byte(text(createdRoadmap)), &rm); err != nil || rm.ID == "" {
+		t.Fatalf("created roadmap id: %s (%v)", text(createdRoadmap), err)
+	}
+	if res := call("replace_roadmap_items", map[string]any{"roadmap_id": rm.ID, "items": []any{map[string]any{"title": "Ship the work", "description": "Finish and verify"}}}); res.IsError {
+		t.Fatalf("replace roadmap items: %s", text(res))
+	}
+	var roadmap struct {
+		Items []struct {
+			ID    string `json:"id"`
+			Title string `json:"title"`
+		} `json:"items"`
+	}
+	if res := call("get_roadmap", map[string]any{"roadmap_id": rm.ID}); res.IsError || json.Unmarshal([]byte(text(res)), &roadmap) != nil || len(roadmap.Items) != 1 {
+		t.Fatalf("get roadmap items: %s", text(res))
+	}
+	if res := call("set_roadmap_item_tickets", map[string]any{"roadmap_id": rm.ID, "item_id": roadmap.Items[0].ID, "ticket_ids": []any{tk.Key}}); res.IsError {
+		t.Fatalf("link roadmap ticket by key: %s", text(res))
+	}
+	if res := call("get_roadmap", map[string]any{"roadmap_id": rm.ID}); res.IsError || !strings.Contains(text(res), tk.ID) {
+		t.Fatalf("get roadmap linked tickets: %s", text(res))
+	}
 	if res := call("claim_ticket", map[string]any{"ticket_id": tk.ID}); res.IsError || !strings.Contains(text(res), `"assigned_to":"claude"`) {
 		t.Fatalf("claim as the key's agent: %s", text(res))
 	}

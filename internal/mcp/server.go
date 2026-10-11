@@ -24,6 +24,7 @@ type tool struct {
 	name, title, description string
 	method, path             string
 	query, body              []string
+	rawBody                  string         // argument sent directly as the complete JSON request body
 	props                    map[string]any // JSON Schema properties
 	required                 []string
 	readOnly, destructive    bool
@@ -114,7 +115,9 @@ func (t tool) handler(call caller) sdk.ToolHandler {
 			return failed(err.Error()), nil
 		}
 		var body any
-		if t.body != nil {
+		if t.rawBody != "" {
+			body = args[t.rawBody]
+		} else if t.body != nil {
 			fields := map[string]any{}
 			for _, name := range t.body {
 				if v, ok := args[name]; ok {
