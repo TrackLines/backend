@@ -27,6 +27,7 @@ import (
 	"github.com/tracklines/backend/internal/comments"
 	"github.com/tracklines/backend/internal/config"
 	"github.com/tracklines/backend/internal/httpx"
+	"github.com/tracklines/backend/internal/intake"
 	"github.com/tracklines/backend/internal/integrations"
 	"github.com/tracklines/backend/internal/invitations"
 	"github.com/tracklines/backend/internal/live"
@@ -223,6 +224,16 @@ func (s *Service) Handler() http.Handler {
 	mux.Handle("DELETE /api/planned-sprints/{id}", signedIn(sp.Unplan))
 	mux.Handle("POST /api/planned-sprints/{id}/approve", signedIn(sp.Approve)) // accept the total over capacity
 	mux.Handle("PUT /api/tickets/{id}/planned-sprint", signedIn(sp.PlanTicket))
+
+	// Request intake: a project's unlisted public form (no account) and the team's triage inbox
+	ik := intake.NewSystem(s.DB)
+	mux.HandleFunc("GET /api/intake/{token}", ik.Form)
+	mux.HandleFunc("POST /api/intake/{token}", ik.Submit)
+	mux.Handle("GET /api/projects/{id}/intake", signedIn(ik.Settings))
+	mux.Handle("PUT /api/projects/{id}/intake", signedIn(ik.SetOpen))
+	mux.Handle("GET /api/projects/{id}/intake/submissions", signedIn(ik.List))
+	mux.Handle("POST /api/intake-submissions/{id}/promote", signedIn(ik.Promote))
+	mux.Handle("POST /api/intake-submissions/{id}/dismiss", signedIn(ik.Dismiss))
 
 	// Roadmaps — GET by id is open: public ones are readable by anyone with the link
 	r := roadmaps.NewSystem(s.DB)

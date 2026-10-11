@@ -960,6 +960,100 @@ paths:
                       line: { type: integer }
         '404': { description: The ticket didn't come from Bugfixes. }
 
+  /intake/{token}:
+    parameters:
+      - { name: token, in: path, required: true, schema: { type: string }, description: The project's unlisted form link token. }
+    get:
+      tags: [Intake]
+      operationId: intakeForm
+      summary: Whether a request form link is open (public, no account)
+      description: Says nothing else about the project.
+      security: []
+      responses:
+        '200': { description: Open., content: { application/json: { schema: { type: object, properties: { open: { type: boolean } } } } } }
+        '404': { description: Closed or unknown link. }
+    post:
+      tags: [Intake]
+      operationId: intakeSubmit
+      summary: Send a bug report or feature request through a project's form (public, no account)
+      description: >-
+        Held for the team to triage; never put on a board. Limits: 5 per sender per hour, 200 per project per day.
+        A filled-in website field (hidden from people) marks a bot: accepted and dropped.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [type, title]
+              properties:
+                type: { type: string, enum: [bug, feature] }
+                title: { type: string, maxLength: 200 }
+                details: { type: string, maxLength: 5000 }
+                contact: { type: string, maxLength: 200, description: Optional, e.g. an email; seen by the team only. }
+                website: { type: string, description: Honeypot; leave empty. }
+      responses:
+        '202': { description: Received. }
+        '400': { description: Invalid request. }
+        '404': { description: Closed or unknown link. }
+        '429': { description: Too many requests from this sender. }
+  /projects/{projectId}/intake:
+    parameters:
+      - { name: projectId, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      tags: [Intake]
+      operationId: intakeSettings
+      summary: The project's request form, open (with its link token) or closed
+      responses:
+        '200': { description: Settings., content: { application/json: { schema: { $ref: '#/components/schemas/IntakeSettings' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [Intake]
+      operationId: setIntake
+      summary: Open or close the request form; rotate replaces the link (the old one stops working)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [open], properties: { open: { type: boolean }, rotate: { type: boolean } } }
+      responses:
+        '200': { description: Settings., content: { application/json: { schema: { $ref: '#/components/schemas/IntakeSettings' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /projects/{projectId}/intake/submissions:
+    parameters:
+      - { name: projectId, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      tags: [Intake]
+      operationId: listIntakeSubmissions
+      summary: Requests sent through the form, newest first (pending by default)
+      parameters:
+        - { name: status, in: query, schema: { type: string, enum: [pending, promoted, dismissed], default: pending } }
+      responses:
+        '200': { description: Submissions., content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/IntakeSubmission' } } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /intake-submissions/{submissionId}/promote:
+    parameters:
+      - { name: submissionId, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      tags: [Intake]
+      operationId: promoteIntakeSubmission
+      summary: Turn a pending request into an unassigned backlog ticket
+      responses:
+        '200': { description: Promoted, with its ticket., content: { application/json: { schema: { $ref: '#/components/schemas/IntakeSubmission' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Already triaged. }
+  /intake-submissions/{submissionId}/dismiss:
+    parameters:
+      - { name: submissionId, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      tags: [Intake]
+      operationId: dismissIntakeSubmission
+      summary: Close a pending request without making a ticket
+      responses:
+        '204': { description: Dismissed. }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Already triaged. }
   /notifications:
     get:
       tags: [Notifications]
@@ -3094,6 +3188,26 @@ components:
       required: [url]
       properties:
         url: { type: string, format: uri }
+    IntakeSettings:
+      type: object
+      properties:
+        open: { type: boolean }
+        token: { type: [string, 'null'], description: 'The form is at /request/{token}.' }
+    IntakeSubmission:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        project_id: { type: string, format: uuid }
+        type: { type: string, enum: [bug, feature] }
+        title: { type: string }
+        details: { type: string }
+        contact: { type: string }
+        status: { type: string, enum: [pending, promoted, dismissed] }
+        ticket_id: { type: [string, 'null'], format: uuid }
+        ticket_key: { type: [string, 'null'] }
+        decided_by: { type: [string, 'null'] }
+        decided_at: { type: [string, 'null'], format: date-time }
+        created_at: { type: string, format: date-time }
     Notification:
       type: object
       properties:
