@@ -68,6 +68,12 @@ func (s Store) Search(ctx context.Context, owner string, q SearchQuery) ([]Searc
 			keyID = id
 		}
 	}
+	// a bare number is a ticket's number without its prefix ("139" → TL-139, in any project);
+	// those come first, ahead of tickets that merely mention it (TL-140)
+	number, _ := strconv.Atoi(strings.TrimSpace(q.Text))
+	if number < 0 {
+		number = 0
+	}
 	query := tsQuery(q.Text)
 	if keyID != "" {
 		query = "" // the key is the search
@@ -86,7 +92,7 @@ func (s Store) Search(ctx context.Context, owner string, q SearchQuery) ([]Searc
 		LEFT JOIN boards b ON b.id = t.board_id
 		LEFT JOIN columns col ON col.id = t.column_id
 		WHERE ($3 = '' OR t.id::text = $3)
-			AND ($3 <> '' OR q.query IS NULL OR t.search @@ q.query
+			AND ($3 <> '' OR q.query IS NULL OR t.search @@ q.query OR t.number = $14
 				OR EXISTS (SELECT 1 FROM ticket_comments c WHERE c.ticket_id = t.id AND c.search @@ q.query))
 			AND ($4 = '' OR t.project_id::text = $4)
 			AND ($5 = '' OR t.board_id::text = $5)
@@ -96,10 +102,10 @@ func (s Store) Search(ctx context.Context, owner string, q SearchQuery) ([]Searc
 			AND ($9 = '' OR t.assigned_to = $9)
 			AND ($10 = false OR t.assigned_to IS NULL)
 			AND ($11 = '' OR ($11 = 'done') = `+boards.TicketDoneSQL+`)
-		ORDER BY CASE WHEN q.query IS NULL THEN 0 ELSE ts_rank(t.search, q.query) END DESC, t.updated_at DESC, t.id
+		ORDER BY t.number = $14 DESC NULLS LAST, CASE WHEN q.query IS NULL THEN 0 ELSE ts_rank(t.search, q.query) END DESC, t.updated_at DESC, t.id
 		LIMIT $12 OFFSET $13`,
 		owner, query, keyID, q.ProjectID, q.BoardID, nonNil(q.Types), nonNil(q.Priorities), lower(q.Labels),
-		q.Assignee, q.Unassigned, q.Status, q.Limit, (max(q.Page, 1)-1)*q.Limit)
+		q.Assignee, q.Unassigned, q.Status, q.Limit, (max(q.Page, 1)-1)*q.Limit, number)
 	if err != nil {
 		return nil, notFound(err)
 	}

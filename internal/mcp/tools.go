@@ -59,7 +59,7 @@ var tools = []tool{
 		"(every word, matched as a prefix), or by key (TL-123, found exactly). Ranked by relevance, then most recently changed; with no q it just filters. " +
 		"Each result says where the ticket lives (project, board/column or backlog) and whether it's done.",
 		method: "GET", path: "/api/search", query: []string{"q", "project", "board", "type", "priority", "label", "assignee", "status", "limit", "page"},
-		props: map[string]any{"q": str("Words or a ticket key"), "project": id("Project"), "board": id("Board"),
+		props: map[string]any{"q": str("Words, a ticket key (TL-123) or just its number (123)"), "project": id("Project"), "board": id("Board"),
 			"type":     map[string]any{"type": "array", "items": ticketType, "description": "Any of these types"},
 			"priority": map[string]any{"type": "array", "items": priority, "description": "Any of these priorities"},
 			"label":    map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Any of these labels"},
