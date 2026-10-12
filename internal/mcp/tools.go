@@ -131,7 +131,7 @@ var tools = []tool{
 		method: "PATCH", path: "/api/tickets/{ticket_id}", body: []string{"title", "description", "type", "priority", "labels", "estimate"},
 		props:    map[string]any{"ticket_id": id("Ticket"), "title": str("New title"), "description": str("New description (markdown)"), "type": ticketType, "priority": priority, "labels": labels, "estimate": estimate},
 		required: []string{"ticket_id"}, prepare: keepTitleAndDescription},
-	{name: "claim_ticket", title: "Claim ticket", description: "Assign an unassigned, unblocked ticket to the caller, atomically. Fails if it's already assigned or blocked. Then read it in full (get_ticket, list_comments, list_attachments) before starting.",
+	{name: "claim_ticket", title: "Claim ticket", description: "Assign an unassigned, unblocked ticket to the caller, atomically. Fails if it's already assigned or blocked. Then follow the chain in the server instructions: read it in full, move it to the in-progress column, do the work with tests, run them, comment, and move it to the last column (review or Done).",
 		method: "POST", path: "/api/tickets/{ticket_id}/claim", props: map[string]any{"ticket_id": id("Ticket")}, required: []string{"ticket_id"}},
 	{name: "release_ticket", title: "Release ticket", description: "Unassign a ticket the caller holds.",
 		method: "POST", path: "/api/tickets/{ticket_id}/release", props: map[string]any{"ticket_id": id("Ticket")}, required: []string{"ticket_id"}},

@@ -35,17 +35,30 @@ type tool struct {
 type caller func(ctx context.Context, method, path string, body any) (int, []byte)
 
 // Handler is the /mcp endpoint. api is the whole REST handler chain (auth middleware included).
+// Instructions tell agents how to work: like a member of the team, the whole way through a ticket.
+const Instructions = "TrackLines boards, backlog and tickets. Work is organised as projects → boards (one per team) → columns → tickets; " +
+	"the first column is To do and the last column is Done (get_board lists a board's columns in order). " +
+	"Tickets have keys like TL-123 (project prefix + number); any ticket_id argument takes a key or a UUID.\n\n" +
+	"Choosing work: act like a member of the team. While a sprint is open, only pick tickets in it (in_sprint=true in list_open_tickets), " +
+	"bugs before features and tasks, highest priority first. Don't start backlog or out-of-sprint tickets unless no sprint ticket is " +
+	"claimable or the user asks for that ticket; a backlog ticket goes onto its board first (move_ticket, with an estimate if the board uses them).\n\n" +
+	"Working a ticket: always do the whole chain, in this order, and don't skip steps:\n" +
+	"1. Read all of it: get_ticket, list_comments, and when attachment_count > 0, list_attachments and open the files " +
+	"(often a design, screenshot or log that explains the ticket better than its text; build what they show, and if they and the " +
+	"description disagree, ask or follow the newer one).\n" +
+	"2. Assign it to yourself: claim_ticket (it fails if someone else has it or it's blocked: pick another).\n" +
+	"3. Set it in progress: move_ticket to the board's in-progress column (the column after To do) as you start.\n" +
+	"4. Do the work, and write or update tests that cover it.\n" +
+	"5. Run the tests and make sure they pass (the whole suite, not just the new ones). Don't finish a ticket with failing or skipped tests.\n" +
+	"6. Comment what you did: add_comment with what changed, where, and the test results.\n" +
+	"7. Finish it: move_ticket to the board's last column. On a board with agent review (get_board: agent_review) this puts it " +
+	"in review instead (the response says needs_review) and a person approves it; otherwise it's Done. Never leave finished work in To do or In progress.\n" +
+	"If you stop before finishing, say why in a comment and release_ticket so someone else can pick it up."
+
 func Handler(api http.Handler, version string) http.Handler {
 	return sdk.NewStreamableHTTPHandler(func(r *http.Request) *sdk.Server {
 		s := sdk.NewServer(&sdk.Implementation{Name: "tracklines", Title: "TrackLines", Version: version}, &sdk.ServerOptions{
-			Instructions: "TrackLines boards, backlog and tickets. Work is organised as projects → boards (one per team) → columns → tickets; " +
-				"the last column of a board is Done. Typical flow: list_projects, list_open_tickets, claim_ticket, move_ticket, add_comment. " +
-				"Work like a member of the team: while a sprint is open, only pick tickets in it (in_sprint=true in list_open_tickets), and fix bugs before feature/task tickets in that sprint. " +
-				"Don't start backlog or out-of-sprint tickets unless no sprint ticket is claimable or the user asks for that ticket. " +
-				"Tickets have keys like TL-123 (project prefix + number); any ticket_id argument takes a key or a UUID. " +
-				"Before working a ticket, read all of it: get_ticket, then list_comments, and, when attachment_count > 0, list_attachments " +
-				"and open the files (they're often a design, screenshot or log that explains the ticket better than its text). " +
-				"Build what the attachments show; if they and the description disagree, ask or follow the newer one.",
+			Instructions: Instructions,
 		})
 		call := requester(api, r.Header)
 		for _, t := range tools {

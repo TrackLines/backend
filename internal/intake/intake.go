@@ -101,28 +101,33 @@ func (s Store) Submit(ctx context.Context, token, sender, typ, title, details, c
 	if (typ != "bug" && typ != "feature") || title == "" || len([]rune(title)) > MaxTitle || len([]rune(details)) > MaxDetails || len([]rune(contact)) > MaxContact {
 		return ErrInvalid
 	}
-	var project string
-	if err := s.DB.QueryRow(ctx, `SELECT id FROM projects WHERE intake_token = $1`, token).Scan(&project); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) || token == "" {
-			return ErrClosed
-		}
-		return err
-	}
 	sum := sha256.Sum256([]byte(token + "|" + sender))
 	hash := hex.EncodeToString(sum[:])
-	var mine, today int
-	if err := s.DB.QueryRow(ctx, `SELECT
-			count(*) FILTER (WHERE sender = $2 AND created_at > now() - interval '1 hour'),
-			count(*) FILTER (WHERE created_at > now() - interval '1 day')
-		FROM intake_submissions WHERE project_id = $1 AND created_at > now() - interval '1 day'`, project, hash).Scan(&mine, &today); err != nil {
+	// check the caps and insert as one step: the project row is locked for the moment it takes, so a
+	// burst of submissions queues up instead of all reading the count before any of them inserts.
+	// (FOR NO KEY UPDATE: it doesn't hold up tickets being added to the project meanwhile.)
+	return pgx.BeginFunc(ctx, s.DB, func(tx pgx.Tx) error {
+		var project string
+		if err := tx.QueryRow(ctx, `SELECT id FROM projects WHERE intake_token = $1 FOR NO KEY UPDATE`, token).Scan(&project); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) || token == "" {
+				return ErrClosed
+			}
+			return err
+		}
+		var mine, today int
+		if err := tx.QueryRow(ctx, `SELECT
+				count(*) FILTER (WHERE sender = $2 AND created_at > now() - interval '1 hour'),
+				count(*) FILTER (WHERE created_at > now() - interval '1 day')
+			FROM intake_submissions WHERE project_id = $1 AND created_at > now() - interval '1 day'`, project, hash).Scan(&mine, &today); err != nil {
+			return err
+		}
+		if mine >= PerSenderHour || today >= PerProjectDay {
+			return ErrTooMany
+		}
+		_, err := tx.Exec(ctx, `INSERT INTO intake_submissions (project_id, type, title, details, contact, sender) VALUES ($1, $2, $3, $4, $5, $6)`,
+			project, typ, title, details, contact, hash)
 		return err
-	}
-	if mine >= PerSenderHour || today >= PerProjectDay {
-		return ErrTooMany
-	}
-	_, err := s.DB.Exec(ctx, `INSERT INTO intake_submissions (project_id, type, title, details, contact, sender) VALUES ($1, $2, $3, $4, $5, $6)`,
-		project, typ, title, details, contact, hash)
-	return err
+	})
 }
 
 const cols = `s.id, s.project_id, s.type, s.title, s.details, s.contact, s.status, s.ticket_id,

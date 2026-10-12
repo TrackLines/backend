@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/golang-migrate/migrate/v4"
@@ -174,5 +175,45 @@ func TestIntake(t *testing.T) {
 	token = ""
 	if code := call(public, h.Submit, "POST", `{"type":"bug","title":"late"}`, map[string]string{"token": ""}, "3.3.3.3").Code; code != 404 {
 		t.Fatalf("closed submit: %d", code)
+	}
+}
+
+// TL-162: a burst of simultaneous requests from one sender can't get past the cap.
+func TestIntakeBurst(t *testing.T) {
+	ctx := context.Background()
+	db, err := pgxpool.New(ctx, os.Getenv("TEST_DATABASE_URL"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(ctx, `DELETE FROM projects WHERE owner_clerk_id = 'ik3'`); err != nil {
+		t.Fatal(err)
+	}
+	var pid string
+	_ = db.QueryRow(ctx, `INSERT INTO projects (owner_clerk_id, name) VALUES ('ik3', 'Burst') RETURNING id`).Scan(&pid)
+	s := Store{DB: db}
+	token, err := s.SetOpen(ctx, "ik3", pid, true, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	accepted := 0
+	for range 20 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if s.Submit(ctx, *token, "203.0.113.9", "bug", "same sender, all at once", "", "") == nil {
+				mu.Lock()
+				accepted++
+				mu.Unlock()
+			}
+		}()
+	}
+	wg.Wait()
+	var stored int
+	_ = db.QueryRow(ctx, `SELECT count(*) FROM intake_submissions WHERE project_id = $1`, pid).Scan(&stored)
+	if accepted != PerSenderHour || stored != PerSenderHour {
+		t.Fatalf("burst: %d accepted, %d stored (cap %d)", accepted, stored, PerSenderHour)
 	}
 }

@@ -73,6 +73,14 @@ func TestMCP(t *testing.T) {
 	}
 	defer cs.Close()
 
+	// agents are told the whole chain on connect: read, claim, in progress, tests that pass, comment, review/Done
+	got := cs.InitializeResult().Instructions
+	for _, step := range []string{"claim_ticket", "in-progress column", "write or update tests", "make sure they pass", "add_comment", "last column", "needs_review", "release_ticket", "list_attachments"} {
+		if !strings.Contains(got, step) {
+			t.Fatalf("instructions miss %q:\n%s", step, got)
+		}
+	}
+
 	list, err := cs.ListTools(ctx, nil)
 	if err != nil || len(list.Tools) < 20 {
 		t.Fatalf("tools: %v %v", len(list.Tools), err)
