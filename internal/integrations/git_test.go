@@ -72,6 +72,21 @@ func TestGitProviders(t *testing.T) {
 			_, _ = w.Write([]byte(`{"account":{"login":"acme"}}`))
 		case r.URL.Path == "/app/installations/123/access_tokens" && r.Method == "POST" && validJWT(r):
 			_, _ = w.Write([]byte(`{"token":"ghs_inst"}`))
+		// OAuth during install: the code says who installed it; their installations
+		case r.URL.Path == "/login/oauth/access_token" && r.Method == "POST":
+			_ = r.ParseForm()
+			tokens := map[string]string{"owner_code": "ghu_owner", "stranger_code": "ghu_stranger", "other_owner_code": "ghu_owner2"}
+			if t, ok := tokens[r.PostForm.Get("code")]; ok && r.PostForm.Get("client_id") == "Iv1.app" && r.PostForm.Get("client_secret") == "app_secret" {
+				_, _ = w.Write([]byte(`{"access_token":"` + t + `"}`))
+			} else {
+				_, _ = w.Write([]byte(`{"error":"bad_verification_code"}`)) // GitHub answers 200 with an error
+			}
+		case r.URL.Path == "/user/installations" && r.Header.Get("Authorization") == "Bearer ghu_owner":
+			_, _ = w.Write([]byte(`{"installations":[{"id":123},{"id":999}]}`))
+		case r.URL.Path == "/user/installations" && r.Header.Get("Authorization") == "Bearer ghu_owner2":
+			_, _ = w.Write([]byte(`{"installations":[{"id":123}]}`)) // e.g. a member of the same GitHub org
+		case r.URL.Path == "/user/installations" && r.Header.Get("Authorization") == "Bearer ghu_stranger":
+			_, _ = w.Write([]byte(`{"installations":[{"id":456}]}`))
 		case r.URL.Path == "/installation/repositories" && r.Header.Get("Authorization") == "Bearer ghs_inst":
 			_, _ = w.Write([]byte(`{"repositories":[{"full_name":"acme/shop","default_branch":"trunk","private":true},{"full_name":"acme/docs","default_branch":"main"}]}`))
 		default:
@@ -113,6 +128,7 @@ func TestGitProviders(t *testing.T) {
 	box, _ := secrets.New(base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{5}, 32)))
 	now := time.Now()
 	git := Git{GitHubAppID: "4242", GitHubAppSlug: "tracklines", GitHubPrivateKey: pemKey, GitHubAPI: github.URL,
+		GitHubClientID: "Iv1.app", GitHubSecret: "app_secret", GitHubWeb: github.URL,
 		BitbucketClientID: "bb_id", BitbucketSecret: "bb_secret", BitbucketAuth: bitbucket.URL + "/auth", BitbucketAPI: bitbucket.URL + "/api",
 		now: func() time.Time { return now }}
 	h := System{store: Store{DB: db, Box: box}, admins: organizations.Admins{DB: db}, tickets: tickets.Store{DB: db}, git: git, now: time.Now}
@@ -154,14 +170,29 @@ func TestGitProviders(t *testing.T) {
 	complete := func(c context.Context, provider, body string) int {
 		return call(h.Complete, c, "POST", "/", body, map[string]string{"provider": provider}).Code
 	}
-	if code := complete(admin, "github", `{"state":"`+otherState+`","installation_id":"123"}`); code != 400 {
+	if code := complete(admin, "github", `{"state":"`+otherState+`","installation_id":"123","code":"owner_code"}`); code != 400 {
 		t.Fatalf("another org's state: %d", code)
 	}
-	if code := complete(admin, "github", `{"state":"`+state+`","installation_id":"999"}`); code != 502 {
+	// TL-158: the installation id alone (no proof of who installed it) is refused
+	if code := complete(admin, "github", `{"state":"`+state+`","installation_id":"123"}`); code != 400 {
+		t.Fatalf("no OAuth code: %d", code)
+	}
+	if code := complete(admin, "github", `{"state":"`+state+`","installation_id":"123","code":"forged"}`); code != 400 {
+		t.Fatalf("bad OAuth code: %d", code)
+	}
+	// someone who can't access installation 123 can't claim it, even with a valid state
+	if code := complete(admin, "github", `{"state":"`+state+`","installation_id":"123","code":"stranger_code"}`); code != 403 {
 		t.Fatalf("someone else's installation: %d", code)
 	}
-	if code := complete(admin, "github", `{"state":"`+state+`","installation_id":"123"}`); code != 204 {
+	if code := complete(admin, "github", `{"state":"`+state+`","installation_id":"999","code":"owner_code"}`); code != 502 {
+		t.Fatalf("not our app's installation: %d", code)
+	}
+	if code := complete(admin, "github", `{"state":"`+state+`","installation_id":"123","code":"owner_code"}`); code != 204 {
 		t.Fatalf("github complete: %d", code)
+	}
+	// an installation belongs to one org: another org can't connect it too, even with access to it
+	if code := complete(session("org_other", "admin2"), "github", `{"state":"`+otherState+`","installation_id":"123","code":"other_owner_code"}`); code != 409 {
+		t.Fatalf("installation taken: %d", code)
 	}
 	if rec := call(h.Connection, admin, "GET", "/", "", map[string]string{"provider": "github"}); !strings.Contains(rec.Body.String(), `"account":"acme"`) {
 		t.Fatalf("github connection: %s", rec.Body)
@@ -190,7 +221,7 @@ func TestGitProviders(t *testing.T) {
 	}
 	// an expired link is refused
 	now = now.Add(20 * time.Minute)
-	if code := complete(admin, "github", `{"state":"`+state+`","installation_id":"123"}`); code != 400 {
+	if code := complete(admin, "github", `{"state":"`+state+`","installation_id":"123","code":"owner_code"}`); code != 400 {
 		t.Fatalf("expired state: %d", code)
 	}
 

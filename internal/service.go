@@ -108,7 +108,7 @@ func (s *Service) Handler() http.Handler {
 	mux.HandleFunc("GET /health", s.health)
 
 	// Projects — a project holds a board per team plus its roadmaps; free tier = 1 project
-	p := projects.NewSystem(s.DB)
+	p := projects.NewSystem(s.DB, o.AdminModel())
 	mux.Handle("GET /api/projects", signedIn(p.List))
 	mux.Handle("POST /api/projects", signedIn(p.Create))
 	mux.Handle("GET /api/projects/{id}", signedIn(p.Get))
@@ -160,6 +160,7 @@ func (s *Service) Handler() http.Handler {
 	gc := config.Get(s.Config).Git
 	in := integrations.NewSystem(s.DB, box, s.Valkey, o.AdminModel(), integrations.Git{
 		GitHubAppID: gc.GitHubAppID, GitHubAppSlug: gc.GitHubAppSlug, GitHubPrivateKey: gc.GitHubPrivateKey,
+		GitHubClientID: gc.GitHubClientID, GitHubSecret: gc.GitHubClientSecret,
 		BitbucketClientID: gc.BitbucketClientID, BitbucketSecret: gc.BitbucketSecret})
 	mux.Handle("GET /api/integrations/{provider}", signedIn(in.Connection)) // connected or not; never the secret
 	mux.Handle("PUT /api/integrations/{provider}", signedIn(in.Connect))    // org admins

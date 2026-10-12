@@ -1,0 +1,1 @@
+DROP INDEX IF EXISTS org_integrations_github_installation_key;

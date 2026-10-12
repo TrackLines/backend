@@ -10,16 +10,18 @@ import (
 	"github.com/tracklines/backend/internal/auth"
 	"github.com/tracklines/backend/internal/billing"
 	"github.com/tracklines/backend/internal/httpx"
+	"github.com/tracklines/backend/internal/organizations"
 )
 
 type System struct {
-	db    *pgxpool.Pool
-	store Store
+	db     *pgxpool.Pool
+	store  Store
+	admins organizations.Admins
 }
 
 // NewSystem exposes the project handlers; routes are declared in internal/service.go.
-func NewSystem(db *pgxpool.Pool) System {
-	return System{db: db, store: Store{DB: db}}
+func NewSystem(db *pgxpool.Pool, admins organizations.Admins) System {
+	return System{db: db, store: Store{DB: db}, admins: admins}
 }
 
 func writeErr(w http.ResponseWriter, err error) {
@@ -97,6 +99,11 @@ func (h System) Update(w http.ResponseWriter, r *http.Request) {
 	if !httpx.Decode(w, r, &in) || !in.valid(w) {
 		return
 	}
+	if in.KeyPrefix != nil {
+		if _, _, ok := h.admins.RequireAdmin(w, r); !ok {
+			return
+		}
+	}
 	org := auth.OrgID(r.Context())
 	err := h.store.Update(r.Context(), r.PathValue("id"), org, in.Name, in.Description)
 	if err == nil && in.KeyPrefix != nil {
@@ -110,7 +117,10 @@ func (h System) Update(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h System) Delete(w http.ResponseWriter, r *http.Request) {
-	org := auth.OrgID(r.Context())
+	org, _, ok := h.admins.RequireAdmin(w, r)
+	if !ok {
+		return
+	}
 	if err := h.store.Delete(r.Context(), r.PathValue("id"), org); err != nil {
 		writeErr(w, err)
 		return

@@ -19,6 +19,8 @@ type Git struct {
 	GitHubAppSlug       string `env:"GITHUB_APP_SLUG"`        // github.com/apps/<slug>
 	GitHubPrivateKey    string `env:"GITHUB_APP_PRIVATE_KEY"` // the app's PEM key (newlines as \n are fine)
 	GitHubWebhookSecret string `env:"GITHUB_WEBHOOK_SECRET"`
+	GitHubClientID      string `env:"GITHUB_CLIENT_ID"` // the App's OAuth client: proves who installed it
+	GitHubClientSecret  string `env:"GITHUB_CLIENT_SECRET"`
 	BitbucketClientID   string `env:"BITBUCKET_CLIENT_ID"`
 	BitbucketSecret     string `env:"BITBUCKET_CLIENT_SECRET"`
 	BitbucketWebhook    string `env:"BITBUCKET_WEBHOOK_SECRET"`

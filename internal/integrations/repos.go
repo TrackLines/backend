@@ -74,8 +74,10 @@ func gitErr(w http.ResponseWriter, err error) {
 		http.Error(w, "not connected", http.StatusConflict)
 	case errors.Is(err, ErrBadState), errors.Is(err, ErrRepoNotVisible):
 		http.Error(w, err.Error(), http.StatusBadRequest)
-	case errors.Is(err, ErrRepoLinked):
+	case errors.Is(err, ErrRepoLinked), errors.Is(err, ErrTaken):
 		http.Error(w, err.Error(), http.StatusConflict)
+	case errors.Is(err, ErrNotYours):
+		http.Error(w, err.Error(), http.StatusForbidden)
 	case errors.Is(err, ErrProviderCall):
 		logs.Warnf("integrations: %v", err)
 		http.Error(w, err.Error(), http.StatusBadGateway)

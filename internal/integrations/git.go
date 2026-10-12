@@ -34,6 +34,9 @@ type Git struct {
 	GitHubAppSlug     string // github.com/apps/<slug>
 	GitHubPrivateKey  string // the app's PEM private key
 	GitHubAPI         string // https://api.github.com
+	GitHubClientID    string // the App's OAuth client id and secret: the installer authorizes, so we
+	GitHubSecret      string // can check the installation is theirs (not just any of our app's)
+	GitHubWeb         string // https://github.com (OAuth code exchange)
 	BitbucketClientID string
 	BitbucketSecret   string
 	BitbucketAuth     string // https://bitbucket.org/site/oauth2
@@ -46,12 +49,14 @@ var (
 	ErrProviderOff  = errors.New("this provider isn't configured on the server")
 	ErrBadState     = errors.New("the connect link has expired or wasn't for this organization; start again")
 	ErrProviderCall = errors.New("the provider refused or couldn't be reached")
+	ErrNotYours     = errors.New("that GitHub installation isn't one you can access; install the app on your own account or organization")
+	ErrTaken        = errors.New("that GitHub installation is already connected to another organization")
 )
 
 func (g Git) on(provider string) bool {
 	switch provider {
 	case GitHub:
-		return g.GitHubAppID != "" && g.GitHubAppSlug != "" && g.GitHubPrivateKey != ""
+		return g.GitHubAppID != "" && g.GitHubAppSlug != "" && g.GitHubPrivateKey != "" && g.GitHubClientID != "" && g.GitHubSecret != ""
 	case Bitbucket:
 		return g.BitbucketClientID != "" && g.BitbucketSecret != ""
 	}
@@ -198,6 +203,51 @@ func (g Git) githubInstallation(ctx context.Context, id string) (string, error) 
 		return "", err
 	}
 	return inst.Account.Login, nil
+}
+
+// githubInstalledBy reports whether installation id is one the person who authorized (OAuth code
+// from the install redirect) can access: their own, or one in a GitHub org they belong to.
+func (g Git) githubInstalledBy(ctx context.Context, code, id string) (bool, error) {
+	form := url.Values{"client_id": {g.GitHubClientID}, "client_secret": {g.GitHubSecret}, "code": {code}}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, orDefault(g.GitHubWeb, "https://github.com")+"/login/oauth/access_token", strings.NewReader(form.Encode()))
+	if err != nil {
+		return false, err
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "application/json")
+	var tok struct {
+		Token string `json:"access_token"`
+	}
+	if err := g.do(req, &tok); err != nil {
+		return false, err
+	}
+	if tok.Token == "" { // GitHub answers 200 with an error body for a bad or used code
+		return false, ErrBadState
+	}
+	// ponytail: up to 10 pages of 100; nobody can access more installations of one app than that
+	for page := 1; page <= 10; page++ {
+		req, err := g.githubRequest(ctx, http.MethodGet, fmt.Sprintf("/user/installations?per_page=100&page=%d", page), tok.Token, nil)
+		if err != nil {
+			return false, err
+		}
+		var out struct {
+			Installations []struct {
+				ID int64 `json:"id"`
+			} `json:"installations"`
+		}
+		if err := g.do(req, &out); err != nil {
+			return false, err
+		}
+		for _, inst := range out.Installations {
+			if strconv.FormatInt(inst.ID, 10) == id {
+				return true, nil
+			}
+		}
+		if len(out.Installations) < 100 {
+			return false, nil
+		}
+	}
+	return false, nil
 }
 
 // githubToken mints an installation token (an hour long).
@@ -396,12 +446,26 @@ func (h System) complete(ctx context.Context, org, user, provider, state, instal
 	}
 	switch provider {
 	case GitHub:
-		if _, err := strconv.ParseInt(installationID, 10, 64); err != nil {
+		if _, err := strconv.ParseInt(installationID, 10, 64); err != nil || code == "" {
 			return ErrBadState
 		}
-		account, err := h.git.githubInstallation(ctx, installationID) // it must be our app's installation
+		// the installation id comes from the browser: it must be one the person installing can access
+		// (GitHub's OAuth code from the install redirect proves who they are), not any of our app's
+		mine, err := h.git.githubInstalledBy(ctx, code, installationID)
 		if err != nil {
 			return err
+		}
+		if !mine {
+			return ErrNotYours
+		}
+		account, err := h.git.githubInstallation(ctx, installationID) // and it must be our app's
+		if err != nil {
+			return err
+		}
+		var other string
+		if err := h.store.DB.QueryRow(ctx, `SELECT org_id FROM org_integrations WHERE provider = $1 AND external_id = $2 AND org_id <> $3`,
+			GitHub, installationID, org).Scan(&other); err == nil {
+			return ErrTaken
 		}
 		return h.store.connect(ctx, org, GitHub, orDefault(h.git.GitHubAPI, "https://api.github.com"), account, installationID, installationID, user)
 	case Bitbucket:

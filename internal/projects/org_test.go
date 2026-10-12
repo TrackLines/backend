@@ -13,6 +13,7 @@ import (
 	"github.com/golang-migrate/migrate/v4"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/tracklines/backend/internal/auth"
+	"github.com/tracklines/backend/internal/organizations"
 )
 
 // Projects belong to the caller's active org: everyone in it sees them, nobody outside does.
@@ -38,7 +39,7 @@ func TestOrgSharing(t *testing.T) {
 	if _, err := db.Exec(ctx, `DELETE FROM projects WHERE owner_clerk_id IN ('org_x', 'org_y')`); err != nil {
 		t.Fatal(err)
 	}
-	h := NewSystem(db)
+	h := NewSystem(db, organizations.Admins{DB: db})
 	as := func(user, org string) context.Context { return auth.WithAPIKey(ctx, user, org, user, "ai") }
 	call := func(c context.Context, method, id, body string, fn func(http.ResponseWriter, *http.Request)) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(method, "/", strings.NewReader(body)).WithContext(c)
