@@ -60,9 +60,23 @@ func ValidUploadThingURL(raw string) bool {
 	return h == "utfs.io" || strings.HasSuffix(h, ".ufs.sh")
 }
 
+// ValidUploadThingFile ensures the URL identifies the same UploadThing file as the key
+// that will be sent to its delete API. This prevents a caller from attaching a trusted URL
+// while naming a different file key for deletion.
+func ValidUploadThingFile(raw, key string) bool {
+	if key == "" || !ValidUploadThingURL(raw) {
+		return false
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return false
+	}
+	return strings.HasSuffix(u.EscapedPath(), "/f/"+url.PathEscape(key))
+}
+
 // Create records an uploaded file on the owner's ticket.
 func (s Store) Create(ctx context.Context, owner, actor, ticketID string, a Attachment) (*Attachment, error) {
-	if a.Key == "" || strings.TrimSpace(a.Name) == "" || !ValidUploadThingURL(a.URL) {
+	if strings.TrimSpace(a.Name) == "" || !ValidUploadThingFile(a.URL, a.Key) {
 		return nil, ErrBadFile
 	}
 	var done bool

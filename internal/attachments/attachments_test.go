@@ -31,6 +31,25 @@ func TestValidUploadThingURL(t *testing.T) {
 	}
 }
 
+func TestValidUploadThingFile(t *testing.T) {
+	for _, tc := range []struct {
+		url, key string
+		want     bool
+	}{
+		{"https://abc123.ufs.sh/f/file-key", "file-key", true},
+		{"https://utfs.io/f/file-key?name=report.txt", "file-key", true},
+		{"https://abc123.ufs.sh/f/other-key", "file-key", false},
+		{"https://abc123.ufs.sh/f/file-key-extra", "file-key", false},
+		{"https://abc123.ufs.sh/f/file-key/other", "file-key", false},
+		{"https://abc123.ufs.sh/f/file%2Fkey", "file/key", true},
+		{"https://abc123.ufs.sh/f/file-key", "", false},
+	} {
+		if got := ValidUploadThingFile(tc.url, tc.key); got != tc.want {
+			t.Errorf("ValidUploadThingFile(%q, %q) = %v, want %v", tc.url, tc.key, got, tc.want)
+		}
+	}
+}
+
 func TestDeleteFiles(t *testing.T) {
 	var gotKey string
 	var gotBody map[string][]string
@@ -89,6 +108,9 @@ func TestStore(t *testing.T) {
 
 	if _, err := s.Create(ctx, "a1", "claude", ticket, Attachment{Key: "x", URL: "https://evil.com/x", Name: "x"}); !errors.Is(err, ErrBadFile) {
 		t.Fatalf("bad url: %v", err)
+	}
+	if _, err := s.Create(ctx, "a1", "claude", ticket, Attachment{Key: "someone-elses-file", URL: "https://app.ufs.sh/f/our-file", Name: "x"}); !errors.Is(err, ErrBadFile) {
+		t.Fatalf("mismatched file key: %v", err)
 	}
 	if _, err := s.Create(ctx, "a2", "x", ticket, good); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("non-owner create: %v", err)
