@@ -22,6 +22,7 @@ var (
 	ErrSelfParent          = errors.New("a ticket can't be its own parent")
 	ErrParentLoop          = errors.New("that parent is already a sub-ticket of this ticket")
 	ErrOtherProject        = errors.New("tickets must belong to the same project")
+	ErrIsDuplicate         = errors.New("a duplicate ticket is already closed")
 )
 
 type Ticket = boards.Ticket
@@ -382,20 +383,23 @@ type moveOpts struct {
 func (s Store) move(ctx context.Context, owner, id, toColumn string, pos int, o *moveOpts) error {
 	return pgx.BeginFunc(ctx, s.DB, func(tx pgx.Tx) error {
 		var boardID, scale string
-		var archived bool
+		var archived, duplicate bool
 		var from, fromSprint, sprint, fromBoard, fromScale, estimate *string
 		// lock the target board: moves on one board are serialised
 		err := tx.QueryRow(ctx, `SELECT b.id, b.estimate_scale, b.archived_at IS NOT NULL, t.column_id, t.sprint_id,
 				(SELECT id FROM sprints WHERE board_id = b.id AND closed_at IS NULL),
-				t.board_id, `+scaleSQL+`, t.estimate
+			t.board_id, `+scaleSQL+`, t.estimate, t.duplicate_of IS NOT NULL
 			FROM tickets t JOIN projects p ON p.id = t.project_id AND p.owner_clerk_id = $2
 			JOIN columns c ON c.id = $3 JOIN boards b ON b.id = c.board_id AND b.project_id = t.project_id
-			WHERE t.id = $1 FOR UPDATE OF b`, id, owner, toColumn).Scan(&boardID, &scale, &archived, &from, &fromSprint, &sprint, &fromBoard, &fromScale, &estimate)
+			WHERE t.id = $1 FOR UPDATE OF b`, id, owner, toColumn).Scan(&boardID, &scale, &archived, &from, &fromSprint, &sprint, &fromBoard, &fromScale, &estimate, &duplicate)
 		if err != nil {
 			return notFound(err)
 		}
 		if archived {
 			return boards.ErrBoardArchived
+		}
+		if duplicate {
+			return ErrIsDuplicate
 		}
 		// an estimate only survives a move to a board on the same scale, unless one is given
 		if fromScale == nil || *fromScale != scale {
@@ -471,11 +475,15 @@ func (s Store) move(ctx context.Context, owner, id, toColumn string, pos int, o 
 func (s Store) ToBacklog(ctx context.Context, owner, id string) error {
 	return pgx.BeginFunc(ctx, s.DB, func(tx pgx.Tx) error {
 		var from, fromSprint *string
-		err := tx.QueryRow(ctx, `SELECT t.column_id, t.sprint_id FROM tickets t
+		var duplicate bool
+		err := tx.QueryRow(ctx, `SELECT t.column_id, t.sprint_id, t.duplicate_of IS NOT NULL FROM tickets t
 			JOIN projects p ON p.id = t.project_id AND p.owner_clerk_id = $2
-			WHERE t.id = $1 FOR UPDATE OF t`, id, owner).Scan(&from, &fromSprint)
+			WHERE t.id = $1 FOR UPDATE OF t`, id, owner).Scan(&from, &fromSprint, &duplicate)
 		if err != nil {
 			return notFound(err)
+		}
+		if duplicate {
+			return ErrIsDuplicate
 		}
 		if from == nil {
 			return nil // already in the backlog
@@ -531,17 +539,25 @@ func renumber(ctx context.Context, tx pgx.Tx, ids []string) error {
 // sprint are nil for backlog tickets.
 type Detail struct {
 	Ticket
-	ProjectName   string  `json:"project_name"`
-	BoardID       *string `json:"board_id"`
-	BoardName     *string `json:"board_name"`
-	EstimateScale string  `json:"estimate_scale"` // the board's; "none" in the backlog
-	ColumnName    *string `json:"column_name"`
-	SprintNumber  *int    `json:"sprint_number"`
-	Done          bool    `json:"done"` // in the board's last column: locked for attachments
-	BlockedBy     []Dep   `json:"blocked_by"`
-	Blocks        []Dep   `json:"blocks"`
-	Parent        *Dep    `json:"parent"`   // the ticket this one is a sub-ticket of, if any
-	Children      []Child `json:"children"` // immediate sub-tickets, with done status
+	ProjectName   string         `json:"project_name"`
+	BoardID       *string        `json:"board_id"`
+	BoardName     *string        `json:"board_name"`
+	EstimateScale string         `json:"estimate_scale"` // the board's; "none" in the backlog
+	ColumnName    *string        `json:"column_name"`
+	SprintNumber  *int           `json:"sprint_number"`
+	Done          bool           `json:"done"`             // in the board's last column: locked for attachments
+	Attachments   int            `json:"attachment_count"` // files on it (list_attachments): designs, screenshots, logs
+	BlockedBy     []Dep          `json:"blocked_by"`
+	Blocks        []Dep          `json:"blocks"`
+	Parent        *Dep           `json:"parent"`   // the ticket this one is a sub-ticket of, if any
+	Children      []Child        `json:"children"` // immediate sub-tickets, with done status
+	Duplicates    []DuplicateRef `json:"duplicates"`
+}
+
+type DuplicateRef struct {
+	ID    string `json:"id"`
+	Key   string `json:"key"`
+	Title string `json:"title"`
 }
 
 type Child struct {
@@ -605,8 +621,9 @@ func (s Store) SetParent(ctx context.Context, owner, id string, parentID *string
 func (s Store) Get(ctx context.Context, owner, id string) (*Detail, error) {
 	var d Detail
 	var parentID *string
-	dest := append(boards.TicketDest(&d.Ticket), &d.ProjectName, &d.BoardID, &d.BoardName, &d.EstimateScale, &d.ColumnName, &d.SprintNumber, &d.Done, &parentID)
-	err := s.DB.QueryRow(ctx, `SELECT `+boards.TicketCols+`, p.name, t.board_id, b.name, COALESCE(`+scaleSQL+`, 'none'), c.name, sp.number, `+boards.TicketDoneSQL+`, t.parent_id
+	dest := append(boards.TicketDest(&d.Ticket), &d.ProjectName, &d.BoardID, &d.BoardName, &d.EstimateScale, &d.ColumnName, &d.SprintNumber, &d.Done, &parentID, &d.Attachments)
+	err := s.DB.QueryRow(ctx, `SELECT `+boards.TicketCols+`, p.name, t.board_id, b.name, COALESCE(`+scaleSQL+`, 'none'), c.name, sp.number, `+boards.TicketDoneSQL+`, t.parent_id,
+		(SELECT count(*) FROM ticket_attachments a WHERE a.ticket_id = t.id)
 		FROM tickets t JOIN projects p ON p.id = t.project_id AND p.owner_clerk_id = $2
 		LEFT JOIN boards b ON b.id = t.board_id
 		LEFT JOIN columns c ON c.id = t.column_id
@@ -631,7 +648,26 @@ func (s Store) Get(ctx context.Context, owner, id string) (*Detail, error) {
 	if d.Children, err = s.ChildrenFor(ctx, id); err != nil {
 		return nil, err
 	}
+	if d.Duplicates, err = s.DuplicatesFor(ctx, id); err != nil {
+		return nil, err
+	}
 	return &d, nil
+}
+
+func (s Store) DuplicatesFor(ctx context.Context, id string) ([]DuplicateRef, error) {
+	rows, err := s.DB.Query(ctx, `SELECT t.id, p.key_prefix || '-' || t.number, t.title FROM tickets t
+		JOIN projects p ON p.id = t.project_id WHERE t.duplicate_of = $1 ORDER BY t.created_at, t.number`, id)
+	if err != nil {
+		return nil, err
+	}
+	out, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (DuplicateRef, error) {
+		var d DuplicateRef
+		return d, row.Scan(&d.ID, &d.Key, &d.Title)
+	})
+	if out == nil {
+		out = []DuplicateRef{}
+	}
+	return out, err
 }
 
 // ChildrenFor returns the ticket's immediate children with done status.

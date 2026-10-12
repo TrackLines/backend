@@ -6,6 +6,7 @@ package integrations
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -52,14 +53,58 @@ func (s Store) ConnectAs(ctx context.Context, org, provider, baseURL, account, s
 
 // connect stores a connection; externalID is the provider's id for it (GitHub installation id).
 func (s Store) connect(ctx context.Context, org, provider, baseURL, account, externalID, secret, by string) error {
-	sealed, err := s.Box.Seal(secret)
+	sealed, err := s.Box.SealWithAAD(secret, secretAAD(org, provider))
 	if err != nil {
 		return err
 	}
-	_, err = s.DB.Exec(ctx, `INSERT INTO org_integrations (org_id, provider, base_url, account, external_id, secret, updated_by) VALUES ($1, $2, $3, $4, $5, $6, $7)
-		ON CONFLICT (org_id, provider) DO UPDATE SET base_url = $3, account = $4, external_id = $5, secret = $6, updated_by = $7, updated_at = now()`,
+	_, err = s.DB.Exec(ctx, `INSERT INTO org_integrations (org_id, provider, base_url, account, external_id, secret, secret_aad_version, updated_by) VALUES ($1, $2, $3, $4, $5, $6, 1, $7)
+		ON CONFLICT (org_id, provider) DO UPDATE SET base_url = $3, account = $4, external_id = $5, secret = $6, secret_aad_version = 1, updated_by = $7, updated_at = now()`,
 		org, provider, baseURL, account, externalID, sealed, by)
 	return err
+}
+
+func secretAAD(org, provider string) string { return org + "|" + provider }
+
+// MigrateSealedSecrets upgrades legacy org_integrations secrets to record-bound encryption.
+// The schema migration adds secret_aad_version; rows are marked only after they are re-sealed,
+// so this remains safe to retry if startup is interrupted partway through.
+func (s Store) MigrateSealedSecrets(ctx context.Context) error {
+	rows, err := s.DB.Query(ctx, `SELECT org_id, provider, secret FROM org_integrations WHERE secret_aad_version = 0`)
+	if err != nil {
+		return err
+	}
+	type legacySecret struct {
+		org, provider string
+		sealed        []byte
+	}
+	var legacy []legacySecret
+	for rows.Next() {
+		var row legacySecret
+		if err := rows.Scan(&row.org, &row.provider, &row.sealed); err != nil {
+			rows.Close()
+			return err
+		}
+		legacy = append(legacy, row)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+	for _, row := range legacy {
+		plain, err := s.Box.OpenLegacy(row.sealed)
+		if err != nil {
+			return fmt.Errorf("open legacy integration secret for org %q provider %q: %w", row.org, row.provider, err)
+		}
+		sealed, err := s.Box.SealWithAAD(plain, secretAAD(row.org, row.provider))
+		if err != nil {
+			return err
+		}
+		if _, err := s.DB.Exec(ctx, `UPDATE org_integrations SET secret = $3, secret_aad_version = 1 WHERE org_id = $1 AND provider = $2 AND secret_aad_version = 0`, row.org, row.provider, sealed); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s Store) Disconnect(ctx context.Context, org, provider string) error {
@@ -88,7 +133,7 @@ func (s Store) credentials(ctx context.Context, org, provider string) (baseURL, 
 	if err != nil {
 		return "", "", err
 	}
-	secret, err = s.Box.Open(sealed)
+	secret, err = s.Box.OpenWithAAD(sealed, secretAAD(org, provider))
 	return baseURL, secret, err
 }
 

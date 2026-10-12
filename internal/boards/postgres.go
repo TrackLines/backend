@@ -42,6 +42,9 @@ type Ticket struct {
 	// an agent finished it on a board with agent review: it waits (in the column before Done) for a person
 	ReviewRequestedAt *string `json:"review_requested_at"`
 	Resolution        *string `json:"resolution"` // a resolved backlog ticket: done (or null) or wont_do
+	DuplicateOfID     *string `json:"duplicate_of_id"`
+	DuplicateOfKey    *string `json:"duplicate_of_key"`
+	DuplicateOfTitle  *string `json:"duplicate_of_title"`
 }
 
 // TicketCols + ScanTicket read a ticket row; shared with the tickets package. The last column
@@ -55,7 +58,10 @@ var TicketCols = `t.id, t.created_by, t.assigned_to, t.project_id, t.column_id, 
 	to_char(t.started_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'), t.planned_sprint_id,
 	(SELECT kp.key_prefix FROM projects kp WHERE kp.id = t.project_id) || '-' || t.number,
 	t.external_source, t.external_url,
-	to_char(t.review_requested_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'), t.resolution`
+	to_char(t.review_requested_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'), t.resolution,
+	t.duplicate_of,
+	(SELECT kp.key_prefix || '-' || kt.number FROM tickets kt JOIN projects kp ON kp.id = kt.project_id WHERE kt.id = t.duplicate_of),
+	(SELECT kt.title FROM tickets kt WHERE kt.id = t.duplicate_of)`
 
 func ScanTicket(row pgx.Row) (Ticket, error) {
 	var t Ticket
@@ -64,12 +70,12 @@ func ScanTicket(row pgx.Row) (Ticket, error) {
 }
 
 // TicketDoneSQL is true when ticket t sits in its board's last column ("done"), the same rule
-// sprint carry-over uses, or was resolved in the backlog. Done tickets are locked against new attachments.
+// sprint carry-over uses, was resolved in the backlog, or is marked as a duplicate. Done tickets are locked against new attachments.
 var TicketDoneSQL = DoneSQL("t")
 
 // DoneSQL is TicketDoneSQL for a ticket table alias other than t.
 func DoneSQL(a string) string {
-	return `(` + a + `.resolved_at IS NOT NULL OR (` + a + `.column_id IS NOT NULL AND ` + a + `.column_id = (
+	return `(` + a + `.duplicate_of IS NOT NULL OR ` + a + `.resolved_at IS NOT NULL OR (` + a + `.column_id IS NOT NULL AND ` + a + `.column_id = (
 	SELECT dc.id FROM columns dc WHERE dc.board_id = ` + a + `.board_id ORDER BY dc.position DESC LIMIT 1)))`
 }
 
@@ -79,7 +85,7 @@ var TicketBlockedSQL = `EXISTS (SELECT 1 FROM ticket_dependencies td JOIN ticket
 
 // TicketDest lists scan targets matching TicketCols, for queries that select extra columns after them.
 func TicketDest(t *Ticket) []any {
-	return []any{&t.ID, &t.CreatedBy, &t.AssignedTo, &t.ProjectID, &t.ColumnID, &t.SprintID, &t.Type, &t.Title, &t.Description, &t.Priority, &t.Estimate, &t.Position, &t.Blocked, &t.Labels, &t.ResolvedAt, &t.CreatedAt, &t.UpdatedAt, &t.DoneAt, &t.StartedAt, &t.PlannedSprintID, &t.Key, &t.ExternalSource, &t.ExternalURL, &t.ReviewRequestedAt, &t.Resolution}
+	return []any{&t.ID, &t.CreatedBy, &t.AssignedTo, &t.ProjectID, &t.ColumnID, &t.SprintID, &t.Type, &t.Title, &t.Description, &t.Priority, &t.Estimate, &t.Position, &t.Blocked, &t.Labels, &t.ResolvedAt, &t.CreatedAt, &t.UpdatedAt, &t.DoneAt, &t.StartedAt, &t.PlannedSprintID, &t.Key, &t.ExternalSource, &t.ExternalURL, &t.ReviewRequestedAt, &t.Resolution, &t.DuplicateOfID, &t.DuplicateOfKey, &t.DuplicateOfTitle}
 }
 
 // Sprint is a board's time box; only the open one is shown on the board.

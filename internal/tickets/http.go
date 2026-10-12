@@ -119,7 +119,7 @@ func writeErr(w http.ResponseWriter, err error) {
 	case errors.Is(err, ErrInvalidType), errors.Is(err, ErrBadPriority), errors.Is(err, ErrBadBacklogSort), errors.Is(err, ErrBadExternal):
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
-	case errors.Is(err, ErrOnBoard), errors.Is(err, boards.ErrBoardArchived):
+	case errors.Is(err, ErrOnBoard), errors.Is(err, ErrIsDuplicate), errors.Is(err, boards.ErrBoardArchived):
 		http.Error(w, err.Error(), http.StatusConflict)
 		return
 	case errors.Is(err, ErrAlreadyAssigned):

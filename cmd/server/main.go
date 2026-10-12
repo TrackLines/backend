@@ -13,7 +13,9 @@ import (
 	"github.com/tracklines/backend/internal/auth"
 	"github.com/tracklines/backend/internal/billing"
 	"github.com/tracklines/backend/internal/config"
+	"github.com/tracklines/backend/internal/integrations"
 	"github.com/tracklines/backend/internal/migrations"
+	"github.com/tracklines/backend/internal/secrets"
 	"github.com/valkey-io/valkey-go"
 )
 
@@ -48,6 +50,11 @@ func run() error {
 	// migrate before serving, fail fast
 	if err := migrations.Up(db); err != nil {
 		return fmt.Errorf("migrate database: %w", err)
+	}
+	if box, err := secrets.New(pc.SecretKey); err == nil {
+		if err := (integrations.Store{DB: db, Box: box}).MigrateSealedSecrets(context.Background()); err != nil {
+			return fmt.Errorf("migrate integration secrets: %w", err)
+		}
 	}
 
 	vkOpt, err := valkey.ParseURL(pc.ValkeyURL)

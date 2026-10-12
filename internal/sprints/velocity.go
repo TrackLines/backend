@@ -54,7 +54,7 @@ func (s Store) Velocity(ctx context.Context, owner, boardID string) (*Velocity, 
 
 	rows, err := s.DB.Query(ctx, `SELECT sp.number, to_char(sp.starts_at AT TIME ZONE 'UTC', `+ts+`),
 			to_char(sp.closed_at AT TIME ZONE 'UTC', `+ts+`), t.id, t.estimate
-		FROM sprints sp LEFT JOIN tickets t ON t.sprint_id = sp.id AND `+boards.TicketDoneSQL+`
+		FROM sprints sp LEFT JOIN tickets t ON t.sprint_id = sp.id AND t.duplicate_of IS NULL AND `+boards.TicketDoneSQL+`
 		WHERE sp.board_id = $1 AND sp.closed_at IS NOT NULL ORDER BY sp.number`, boardID)
 	if err != nil {
 		return nil, err
@@ -119,7 +119,7 @@ func (s Store) burn(ctx context.Context, sprintID, unit string) (*Burn, error) {
 	// done before done_at existed (or stamped oddly): count it from the sprint's start
 	rows, err := s.DB.Query(ctx, `SELECT t.estimate, `+boards.TicketDoneSQL+`,
 			to_char(greatest(COALESCE(t.done_at, sp.starts_at), sp.starts_at) AT TIME ZONE 'UTC', `+ts+`)
-		FROM tickets t JOIN sprints sp ON sp.id = t.sprint_id WHERE t.sprint_id = $1 ORDER BY 3`, sprintID)
+		FROM tickets t JOIN sprints sp ON sp.id = t.sprint_id WHERE t.sprint_id = $1 AND t.duplicate_of IS NULL ORDER BY 3`, sprintID)
 	if err != nil {
 		return nil, err
 	}
@@ -176,7 +176,7 @@ func (s Store) Detail(ctx context.Context, owner, id string) (*SprintDetail, err
 	if d.Burn, err = s.burn(ctx, d.ID, d.Unit); err != nil {
 		return nil, err
 	}
-	rows, err := s.DB.Query(ctx, `SELECT `+boards.TicketCols+` FROM tickets t WHERE t.sprint_id = $1 ORDER BY t.done_at NULLS LAST, t.position`, d.ID)
+	rows, err := s.DB.Query(ctx, `SELECT `+boards.TicketCols+` FROM tickets t WHERE t.sprint_id = $1 AND t.duplicate_of IS NULL ORDER BY t.done_at NULLS LAST, t.position`, d.ID)
 	if err != nil {
 		return nil, err
 	}

@@ -80,7 +80,7 @@ func gitErr(w http.ResponseWriter, err error) {
 		http.Error(w, err.Error(), http.StatusForbidden)
 	case errors.Is(err, ErrProviderCall):
 		logs.Warnf("integrations: %v", err)
-		http.Error(w, err.Error(), http.StatusBadGateway)
+		http.Error(w, "provider call failed", http.StatusBadGateway)
 	default:
 		logs.Errorf("integrations: %v", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)

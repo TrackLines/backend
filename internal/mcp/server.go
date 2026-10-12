@@ -42,7 +42,10 @@ func Handler(api http.Handler, version string) http.Handler {
 				"the last column of a board is Done. Typical flow: list_projects, list_open_tickets, claim_ticket, move_ticket, add_comment. " +
 				"Work like a member of the team: while a sprint is open, only pick tickets in it (in_sprint=true in list_open_tickets), and fix bugs before feature/task tickets in that sprint. " +
 				"Don't start backlog or out-of-sprint tickets unless no sprint ticket is claimable or the user asks for that ticket. " +
-				"Tickets have keys like TL-123 (project prefix + number); any ticket_id argument takes a key or a UUID.",
+				"Tickets have keys like TL-123 (project prefix + number); any ticket_id argument takes a key or a UUID. " +
+				"Before working a ticket, read all of it: get_ticket, then list_comments, and, when attachment_count > 0, list_attachments " +
+				"and open the files (they're often a design, screenshot or log that explains the ticket better than its text). " +
+				"Build what the attachments show; if they and the description disagree, ask or follow the newer one.",
 		})
 		call := requester(api, r.Header)
 		for _, t := range tools {
@@ -184,7 +187,7 @@ func failed(msg string) *sdk.CallToolResult {
 }
 
 // resolveKeys lets every tool take ticket keys (TL-123) wherever it takes ticket ids: ticket_id,
-// parent_id and ticket_ids are swapped for ids through GET /api/ticket-keys/{key}.
+// parent_id, duplicate_of and ticket_ids are swapped for ids through GET /api/ticket-keys/{key}.
 func resolveKeys(ctx context.Context, call caller, args map[string]any) error {
 	resolve := func(v any) (any, error) {
 		key, ok := v.(string)
@@ -200,7 +203,7 @@ func resolveKeys(ctx context.Context, call caller, args map[string]any) error {
 		}
 		return t.ID, nil
 	}
-	for _, name := range []string{"ticket_id", "parent_id"} {
+	for _, name := range []string{"ticket_id", "parent_id", "duplicate_of"} {
 		if v, ok := args[name]; ok {
 			id, err := resolve(v)
 			if err != nil {

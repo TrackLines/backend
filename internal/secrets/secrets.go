@@ -35,8 +35,18 @@ func New(key string) (Box, error) {
 
 func (b Box) Ready() bool { return b.aead != nil }
 
-// Seal returns nonce || ciphertext.
+// Seal returns nonce || ciphertext for values that do not have an external identity.
 func (b Box) Seal(plain string) ([]byte, error) {
+	return b.seal(plain, nil)
+}
+
+// SealWithAAD binds ciphertext to its owning record. The same associated data must be
+// supplied to OpenWithAAD; changing the org or provider makes authentication fail.
+func (b Box) SealWithAAD(plain, associatedData string) ([]byte, error) {
+	return b.seal(plain, []byte(associatedData))
+}
+
+func (b Box) seal(plain string, associatedData []byte) ([]byte, error) {
 	if b.aead == nil {
 		return nil, ErrNoKey
 	}
@@ -44,10 +54,25 @@ func (b Box) Seal(plain string) ([]byte, error) {
 	if _, err := rand.Read(nonce); err != nil {
 		return nil, err
 	}
-	return b.aead.Seal(nonce, nonce, []byte(plain), nil), nil
+	return b.aead.Seal(nonce, nonce, []byte(plain), associatedData), nil
 }
 
 func (b Box) Open(sealed []byte) (string, error) {
+	return b.open(sealed, nil)
+}
+
+// OpenWithAAD opens a value sealed with SealWithAAD.
+func (b Box) OpenWithAAD(sealed []byte, associatedData string) (string, error) {
+	return b.open(sealed, []byte(associatedData))
+}
+
+// OpenLegacy opens values sealed before record-bound associated data was introduced.
+// Restrict use to the one-time re-seal migration.
+func (b Box) OpenLegacy(sealed []byte) (string, error) {
+	return b.Open(sealed)
+}
+
+func (b Box) open(sealed, associatedData []byte) (string, error) {
 	if b.aead == nil {
 		return "", ErrNoKey
 	}
@@ -55,6 +80,6 @@ func (b Box) Open(sealed []byte) (string, error) {
 	if len(sealed) < n {
 		return "", errors.New("sealed secret is too short")
 	}
-	plain, err := b.aead.Open(nil, sealed[:n], sealed[n:], nil)
+	plain, err := b.aead.Open(nil, sealed[:n], sealed[n:], associatedData)
 	return string(plain), err
 }

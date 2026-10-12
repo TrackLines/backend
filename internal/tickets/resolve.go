@@ -36,15 +36,18 @@ func (s Store) ResolveAs(ctx context.Context, owner, actor, id, resolution, reas
 	}
 	tag, err := s.DB.Exec(ctx, `UPDATE tickets t SET resolved_at = COALESCE(t.resolved_at, now()),
 			done_at = COALESCE(t.done_at, now()), resolution = $3, updated_at = now()
-		FROM projects p WHERE t.id = $1 AND p.id = t.project_id AND p.owner_clerk_id = $2 AND t.board_id IS NULL`, id, owner, resolution)
+		FROM projects p WHERE t.id = $1 AND p.id = t.project_id AND p.owner_clerk_id = $2 AND t.board_id IS NULL AND t.duplicate_of IS NULL`, id, owner, resolution)
 	if err != nil {
 		return notFound(err)
 	}
 	if tag.RowsAffected() == 0 { // not the owner's ticket, or it's on a board
-		var onBoard bool
-		if err := s.DB.QueryRow(ctx, `SELECT t.board_id IS NOT NULL FROM tickets t JOIN projects p ON p.id = t.project_id
-			WHERE t.id = $1 AND p.owner_clerk_id = $2`, id, owner).Scan(&onBoard); err != nil {
+		var onBoard, duplicate bool
+		if err := s.DB.QueryRow(ctx, `SELECT t.board_id IS NOT NULL, t.duplicate_of IS NOT NULL FROM tickets t JOIN projects p ON p.id = t.project_id
+			WHERE t.id = $1 AND p.owner_clerk_id = $2`, id, owner).Scan(&onBoard, &duplicate); err != nil {
 			return notFound(err)
+		}
+		if duplicate {
+			return ErrIsDuplicate
 		}
 		return ErrOnBoard
 	}

@@ -41,10 +41,10 @@ func Points(estimate *string) float64 {
 	return p
 }
 
-// RecordScope stores what an open sprint holds (ticket count and estimate points) just before it
-// closes, while unfinished tickets are still in it. Past burn charts start from this.
+// RecordScope stores what an open sprint holds (excluding duplicate tickets) just before it closes.
+// Past burn charts start from this.
 func RecordScope(ctx context.Context, tx pgx.Tx, sprintID string) error {
-	rows, err := tx.Query(ctx, `SELECT estimate FROM tickets WHERE sprint_id = $1`, sprintID)
+	rows, err := tx.Query(ctx, `SELECT estimate FROM tickets WHERE sprint_id = $1 AND duplicate_of IS NULL`, sprintID)
 	if err != nil {
 		return err
 	}

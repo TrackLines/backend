@@ -1095,6 +1095,43 @@ paths:
       summary: A project's archived boards, most recently archived first
       responses:
         '200': { description: Boards., content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Board' } } } } }
+  /push:
+    get:
+      tags: [Notifications]
+      operationId: pushKey
+      summary: Whether this server sends Web Push, and the VAPID public key browsers subscribe with
+      responses:
+        '200': { description: Push settings., content: { application/json: { schema: { type: object, properties: { enabled: { type: boolean }, public_key: { type: string } } } } } }
+  /push/subscriptions:
+    post:
+      tags: [Notifications]
+      operationId: subscribePush
+      summary: Turn on notifications for this device (signed-in people only)
+      description: >-
+        The browser's PushSubscription. The endpoint must be https on a known push service (Google, Mozilla,
+        Apple, Microsoft): the server sends to it. The same browser subscribing again takes the row over.
+        The device then gets every notification from the inbox, even with Tracklines closed.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [endpoint, keys], properties: { endpoint: { type: string, format: uri }, keys: { type: object, required: [p256dh, auth], properties: { p256dh: { type: string }, auth: { type: string } } } } }
+      responses:
+        '204': { description: Subscribed. }
+        '400': { description: Not a browser push subscription. }
+        '403': { description: API keys can't subscribe devices. }
+        '503': { description: Push isn't set up on this server. }
+    delete:
+      tags: [Notifications]
+      operationId: unsubscribePush
+      summary: Turn off notifications for this device
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [endpoint], properties: { endpoint: { type: string } } }
+      responses:
+        '204': { description: Unsubscribed (your own devices only). }
   /notifications:
     get:
       tags: [Notifications]
@@ -1707,6 +1744,34 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { description: The ticket is on a board; move it to the board's Done column instead. }
+  /tickets/{ticketId}/duplicate:
+    post:
+      tags: [Tickets]
+      operationId: markTicketDuplicate
+      summary: Close a ticket as a duplicate
+      description: >-
+        Marks ticketId as a duplicate of another ticket in the same project, closes it, and links it from the
+        original. Optionally copies labels and comments to the original. Duplicate tickets do not count toward
+        sprint velocity or carry-over. MCP tool mark_duplicate accepts ticket keys or ids.
+      parameters:
+        - $ref: '#/components/parameters/TicketId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [duplicate_of]
+              properties:
+                duplicate_of: { type: string, description: Original ticket UUID (MCP also accepts a ticket key). }
+                copy_labels: { type: boolean, default: false }
+                copy_comments: { type: boolean, default: false }
+      responses:
+        '204': { description: Ticket marked as a duplicate. }
+        '400': { description: Tickets must be different, in the same project, and the original cannot itself be a duplicate. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: The ticket is already marked as a duplicate. }
   /tickets/{ticketId}/backlog:
     post:
       tags: [Tickets]
@@ -2916,7 +2981,10 @@ components:
         key: { type: string, example: TL-123, description: "The project's key prefix and the ticket's number in the project, assigned on create. For branch names, PR titles and search." }
         external_source: { type: [string, 'null'], description: Where an integration made it (bugfixes); null for our own tickets. }
         external_url: { type: [string, 'null'], description: Link to it there (e.g. the Bugfixes report). }
-        resolution: { type: [string, 'null'], enum: [done, wont_do, null], description: "How a resolved backlog ticket was closed (null = done)." }
+        resolution: { type: [string, 'null'], enum: [done, wont_do, duplicate, null], description: "How a resolved backlog ticket was closed." }
+        duplicate_of_id: { type: [string, 'null'], format: uuid, description: The original ticket when this ticket is marked as a duplicate. }
+        duplicate_of_key: { type: [string, 'null'], description: Key of the original ticket. }
+        duplicate_of_title: { type: [string, 'null'], description: Title of the original ticket. }
         review_requested_at: { type: [string, 'null'], format: date-time, description: "Set while an agent's finished ticket waits for a person's review (in the column before Done)." }
     Column:
       type: object
@@ -3145,6 +3213,7 @@ components:
         column_id: { type: [string, 'null'], format: uuid }
         column_name: { type: [string, 'null'] }
         done: { type: boolean }
+        attachment_count: { type: integer, description: 'Files on the ticket (list them with GET /tickets/{ticketId}/attachments): designs, screenshots, logs.' }
         blocked_by:
           type: array
           items: { $ref: '#/components/schemas/TicketDependency' }
@@ -3158,6 +3227,19 @@ components:
         sprint_id: { type: [string, 'null'], format: uuid }
         position: { type: integer }
         blocked: { type: boolean }
+        resolution: { type: [string, 'null'], enum: [done, wont_do, duplicate, null] }
+        duplicate_of_id: { type: [string, 'null'], format: uuid }
+        duplicate_of_key: { type: [string, 'null'] }
+        duplicate_of_title: { type: [string, 'null'] }
+        duplicates:
+          type: array
+          items:
+            type: object
+            required: [id, key, title]
+            properties:
+              id: { type: string, format: uuid }
+              key: { type: string }
+              title: { type: string }
         sprint_number: { type: [integer, 'null'] }
     TicketDependency:
       type: object

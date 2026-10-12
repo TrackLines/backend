@@ -148,14 +148,25 @@ func (s *Service) Handler() http.Handler {
 	// Tickets
 	// Notifications: an in-app inbox for now (external channels later implement the same Notifier)
 	inbox := notifications.Store{DB: s.DB}
-	nf := notifications.NewSystem(inbox)
+	// Web Push to people's devices too, when the server has VAPID keys (inbox always)
+	pc := config.Get(s.Config)
+	push := notifications.NewPush(s.DB, notifications.PushConfig{PublicKey: pc.VAPIDPublicKey, PrivateKey: pc.VAPIDPrivateKey, Subject: pc.VAPIDSubject})
+	var notify notifications.Notifier = inbox
+	if push.Enabled() {
+		notify = notifications.Multi{inbox, push}
+	}
+	nf := notifications.NewSystem(inbox).WithPush(push)
+	mux.Handle("GET /api/push", signedIn(nf.PushKey))
+	mux.Handle("POST /api/push/subscriptions", signedIn(nf.Subscribe))
+	mux.Handle("DELETE /api/push/subscriptions", signedIn(nf.Unsubscribe))
 	mux.Handle("GET /api/notifications", signedIn(nf.List))
 	mux.Handle("GET /api/notifications/unread-count", signedIn(nf.UnreadCount))
 	mux.Handle("POST /api/notifications/read-all", signedIn(nf.ReadAll))
 	mux.Handle("POST /api/notifications/{id}/read", signedIn(nf.Read))
 	mux.Handle("DELETE /api/notifications/read", signedIn(nf.ClearRead)) // clear everything already read
 	mux.Handle("DELETE /api/notifications/{id}", signedIn(nf.Dismiss))
-	t := tickets.NewSystem(s.DB).CachingMembers(members).WithNotifier(inbox)
+	t := tickets.NewSystem(s.DB).CachingMembers(members).WithNotifier(notify)
+	push.People = t.People // pushes name who did it
 	mux.Handle("POST /api/columns/{id}/tickets", signedIn(t.Create))
 	mux.Handle("GET /api/tickets/{id}", signedIn(t.Get)) // one ticket + where it lives (deep links)
 	mux.Handle("GET /api/search", signedIn(t.Search))    // full-text over titles, descriptions, comments; exact keys first
@@ -196,12 +207,13 @@ func (s *Service) Handler() http.Handler {
 	mux.Handle("POST /api/tickets/{id}/move", signedIn(t.Move)) // also pulls a ticket out of the backlog
 	mux.Handle("POST /api/tickets/{id}/review", signedIn(t.ReviewTicket))
 	mux.Handle("POST /api/tickets/{id}/backlog", signedIn(t.ToBacklog))
-	mux.Handle("POST /api/tickets/{id}/resolve", signedIn(t.Resolve))        // close a backlog ticket in place; completes finished parents
+	mux.Handle("POST /api/tickets/{id}/resolve", signedIn(t.Resolve)) // close a backlog ticket in place; completes finished parents
+	mux.Handle("POST /api/tickets/{id}/duplicate", signedIn(t.MarkDuplicate))
 	mux.Handle("PUT /api/tickets/{id}/parent", signedIn(t.SetParent))        // sub-tickets; null detaches
 	mux.Handle("PUT /api/tickets/{id}/blocked-by", signedIn(t.SetBlockedBy)) // dependencies; claim is refused while blocked
 
 	// Comments — a ticket's conversation, separate from its description; replies via parent_comment_id
-	cm := comments.NewSystem(s.DB).WithMentions(inbox, t.People)
+	cm := comments.NewSystem(s.DB).WithMentions(notify, t.People)
 	mux.Handle("GET /api/tickets/{id}/comments", signedIn(cm.List))
 	mux.Handle("POST /api/tickets/{id}/comments", signedIn(cm.Create))
 
@@ -219,7 +231,7 @@ func (s *Service) Handler() http.Handler {
 	mux.Handle("GET /api/projects/{id}/labels", signedIn(t.ProjectLabels)) // labels in use, for suggestions
 
 	// Sprints — per team board; closing opens the next and carries unfinished tickets over
-	sp := sprints.NewSystem(s.DB, o.AdminModel()).WithLive(s.Valkey).WithNotifier(inbox)
+	sp := sprints.NewSystem(s.DB, o.AdminModel()).WithLive(s.Valkey).WithNotifier(notify)
 	lv := live.New(s.Valkey, boards.Store{DB: s.DB})
 	mux.Handle("POST /api/boards/{id}/live/standup", signedIn(lv.Start))
 	mux.Handle("GET /api/boards/{id}/live/standup", signedIn(lv.Get))
