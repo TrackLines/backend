@@ -49,6 +49,13 @@ func TestTicketKeys(t *testing.T) {
 	if tl != "TL" || tl2 != "TLM" || other != "TL" || flags != "FLA" {
 		t.Fatalf("prefixes: %s %s %s %s", tl, tl2, other, flags)
 	}
+	// a name starting with a digit still gets a letter-first prefix (TL-181: 2FA broke the insert)
+	_, digit := project("ky1", "2fa")
+	_, digits := project("ky1", "42")
+	_, none := project("ky1", "!!")
+	if digit != "P2FA" || digits != "P42" || none != "PX" {
+		t.Fatalf("letter first: %s %s %s", digit, digits, none)
+	}
 	_, again := project("ky1", "Track Lines") // capitals TL taken in ky1
 	if again != "TL2" {
 		t.Fatalf("collision: %s", again)
