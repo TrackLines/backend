@@ -449,6 +449,7 @@ func (s Store) move(ctx context.Context, owner, id, toColumn string, pos int, o 
 				estimate = $5,
 				-- waiting for review only while an agent's finish is held; any other move clears it
 				review_requested_at = CASE WHEN $6 THEN COALESCE(t.review_requested_at, now()) END,
+				agent_review_at = CASE WHEN $6 THEN COALESCE(t.agent_review_at, now()) ELSE t.agent_review_at END,
 				-- The first move out of the source board's first column starts cycle time.
 				started_at = CASE WHEN t.column_id = (SELECT fc.id FROM columns fc WHERE fc.board_id = t.board_id ORDER BY fc.position LIMIT 1)
 					AND $3 <> (SELECT fc.id FROM columns fc WHERE fc.board_id = t.board_id ORDER BY fc.position LIMIT 1)
@@ -473,17 +474,26 @@ func (s Store) move(ctx context.Context, owner, id, toColumn string, pos int, o 
 // ToBacklog takes a ticket off its board/sprint and appends it to the project backlog. Its estimate
 // goes too: the backlog has no scale.
 func (s Store) ToBacklog(ctx context.Context, owner, id string) error {
+	return s.ToBacklogAs(ctx, owner, id, false)
+}
+
+// ToBacklogAs moves a ticket to the backlog, refusing to let an agent bypass requested review.
+func (s Store) ToBacklogAs(ctx context.Context, owner, id string, agent bool) error {
 	return pgx.BeginFunc(ctx, s.DB, func(tx pgx.Tx) error {
 		var from, fromSprint *string
 		var duplicate bool
-		err := tx.QueryRow(ctx, `SELECT t.column_id, t.sprint_id, t.duplicate_of IS NOT NULL FROM tickets t
+		var reviewPending bool
+		err := tx.QueryRow(ctx, `SELECT t.column_id, t.sprint_id, t.duplicate_of IS NOT NULL, t.review_requested_at IS NOT NULL FROM tickets t
 			JOIN projects p ON p.id = t.project_id AND p.owner_clerk_id = $2
-			WHERE t.id = $1 FOR UPDATE OF t`, id, owner).Scan(&from, &fromSprint, &duplicate)
+			WHERE t.id = $1 FOR UPDATE OF t`, id, owner).Scan(&from, &fromSprint, &duplicate, &reviewPending)
 		if err != nil {
 			return notFound(err)
 		}
 		if duplicate {
 			return ErrIsDuplicate
+		}
+		if agent && reviewPending {
+			return ErrAgentReviewBypass
 		}
 		if from == nil {
 			return nil // already in the backlog

@@ -154,7 +154,14 @@ func TestPRWebhooks(t *testing.T) {
 		t.Fatal("an unlinked repo linked a PR")
 	}
 
-	// Bitbucket: pullrequest:fulfilled closes the ticket it mentions
+	// Bitbucket: pullrequest:fulfilled closes the ticket it mentions. Each linked repo has its own
+	// webhook secret, sealed to the link (TL-165); deliveries name the link.
+	var bbLink string
+	_ = db.QueryRow(ctx, `SELECT id FROM project_repos WHERE org_id = 'org_pr' AND provider = 'bitbucket'`).Scan(&bbLink)
+	sealedHook, _ := box.SealWithAAD("bb", "bitbucket-hook|"+bbLink)
+	if _, err := db.Exec(ctx, `UPDATE project_repos SET webhook_id = '{h}', webhook_secret = $2 WHERE id = $1`, bbLink, sealedHook); err != nil {
+		t.Fatal(err)
+	}
 	bbTicket, _ := ts.Create(ctx, "org_pr", b.Columns[0].ID, "task", "Feed parser", "")
 	bb := func(event, state string) int {
 		body := `{"repository":{"full_name":"chewed/feed"},"pullrequest":{"id":12,"title":"Parser fix","description":"closes ` + bbTicket.Key + `",
@@ -163,8 +170,9 @@ func TestPRWebhooks(t *testing.T) {
 		req := httptest.NewRequest("POST", "/", strings.NewReader(body))
 		req.Header.Set("X-Event-Key", event)
 		req.Header.Set("X-Hub-Signature", sign(body, "bb"))
+		req.SetPathValue("link", bbLink)
 		rec := httptest.NewRecorder()
-		h.BitbucketWebhook("bb")(rec, req)
+		h.BitbucketWebhook(rec, req)
 		return rec.Code
 	}
 	if code := bb("pullrequest:created", "OPEN"); code != 204 || len(prs(bbTicket.ID)) != 1 || done(bbTicket.ID) {

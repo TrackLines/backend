@@ -12,7 +12,10 @@ import (
 	"github.com/tracklines/backend/internal/httpx"
 )
 
-var ErrOnBoard = errors.New("this ticket is on a board: move it to the board's Done column instead")
+var (
+	ErrOnBoard           = errors.New("this ticket is on a board: move it to the board's Done column instead")
+	ErrAgentReviewBypass = errors.New("agents cannot bypass human review")
+)
 
 // Resolve closes a backlog ticket in place: it counts as done everywhere (boards.DoneSQL) and leaves
 // the backlog, but keeps its links and stays readable by id. Resolving again is a no-op. Moving it
@@ -31,12 +34,17 @@ var ErrBadResolution = errors.New("resolution must be done or wont_do")
 // ResolveAs resolves a backlog ticket as done or wont_do (decided against: it stays, readable, so whoever
 // raised it can be told). A reason is added as a comment by actor. Resolving again updates the resolution.
 func (s Store) ResolveAs(ctx context.Context, owner, actor, id, resolution, reason string) error {
+	return s.ResolveAsAgent(ctx, owner, actor, id, resolution, reason, false)
+}
+
+func (s Store) ResolveAsAgent(ctx context.Context, owner, actor, id, resolution, reason string, agent bool) error {
 	if resolution != ResolutionDone && resolution != ResolutionWontDo {
 		return ErrBadResolution
 	}
 	tag, err := s.DB.Exec(ctx, `UPDATE tickets t SET resolved_at = COALESCE(t.resolved_at, now()),
 			done_at = COALESCE(t.done_at, now()), resolution = $3, updated_at = now()
-		FROM projects p WHERE t.id = $1 AND p.id = t.project_id AND p.owner_clerk_id = $2 AND t.board_id IS NULL AND t.duplicate_of IS NULL`, id, owner, resolution)
+		FROM projects p WHERE t.id = $1 AND p.id = t.project_id AND p.owner_clerk_id = $2 AND t.board_id IS NULL AND t.duplicate_of IS NULL
+			AND (NOT $4 OR t.agent_review_at IS NULL)`, id, owner, resolution, agent)
 	if err != nil {
 		return notFound(err)
 	}
@@ -48,6 +56,16 @@ func (s Store) ResolveAs(ctx context.Context, owner, actor, id, resolution, reas
 		}
 		if duplicate {
 			return ErrIsDuplicate
+		}
+		if agent && !onBoard {
+			var reviewed bool
+			if err := s.DB.QueryRow(ctx, `SELECT t.agent_review_at IS NOT NULL FROM tickets t JOIN projects p ON p.id = t.project_id
+				WHERE t.id = $1 AND p.owner_clerk_id = $2 AND t.board_id IS NULL`, id, owner).Scan(&reviewed); err != nil {
+				return notFound(err)
+			}
+			if reviewed {
+				return ErrAgentReviewBypass
+			}
 		}
 		return ErrOnBoard
 	}
@@ -122,7 +140,7 @@ func (h System) Resolve(w http.ResponseWriter, r *http.Request) {
 	}
 	org := auth.OrgID(r.Context())
 	before := h.detail(r.Context(), org, r.PathValue("id"))
-	if err := h.store.ResolveAs(r.Context(), org, auth.ActorID(r.Context()), r.PathValue("id"), in.Resolution, in.Reason); err != nil {
+	if err := h.store.ResolveAsAgent(r.Context(), org, auth.ActorID(r.Context()), r.PathValue("id"), in.Resolution, in.Reason, auth.ViaAPIKey(r.Context())); err != nil {
 		if errors.Is(err, ErrBadResolution) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return

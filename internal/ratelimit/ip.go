@@ -52,7 +52,7 @@ func (s *statusRecorder) WriteHeader(code int) {
 	s.ResponseWriter.WriteHeader(code)
 }
 
-// BadKeys wraps the API-key middlewares: a client address that presents perMinute invalid tl_/bf_
+// BadKeys wraps the API-key middlewares: a client address that presents perMinute invalid tl_ (or retired bf_)
 // keys in a minute is refused (429) before any further key lookups hit the database.
 func BadKeys(c Counter, perMinute int, now func() time.Time) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {

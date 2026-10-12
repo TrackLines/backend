@@ -25,7 +25,7 @@ type Git struct {
 	GitHubClientSecret  string `env:"GITHUB_CLIENT_SECRET"`
 	BitbucketClientID   string `env:"BITBUCKET_CLIENT_ID"`
 	BitbucketSecret     string `env:"BITBUCKET_CLIENT_SECRET"`
-	BitbucketWebhook    string `env:"BITBUCKET_WEBHOOK_SECRET"`
+	PublicAPIURL        string `env:"PUBLIC_API_URL" envDefault:"https://api.tracklin.es"` // where providers call back (Bitbucket hooks Tracklines creates per repo)
 }
 
 // Project is the tracklines-specific config; go-config owns Postgres, Clerk, Bugfixes, Flags, Local.

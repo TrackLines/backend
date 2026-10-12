@@ -58,6 +58,12 @@ func TestAgentReview(t *testing.T) {
 	review := func(as context.Context, id, body string) *httptest.ResponseRecorder {
 		return call(as, h.ReviewTicket, id, body)
 	}
+	backlog := func(as context.Context, id string) *httptest.ResponseRecorder {
+		return call(as, h.ToBacklog, id, "")
+	}
+	resolve := func(as context.Context, id string) *httptest.ResponseRecorder {
+		return call(as, h.Resolve, id, "")
+	}
 	state := func(id string) (column string, done, waiting bool) {
 		tk, err := s.Get(ctx, "rv1", id)
 		if err != nil {
@@ -86,6 +92,23 @@ func TestAgentReview(t *testing.T) {
 	}
 	if col, d, w := state(c.ID); col != doing || d || !w {
 		t.Fatalf("waiting state: %s done=%v waiting=%v", col, d, w)
+	}
+	// Neither backlog transfer nor later resolution can let an agent bypass the review.
+	bypass, _ := s.Create(ctx, "rv1", todo, "task", "review bypass", "")
+	if rec := move(agent, bypass.ID, done); rec.Code != 200 {
+		t.Fatalf("request review: %d %s", rec.Code, rec.Body)
+	}
+	if rec := backlog(agent, bypass.ID); rec.Code != http.StatusConflict {
+		t.Fatalf("agent backlog bypass: %d %s", rec.Code, rec.Body)
+	}
+	if rec := backlog(person, bypass.ID); rec.Code != http.StatusNoContent {
+		t.Fatalf("person backlog: %d %s", rec.Code, rec.Body)
+	}
+	if rec := resolve(agent, bypass.ID); rec.Code != http.StatusConflict {
+		t.Fatalf("agent resolve bypass: %d %s", rec.Code, rec.Body)
+	}
+	if rec := resolve(person, bypass.ID); rec.Code != http.StatusNoContent {
+		t.Fatalf("person resolve: %d %s", rec.Code, rec.Body)
 	}
 	// agents can't review their own work; nor review what isn't waiting
 	if rec := review(agent, c.ID, `{"approve":true}`); rec.Code != 403 {

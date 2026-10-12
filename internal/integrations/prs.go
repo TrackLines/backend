@@ -214,16 +214,10 @@ func bitbucketPR(event string, body []byte) (PullRequest, bool) {
 		State: state, Author: p.Author.DisplayName, Branch: p.Source.Branch.Name, body: p.Description}, true
 }
 
-// orgsFor: GitHub events name the installation (the orgs connected through it); Bitbucket
-// webhooks are per repo, so every org that linked the repo.
+// orgsFor: a GitHub event names the installation; the org connected through it (one: TL-158).
+// Bitbucket deliveries name their link instead (BitbucketWebhook).
 func (h System) orgsFor(ctx context.Context, provider, installation, repo string) ([]string, error) {
-	var rows pgx.Rows
-	var err error
-	if provider == GitHub {
-		rows, err = h.store.DB.Query(ctx, `SELECT org_id FROM org_integrations WHERE provider = 'github' AND external_id = $1`, installation)
-	} else {
-		rows, err = h.store.DB.Query(ctx, `SELECT org_id FROM project_repos WHERE provider = 'bitbucket' AND lower(full_name) = lower($1)`, repo)
-	}
+	rows, err := h.store.DB.Query(ctx, `SELECT org_id FROM org_integrations WHERE provider = 'github' AND external_id = $1`, installation)
 	if err != nil {
 		return nil, err
 	}

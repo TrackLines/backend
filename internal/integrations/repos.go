@@ -3,6 +3,7 @@ package integrations
 import (
 	"context"
 	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -204,8 +205,9 @@ func (h System) LinkRepo(w http.ResponseWriter, r *http.Request) {
 		gitErr(w, ErrRepoNotVisible)
 		return
 	}
-	_, err = h.store.DB.Exec(r.Context(), `INSERT INTO project_repos (project_id, org_id, provider, full_name, default_branch) VALUES ($1, $2, $3, $4, $5)`,
-		project, org, in.Provider, repo.FullName, repo.DefaultBranch)
+	var link string
+	err = h.store.DB.QueryRow(r.Context(), `INSERT INTO project_repos (project_id, org_id, provider, full_name, default_branch) VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+		project, org, in.Provider, repo.FullName, repo.DefaultBranch).Scan(&link)
 	var pg *pgconn.PgError
 	if errors.As(err, &pg) && pg.Code == "23505" {
 		gitErr(w, ErrRepoLinked)
@@ -214,6 +216,14 @@ func (h System) LinkRepo(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		gitErr(w, err)
 		return
+	}
+	if in.Provider == Bitbucket {
+		// its own webhook and secret, made by us, so the secret is never shared or shown (TL-165)
+		if err := h.bitbucketHook(r.Context(), org, link, repo.FullName); err != nil {
+			_, _ = h.store.DB.Exec(r.Context(), `DELETE FROM project_repos WHERE id = $1`, link)
+			gitErr(w, err)
+			return
+		}
 	}
 	httpx.JSON(w, http.StatusCreated, ProjectRepo{Provider: in.Provider, FullName: repo.FullName, DefaultBranch: repo.DefaultBranch})
 }
@@ -225,15 +235,25 @@ func (h System) UnlinkRepo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	q := r.URL.Query()
-	tag, err := h.store.DB.Exec(r.Context(), `DELETE FROM project_repos WHERE project_id::text = $1 AND org_id = $2 AND provider = $3 AND full_name = $4`,
-		r.PathValue("id"), org, q.Get("provider"), q.Get("full_name"))
+	var fullName string
+	var hook *string
+	err := h.store.DB.QueryRow(r.Context(), `DELETE FROM project_repos WHERE project_id::text = $1 AND org_id = $2 AND provider = $3 AND full_name = $4
+		RETURNING full_name, webhook_id`, r.PathValue("id"), org, q.Get("provider"), q.Get("full_name")).Scan(&fullName, &hook)
+	if errors.Is(err, pgx.ErrNoRows) {
+		http.NotFound(w, r)
+		return
+	}
 	if err != nil {
 		gitErr(w, err)
 		return
 	}
-	if tag.RowsAffected() == 0 {
-		http.NotFound(w, r)
-		return
+	if hook != nil { // take our webhook off the repo too (best effort: the link is gone either way)
+		if token, err := h.bitbucketAccess(r.Context(), org); err == nil {
+			err = h.git.bitbucketDeleteHook(r.Context(), token, fullName, *hook)
+			if err != nil {
+				logs.Warnf("integrations: remove bitbucket hook on %s: %v", fullName, err)
+			}
+		}
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -296,28 +316,56 @@ func (h System) GitHubWebhook(secret string) http.HandlerFunc {
 	}
 }
 
-// BitbucketWebhook: POST /api/webhooks/bitbucket (X-Hub-Signature with the webhook secret).
-func (h System) BitbucketWebhook(secret string) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if secret == "" {
-			http.Error(w, "bitbucket webhooks aren't configured", http.StatusServiceUnavailable)
-			return
-		}
-		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 5<<20))
-		if err != nil || !verifyHub(body, r.Header.Get("X-Hub-Signature"), secret) {
-			http.Error(w, "invalid signature", http.StatusBadRequest)
-			return
-		}
-		if pr, ok := bitbucketPR(r.Header.Get("X-Event-Key"), body); ok {
-			orgs, err := h.orgsFor(r.Context(), Bitbucket, "", pr.Repo)
-			if err == nil {
-				err = h.linkPR(r.Context(), orgs, pr)
-			}
-			if err != nil {
-				gitErr(w, err)
-				return
-			}
-		}
-		w.WriteHeader(http.StatusNoContent)
+// bitbucketHook gives a linked repo its own webhook: a fresh secret, sealed and bound to the link,
+// and a URL naming the link, created on Bitbucket with the org's connection.
+func (h System) bitbucketHook(ctx context.Context, org, link, fullName string) error {
+	token, err := h.bitbucketAccess(ctx, org)
+	if err != nil {
+		return err
 	}
+	raw := make([]byte, 32)
+	if _, err := rand.Read(raw); err != nil {
+		return err
+	}
+	secret := hex.EncodeToString(raw)
+	sealed, err := h.store.Box.SealWithAAD(secret, "bitbucket-hook|"+link)
+	if err != nil {
+		return err
+	}
+	hook, err := h.git.bitbucketCreateHook(ctx, token, fullName, strings.TrimRight(h.git.PublicAPI, "/")+"/api/webhooks/bitbucket/"+link, secret)
+	if err != nil {
+		return err
+	}
+	_, err = h.store.DB.Exec(ctx, `UPDATE project_repos SET webhook_id = $2, webhook_secret = $3 WHERE id = $1`, link, hook, sealed)
+	return err
+}
+
+// BitbucketWebhook: POST /api/webhooks/bitbucket/{link}. Each linked repo has its own webhook and
+// secret (X-Hub-Signature), so a delivery only ever touches the org and repo that link belongs to.
+func (h System) BitbucketWebhook(w http.ResponseWriter, r *http.Request) {
+	var org, fullName string
+	var sealed []byte
+	err := h.store.DB.QueryRow(r.Context(), `SELECT org_id, full_name, webhook_secret FROM project_repos
+		WHERE id::text = $1 AND provider = 'bitbucket' AND webhook_secret IS NOT NULL`, r.PathValue("link")).Scan(&org, &fullName, &sealed)
+	if err != nil {
+		http.NotFound(w, r) // unknown or unlinked: Bitbucket stops retrying a hook that's gone
+		return
+	}
+	secret, err := h.store.Box.OpenWithAAD(sealed, "bitbucket-hook|"+r.PathValue("link"))
+	if err != nil {
+		gitErr(w, err)
+		return
+	}
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 5<<20))
+	if err != nil || !verifyHub(body, r.Header.Get("X-Hub-Signature"), secret) {
+		http.Error(w, "invalid signature", http.StatusBadRequest)
+		return
+	}
+	if pr, ok := bitbucketPR(r.Header.Get("X-Event-Key"), body); ok && strings.EqualFold(pr.Repo, fullName) {
+		if err := h.linkPR(r.Context(), []string{org}, pr); err != nil {
+			gitErr(w, err)
+			return
+		}
+	}
+	w.WriteHeader(http.StatusNoContent)
 }

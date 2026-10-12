@@ -671,45 +671,6 @@ paths:
         '500':
           $ref: '#/components/responses/InternalError'
 
-  /bugfixes/tickets:
-    post:
-      tags: [Tickets]
-      operationId: createBugfixTicket
-      summary: Create a ticket as a BugFixes agent
-      description: >-
-        Creates a bug in the backlog of the board's project (never on the board itself: the team triages, sizes and pulls
-        it onto a board) and records the API key's agent name as `created_by`. board_id and column_id only identify the
-        project; the response's board_id and column_id are empty. Prefer POST /projects/{projectId}/backlog.
-      security:
-        - bugfixesBearer: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/CreateBugfixTicket'
-            example:
-              board_id: 185abf7c-bdad-4f01-9e90-9afcfa8c1eea
-              column_id: 29e570c0-2e5b-44ed-b257-4981b1d4a273
-              title: Project creation returns an error
-              body: Creating a project from the dashboard returns HTTP 403.
-              priority: high
-      responses:
-        '201':
-          description: Ticket created.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/BugfixTicket'
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '404':
-          description: Board or column not found.
-        '500':
-          $ref: '#/components/responses/InternalError'
-
   /boards/{boardId}:
     parameters:
       - $ref: '#/components/parameters/BoardId'
@@ -1364,17 +1325,23 @@ paths:
         '400': { description: Bad signature. }
         '503': { description: Not configured. }
 
-  /webhooks/bitbucket:
+  /webhooks/bitbucket/{link}:
+    parameters:
+      - { name: link, in: path, required: true, schema: { type: string, format: uuid }, description: The linked repo the webhook was made for. }
     post:
       tags: [Organizations]
       operationId: bitbucketWebhook
-      summary: Bitbucket repository webhook (X-Hub-Signature with BITBUCKET_WEBHOOK_SECRET)
-      description: pullrequest:* events (X-Event-Key) link PRs to tickets in every org that linked the repo; MERGED closes them, once.
+      summary: Bitbucket repository webhook, one per linked repo
+      description: >-
+        Tracklines creates this webhook itself when an org admin links a Bitbucket repo (POST /projects/{id}/repos),
+        with its own random secret (sealed, never shown) and this URL naming the link; unlinking removes it.
+        Deliveries are verified with that link's secret (X-Hub-Signature) and only affect that link's org and repo:
+        pullrequest:* events (X-Event-Key) link PRs to the tickets they mention; MERGED closes them, once.
       security: []
       responses:
         '204': { description: Accepted. }
         '400': { description: Bad signature. }
-        '503': { description: Not configured. }
+        '404': { description: Unknown or unlinked repo. }
 
   /integrations/{provider}:
     parameters:
@@ -1731,7 +1698,7 @@ paths:
         its board's Done column if it's on a board), and so on up the chain. A ticket on a board is finished by
         moving it to the board's last column instead (409). MCP tool resolve_ticket.
         With resolution wont_do it's closed as decided against (the ticket's resolution says so; the reason, if given,
-        is added as a comment). No body resolves it as done.
+        is added as a comment). No body resolves it as done. Agents cannot resolve tickets that have entered human review.
       parameters:
         - $ref: '#/components/parameters/TicketId'
       requestBody:
@@ -1743,7 +1710,7 @@ paths:
         '204': { description: Resolved. }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
-        '409': { description: The ticket is on a board; move it to the board's Done column instead. }
+        '409': { description: The ticket is on a board or an agent is attempting to bypass human review. }
   /tickets/{ticketId}/duplicate:
     post:
       tags: [Tickets]
@@ -1777,12 +1744,14 @@ paths:
       tags: [Tickets]
       operationId: sendTicketToBacklog
       summary: Move a ticket into its project's backlog
+      description: Agents cannot move tickets awaiting human review into the backlog.
       parameters:
         - $ref: '#/components/parameters/TicketId'
       responses:
         '204': { description: Ticket moved to backlog. }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: An agent attempted to bypass a pending human review. }
 
   /tickets/{ticketId}/blocked-by:
     put:

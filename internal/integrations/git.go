@@ -41,6 +41,7 @@ type Git struct {
 	BitbucketSecret   string
 	BitbucketAuth     string // https://bitbucket.org/site/oauth2
 	BitbucketAPI      string // https://api.bitbucket.org/2.0
+	PublicAPI         string // this API's public address, for webhooks Tracklines creates (https://api.tracklin.es)
 	Client            *http.Client
 	now               func() time.Time
 }
@@ -57,8 +58,8 @@ func (g Git) on(provider string) bool {
 	switch provider {
 	case GitHub:
 		return g.GitHubAppID != "" && g.GitHubAppSlug != "" && g.GitHubPrivateKey != "" && g.GitHubClientID != "" && g.GitHubSecret != ""
-	case Bitbucket:
-		return g.BitbucketClientID != "" && g.BitbucketSecret != ""
+	case Bitbucket: // webhooks are made per repo, so it needs our public address too
+		return g.BitbucketClientID != "" && g.BitbucketSecret != "" && g.PublicAPI != ""
 	}
 	return false
 }
@@ -339,6 +340,43 @@ func (g Git) bitbucketGet(ctx context.Context, path, token string, out any) erro
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	return g.do(req, out)
+}
+
+// bitbucketRepoPath is /repositories/{workspace}/{repo}, each part escaped.
+func bitbucketRepoPath(fullName string) string {
+	ws, repo, _ := strings.Cut(fullName, "/")
+	return "/repositories/" + url.PathEscape(ws) + "/" + url.PathEscape(repo)
+}
+
+// bitbucketCreateHook adds a pull-request webhook to a repo, signed with secret; returns its uuid.
+func (g Git) bitbucketCreateHook(ctx context.Context, token, fullName, target, secret string) (string, error) {
+	body, _ := json.Marshal(map[string]any{
+		"description": "Tracklines", "url": target, "active": true, "secret": secret,
+		"events": []string{"pullrequest:created", "pullrequest:updated", "pullrequest:fulfilled", "pullrequest:rejected"},
+	})
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, orDefault(g.BitbucketAPI, "https://api.bitbucket.org/2.0")+bitbucketRepoPath(fullName)+"/hooks", bytes.NewReader(body))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	var out struct {
+		UUID string `json:"uuid"`
+	}
+	if err := g.do(req, &out); err != nil {
+		return "", err
+	}
+	return out.UUID, nil
+}
+
+// bitbucketDeleteHook removes a webhook Tracklines made (unlinking the repo).
+func (g Git) bitbucketDeleteHook(ctx context.Context, token, fullName, hook string) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, orDefault(g.BitbucketAPI, "https://api.bitbucket.org/2.0")+bitbucketRepoPath(fullName)+"/hooks/"+url.PathEscape(hook), nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	return g.do(req, nil)
 }
 
 // bitbucketAccess returns a working access token for the org, refreshing (and storing) it when

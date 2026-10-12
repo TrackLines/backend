@@ -119,7 +119,7 @@ func writeErr(w http.ResponseWriter, err error) {
 	case errors.Is(err, ErrInvalidType), errors.Is(err, ErrBadPriority), errors.Is(err, ErrBadBacklogSort), errors.Is(err, ErrBadExternal):
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
-	case errors.Is(err, ErrOnBoard), errors.Is(err, ErrIsDuplicate), errors.Is(err, boards.ErrBoardArchived):
+	case errors.Is(err, ErrOnBoard), errors.Is(err, ErrIsDuplicate), errors.Is(err, boards.ErrBoardArchived), errors.Is(err, ErrAgentReviewBypass):
 		http.Error(w, err.Error(), http.StatusConflict)
 		return
 	case errors.Is(err, ErrAlreadyAssigned):
@@ -350,7 +350,7 @@ func (h System) Release(w http.ResponseWriter, r *http.Request) {
 // ToBacklog sends ticket {id} back to its project's backlog.
 func (h System) ToBacklog(w http.ResponseWriter, r *http.Request) {
 	org := auth.OrgID(r.Context())
-	if err := h.store.ToBacklog(r.Context(), org, r.PathValue("id")); err != nil {
+	if err := h.store.ToBacklogAs(r.Context(), org, r.PathValue("id"), auth.ViaAPIKey(r.Context())); err != nil {
 		writeErr(w, err)
 		return
 	}

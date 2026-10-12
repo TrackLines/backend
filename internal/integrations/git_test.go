@@ -95,8 +95,10 @@ func TestGitProviders(t *testing.T) {
 	}))
 	defer github.Close()
 
-	// fake Bitbucket: code → tokens (expire in 2h), refresh → new tokens, user, repos
+	// fake Bitbucket: code → tokens (expire in 2h), refresh → new tokens, user, repos, webhooks
 	grants := []string{}
+	var madeHook map[string]any // the webhook Tracklines asked Bitbucket to create
+	deletedHooks := []string{}
 	bitbucket := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		user, pass, _ := r.BasicAuth()
 		switch {
@@ -117,6 +119,12 @@ func TestGitProviders(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{"access_token": access, "refresh_token": "bb_refresh", "expires_in": 7200})
 		case r.URL.Path == "/api/user" && strings.HasPrefix(r.Header.Get("Authorization"), "Bearer bb_access"):
 			_, _ = w.Write([]byte(`{"username":"keloran"}`))
+		case r.URL.Path == "/api/repositories/chewed/feed/hooks" && r.Method == "POST" && r.Header.Get("Authorization") == "Bearer bb_access2":
+			_ = json.NewDecoder(r.Body).Decode(&madeHook)
+			_, _ = w.Write([]byte(`{"uuid":"{hook-1}"}`))
+		case strings.HasPrefix(r.URL.Path, "/api/repositories/chewed/feed/hooks/") && r.Method == "DELETE":
+			deletedHooks = append(deletedHooks, strings.TrimPrefix(r.URL.Path, "/api/repositories/chewed/feed/hooks/"))
+			w.WriteHeader(http.StatusNoContent)
 		case r.URL.Path == "/api/repositories" && r.Header.Get("Authorization") == "Bearer bb_access2":
 			_, _ = w.Write([]byte(`{"values":[{"full_name":"chewed/feed","is_private":true,"mainbranch":{"name":"master"}}]}`))
 		default:
@@ -129,7 +137,7 @@ func TestGitProviders(t *testing.T) {
 	now := time.Now()
 	git := Git{GitHubAppID: "4242", GitHubAppSlug: "tracklines", GitHubPrivateKey: pemKey, GitHubAPI: github.URL,
 		GitHubClientID: "Iv1.app", GitHubSecret: "app_secret", GitHubWeb: github.URL,
-		BitbucketClientID: "bb_id", BitbucketSecret: "bb_secret", BitbucketAuth: bitbucket.URL + "/auth", BitbucketAPI: bitbucket.URL + "/api",
+		BitbucketClientID: "bb_id", BitbucketSecret: "bb_secret", BitbucketAuth: bitbucket.URL + "/auth", BitbucketAPI: bitbucket.URL + "/api", PublicAPI: "https://api.example",
 		now: func() time.Time { return now }}
 	h := System{store: Store{DB: db, Box: box}, admins: organizations.Admins{DB: db}, tickets: tickets.Store{DB: db}, git: git, now: time.Now}
 
@@ -282,12 +290,43 @@ func TestGitProviders(t *testing.T) {
 	if rec := call(h.Connection, admin, "GET", "/", "", map[string]string{"provider": "github"}); !strings.Contains(rec.Body.String(), `"connected":false`) {
 		t.Fatalf("still connected after uninstall: %s", rec.Body)
 	}
-	bb := h.BitbucketWebhook("bb_hook")
-	if code := hook(bb, "X-Hub-Signature", "", ping, sign(ping, "bb_hook")); code != 204 {
+	// TL-165: linking a Bitbucket repo makes its own webhook (our URL naming the link, a fresh secret)
+	if rec := call(h.LinkRepo, admin, "POST", "/", `{"provider":"bitbucket","full_name":"chewed/feed"}`, map[string]string{"id": pid}); rec.Code != 201 {
+		t.Fatalf("link bitbucket: %d %s", rec.Code, rec.Body)
+	}
+	var bbLink string
+	var stored []byte
+	_ = db.QueryRow(ctx, `SELECT id, webhook_secret FROM project_repos WHERE org_id = 'org_git' AND provider = 'bitbucket'`).Scan(&bbLink, &stored)
+	secret, _ := madeHook["secret"].(string)
+	if madeHook["url"] != "https://api.example/api/webhooks/bitbucket/"+bbLink || len(secret) != 64 || bytes.Contains(stored, []byte(secret)) {
+		t.Fatalf("hook: %v (secret stored in the clear: %v)", madeHook, bytes.Contains(stored, []byte(secret)))
+	}
+	bbHook := func(link, body, sig string) int {
+		req := httptest.NewRequest("POST", "/", strings.NewReader(body))
+		req.SetPathValue("link", link)
+		req.Header.Set("X-Hub-Signature", sig)
+		rec := httptest.NewRecorder()
+		h.BitbucketWebhook(rec, req)
+		return rec.Code
+	}
+	if code := bbHook(bbLink, ping, sign(ping, secret)); code != 204 {
 		t.Fatalf("bitbucket hook: %d", code)
 	}
-	if code := hook(bb, "X-Hub-Signature", "", ping, "sha256=00"); code != 400 {
-		t.Fatalf("forged bitbucket: %d", code)
+	if code := bbHook(bbLink, ping, sign(ping, "bb_hook")); code != 400 {
+		t.Fatalf("someone else's secret: %d", code)
+	}
+	if code := bbHook("00000000-0000-0000-0000-000000000000", ping, sign(ping, secret)); code != 404 {
+		t.Fatalf("unknown link: %d", code)
+	}
+	// unlinking removes our webhook from the repo; its deliveries then stop being accepted
+	if rec := call(h.UnlinkRepo, admin, "DELETE", "/?provider=bitbucket&full_name=chewed/feed", "", map[string]string{"id": pid}); rec.Code != 204 {
+		t.Fatalf("unlink bitbucket: %d", rec.Code)
+	}
+	if len(deletedHooks) != 1 || deletedHooks[0] != "{hook-1}" {
+		t.Fatalf("hook not removed: %v", deletedHooks)
+	}
+	if code := bbHook(bbLink, ping, sign(ping, secret)); code != 404 {
+		t.Fatalf("after unlink: %d", code)
 	}
 	if code := hook(h.GitHubWebhook(""), "X-Hub-Signature-256", "ping", ping, sign(ping, "")); code != 503 {
 		t.Fatalf("unconfigured webhook: %d", code)

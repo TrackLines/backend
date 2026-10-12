@@ -1,4 +1,4 @@
-// Package ratelimit caps requests per minute: per API key (tl_ or bf_), per client address on public
+// Package ratelimit caps requests per minute: per API key (tl_), per client address on public
 // routes (PerIP), and on invalid keys (BadKeys). Counted in Valkey so every backend instance shares
 // the count, or in memory without it. Browser sessions aren't limited by key.
 package ratelimit

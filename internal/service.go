@@ -20,7 +20,6 @@ import (
 	"github.com/tracklines/backend/internal/auth"
 	"github.com/tracklines/backend/internal/billing"
 	"github.com/tracklines/backend/internal/boards"
-	"github.com/tracklines/backend/internal/bugfixes-tickets"
 	"github.com/tracklines/backend/internal/clerkcache"
 	"github.com/tracklines/backend/internal/clerkhooks"
 	"github.com/tracklines/backend/internal/columns"
@@ -181,7 +180,7 @@ func (s *Service) Handler() http.Handler {
 	in := integrations.NewSystem(s.DB, box, s.Valkey, o.AdminModel(), integrations.Git{
 		GitHubAppID: gc.GitHubAppID, GitHubAppSlug: gc.GitHubAppSlug, GitHubPrivateKey: gc.GitHubPrivateKey,
 		GitHubClientID: gc.GitHubClientID, GitHubSecret: gc.GitHubClientSecret,
-		BitbucketClientID: gc.BitbucketClientID, BitbucketSecret: gc.BitbucketSecret})
+		BitbucketClientID: gc.BitbucketClientID, BitbucketSecret: gc.BitbucketSecret, PublicAPI: gc.PublicAPIURL})
 	mux.Handle("GET /api/integrations/{provider}", signedIn(in.Connection)) // connected or not; never the secret
 	mux.Handle("PUT /api/integrations/{provider}", signedIn(in.Connect))    // org admins
 	mux.Handle("DELETE /api/integrations/{provider}", signedIn(in.Disconnect))
@@ -196,7 +195,7 @@ func (s *Service) Handler() http.Handler {
 	mux.Handle("DELETE /api/projects/{id}/repos", signedIn(in.UnlinkRepo)) // ?provider=&full_name=
 	// webhooks: generous per-address limits (providers deliver from a few shared addresses)
 	mux.Handle("POST /api/webhooks/github", public("webhook-github", 600, in.GitHubWebhook(gc.GitHubWebhookSecret)))
-	mux.Handle("POST /api/webhooks/bitbucket", public("webhook-bitbucket", 600, in.BitbucketWebhook(gc.BitbucketWebhook))) // the same, by key (TL-123)
+	mux.Handle("POST /api/webhooks/bitbucket/{link}", public("webhook-bitbucket", 600, in.BitbucketWebhook)) // one hook and secret per linked repo (TL-165)
 	mux.Handle("PATCH /api/tickets/{id}", signedIn(t.Update))
 	mux.Handle("POST /api/tickets/{id}/claim", signedIn(t.Claim))
 	mux.Handle("POST /api/tickets/{id}/release", signedIn(t.Release))
@@ -289,11 +288,7 @@ func (s *Service) Handler() http.Handler {
 	// Clerk (via Svix) authenticates by signature: org/user removals clean up admins, team members and API keys
 	mux.Handle("POST /api/webhooks/clerk", public("webhook-clerk", 600, clerkhooks.NewSystem(s.DB, config.Get(s.Config).ClerkWebhookSecret).Webhook(time.Now)))
 
-	// Bugfixes ticket-creation — auth via bf_ key (no Clerk session); always lands in the project backlog
-	bt := bugfixesTickets.NewSystem(s.DB)
-	mux.Handle("POST /api/bugfixes/tickets", bugfixesTickets.Middleware(s.DB)(http.HandlerFunc(bt.Create)))
-
-	// Every request: API key (tl_…) or bf_ key or optional Clerk auth + users row for signed-in callers, then
+	// Every request: API key (tl_…) or optional Clerk auth + users row for signed-in callers, then
 	// recovery/request id/logging (bugfixes) and CORS.
 	cors := bm.NewMiddleware()
 	cors.AddAllowedOrigins(parties...)
@@ -304,8 +299,8 @@ func (s *Service) Handler() http.Handler {
 	// in-process through handler, so MCP and REST can't drift apart
 	mux.Handle("/mcp", required(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { mcpHandler.ServeHTTP(w, r) })))
 	// BadKeys first: an address that keeps presenting invalid keys is refused before more key lookups
-	handler = ratelimit.BadKeys(limits, 20, time.Now)(apikeys.Middleware(s.DB)(bugfixesTickets.Middleware(s.DB)(ratelimit.Middleware(s.Valkey, config.Get(s.Config).RateLimit, time.Now)(optional(users.Ensure(s.DB)(
-		bm.Recoverer(bm.RequestID(bm.Logger(cors.CORS(httpx.WithZone(mux)))))))))))
+	handler = ratelimit.BadKeys(limits, 20, time.Now)(apikeys.Middleware(s.DB)(ratelimit.Middleware(s.Valkey, config.Get(s.Config).RateLimit, time.Now)(optional(users.Ensure(s.DB)(
+		bm.Recoverer(bm.RequestID(bm.Logger(cors.CORS(httpx.WithZone(mux))))))))))
 	mcpHandler = mcp.Handler(handler, "1.0.0")
 	return handler
 }
