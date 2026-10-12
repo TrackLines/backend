@@ -73,7 +73,16 @@ func (s *Service) Start() error {
 // Handler is the whole API: routes plus the auth, logging and CORS middleware.
 func (s *Service) Handler() http.Handler {
 	mux := http.NewServeMux()
-	signedIn := func(h http.HandlerFunc) http.Handler { return auth.Required(h) }
+	parties := config.Get(s.Config).AuthorizedParties()
+	optional := auth.OptionalWithAuthorizedParties(parties...)
+	required := auth.RequiredWith(optional)
+	sessionRequired := auth.SessionRequiredWith(required)
+	signedIn := func(h http.HandlerFunc) http.Handler { return required(h) }
+	// public routes (no sign-in) are limited per client address; Valkey shares the count, memory without it
+	limits := ratelimit.NewCounter(s.Valkey)
+	public := func(name string, perMinute int, h http.HandlerFunc) http.Handler {
+		return ratelimit.PerIP(limits, name, perMinute, time.Now)(h)
+	}
 	// Clerk member lists for pickers come from Valkey for a minute; checks that guard changes ask Clerk
 	members := clerkcache.Memberships{Next: organizationmembership.NewClient(&clerk.ClientConfig{}), VK: s.Valkey, TTL: time.Minute}
 	o := organizations.NewSystem(s.DB).CachingMembers(members)
@@ -83,12 +92,12 @@ func (s *Service) Handler() http.Handler {
 	mux.Handle("PUT /api/organizations/admins/{userID}", signedIn(o.GrantAdmin))
 	mux.Handle("DELETE /api/organizations/admins/{userID}", signedIn(o.RevokeAdmin)) // never the last admin
 	iv := invitations.NewSystem(s.DB, o.AdminModel())
-	mux.Handle("GET /api/invitations", auth.Optional(http.HandlerFunc(iv.Mine))) // invitations addressed to the signed-in user's verified emails
+	mux.Handle("GET /api/invitations", optional(http.HandlerFunc(iv.Mine))) // invitations addressed to the signed-in user's verified emails
 	mux.Handle("GET /api/organizations/invitations", signedIn(iv.List))
 	mux.Handle("POST /api/organizations/invitations", signedIn(iv.Create))
 	mux.Handle("GET /api/organizations/invitations/{id}", signedIn(iv.Get))
 	mux.Handle("DELETE /api/organizations/invitations/{id}", signedIn(iv.Revoke))
-	mux.Handle("POST /api/organizations/invitations/{id}/accept", auth.Optional(http.HandlerFunc(iv.Accept)))
+	mux.Handle("POST /api/organizations/invitations/{id}/accept", optional(http.HandlerFunc(iv.Accept)))
 	tm := teams.NewSystem(s.DB, o.AdminModel())
 	mux.Handle("GET /api/teams", signedIn(tm.List))
 	mux.Handle("POST /api/teams", signedIn(tm.Create))
@@ -174,8 +183,9 @@ func (s *Service) Handler() http.Handler {
 	mux.Handle("GET /api/tickets/{id}/prs", signedIn(in.TicketPRs)) // PRs that mention the ticket's key
 	mux.Handle("POST /api/projects/{id}/repos", signedIn(in.LinkRepo))
 	mux.Handle("DELETE /api/projects/{id}/repos", signedIn(in.UnlinkRepo)) // ?provider=&full_name=
-	mux.HandleFunc("POST /api/webhooks/github", in.GitHubWebhook(gc.GitHubWebhookSecret))
-	mux.HandleFunc("POST /api/webhooks/bitbucket", in.BitbucketWebhook(gc.BitbucketWebhook)) // the same, by key (TL-123)
+	// webhooks: generous per-address limits (providers deliver from a few shared addresses)
+	mux.Handle("POST /api/webhooks/github", public("webhook-github", 600, in.GitHubWebhook(gc.GitHubWebhookSecret)))
+	mux.Handle("POST /api/webhooks/bitbucket", public("webhook-bitbucket", 600, in.BitbucketWebhook(gc.BitbucketWebhook))) // the same, by key (TL-123)
 	mux.Handle("PATCH /api/tickets/{id}", signedIn(t.Update))
 	mux.Handle("POST /api/tickets/{id}/claim", signedIn(t.Claim))
 	mux.Handle("POST /api/tickets/{id}/release", signedIn(t.Release))
@@ -231,8 +241,8 @@ func (s *Service) Handler() http.Handler {
 
 	// Request intake: a project's unlisted public form (no account) and the team's triage inbox
 	ik := intake.NewSystem(s.DB)
-	mux.HandleFunc("GET /api/intake/{token}", ik.Form)
-	mux.HandleFunc("POST /api/intake/{token}", ik.Submit)
+	mux.Handle("GET /api/intake/{token}", public("intake-form", 60, ik.Form))
+	mux.Handle("POST /api/intake/{token}", public("intake-submit", 10, ik.Submit)) // on top of the per-sender hourly cap
 	mux.Handle("GET /api/projects/{id}/intake", signedIn(ik.Settings))
 	mux.Handle("PUT /api/projects/{id}/intake", signedIn(ik.SetOpen))
 	mux.Handle("GET /api/projects/{id}/intake/submissions", signedIn(ik.List))
@@ -241,31 +251,31 @@ func (s *Service) Handler() http.Handler {
 
 	// Roadmaps — GET by id is open: public ones are readable by anyone with the link
 	r := roadmaps.NewSystem(s.DB)
-	mux.HandleFunc("GET /api/roadmaps/{id}", r.Get)
+	mux.Handle("GET /api/roadmaps/{id}", public("roadmap", 120, r.Get))
 	mux.Handle("GET /api/roadmaps", signedIn(r.List))
 	mux.Handle("POST /api/projects/{id}/roadmaps", signedIn(r.Create))
 	mux.Handle("PUT /api/roadmaps/{id}", signedIn(r.Update))
 	mux.Handle("DELETE /api/roadmaps/{id}", signedIn(r.Delete))
 	mux.Handle("PUT /api/roadmaps/{id}/items", signedIn(r.ReplaceItems))
-	mux.Handle("PUT /api/roadmaps/{id}/items/{item}/tickets", signedIn(r.SetItemTickets)) // item progress = linked tickets done
-	mux.HandleFunc("GET /api/roadmaps/{id}/updates", r.ListUpdates)                       // public according to roadmap visibility
+	mux.Handle("PUT /api/roadmaps/{id}/items/{item}/tickets", signedIn(r.SetItemTickets))       // item progress = linked tickets done
+	mux.Handle("GET /api/roadmaps/{id}/updates", public("roadmap-updates", 120, r.ListUpdates)) // public according to roadmap visibility
 	mux.Handle("POST /api/roadmaps/{id}/updates", signedIn(r.PublishUpdate))
 
 	// API keys — AI agent or server/service; managing keys needs a signed-in session
 	k := apikeys.NewSystem(s.DB)
-	mux.Handle("GET /api/keys", auth.SessionRequired(http.HandlerFunc(k.List)))
-	mux.Handle("POST /api/keys", auth.SessionRequired(http.HandlerFunc(k.Create)))
-	mux.Handle("DELETE /api/keys/{id}", auth.SessionRequired(http.HandlerFunc(k.Revoke)))
+	mux.Handle("GET /api/keys", sessionRequired(http.HandlerFunc(k.List)))
+	mux.Handle("POST /api/keys", sessionRequired(http.HandlerFunc(k.Create)))
+	mux.Handle("DELETE /api/keys/{id}", sessionRequired(http.HandlerFunc(k.Revoke)))
 
 	// Billing — answers 503 until Stripe is configured
 	mux.Handle("GET /api/subscription", signedIn(s.Billing.Status))
 	mux.Handle("POST /api/subscription/checkout", signedIn(s.Billing.Checkout))
 	mux.Handle("POST /api/subscription/portal", signedIn(s.Billing.Portal))
 	// Stripe authenticates webhooks by signature, not session
-	mux.HandleFunc("POST /api/webhooks/stripe", s.Billing.Webhook(time.Now))
-	mux.HandleFunc("POST /webhooks/stripe", s.Billing.Webhook(time.Now)) // same path as ../bugfixes (stripe listen --forward-to …/webhooks/stripe)
+	mux.Handle("POST /api/webhooks/stripe", public("webhook-stripe", 600, s.Billing.Webhook(time.Now)))
+	mux.Handle("POST /webhooks/stripe", public("webhook-stripe", 600, s.Billing.Webhook(time.Now))) // same path as ../bugfixes (stripe listen --forward-to …/webhooks/stripe)
 	// Clerk (via Svix) authenticates by signature: org/user removals clean up admins, team members and API keys
-	mux.HandleFunc("POST /api/webhooks/clerk", clerkhooks.NewSystem(s.DB, config.Get(s.Config).ClerkWebhookSecret).Webhook(time.Now))
+	mux.Handle("POST /api/webhooks/clerk", public("webhook-clerk", 600, clerkhooks.NewSystem(s.DB, config.Get(s.Config).ClerkWebhookSecret).Webhook(time.Now)))
 
 	// Bugfixes ticket-creation — auth via bf_ key (no Clerk session); always lands in the project backlog
 	bt := bugfixesTickets.NewSystem(s.DB)
@@ -274,15 +284,16 @@ func (s *Service) Handler() http.Handler {
 	// Every request: API key (tl_…) or bf_ key or optional Clerk auth + users row for signed-in callers, then
 	// recovery/request id/logging (bugfixes) and CORS.
 	cors := bm.NewMiddleware()
-	cors.AddAllowedOrigins("http://localhost:3000", "https://tracklin.es")
+	cors.AddAllowedOrigins(parties...)
 	cors.AddAllowedMethods(http.MethodGet, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete, http.MethodOptions)
 	cors.AddAllowedHeaders("Authorization", "X-Requested-With", httpx.ZoneHeader) // Accept, Content-Type are library defaults
 	var handler, mcpHandler http.Handler
 	// MCP (Streamable HTTP) for bots: same auth as REST (tl_ key or Clerk session); each tool calls a REST route
 	// in-process through handler, so MCP and REST can't drift apart
-	mux.Handle("/mcp", auth.Required(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { mcpHandler.ServeHTTP(w, r) })))
-	handler = apikeys.Middleware(s.DB)(bugfixesTickets.Middleware(s.DB)(ratelimit.Middleware(s.Valkey, config.Get(s.Config).RateLimit, time.Now)(auth.Optional(users.Ensure(s.DB)(
-		bm.Recoverer(bm.RequestID(bm.Logger(cors.CORS(httpx.WithZone(mux))))))))))
+	mux.Handle("/mcp", required(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { mcpHandler.ServeHTTP(w, r) })))
+	// BadKeys first: an address that keeps presenting invalid keys is refused before more key lookups
+	handler = ratelimit.BadKeys(limits, 20, time.Now)(apikeys.Middleware(s.DB)(bugfixesTickets.Middleware(s.DB)(ratelimit.Middleware(s.Valkey, config.Get(s.Config).RateLimit, time.Now)(optional(users.Ensure(s.DB)(
+		bm.Recoverer(bm.RequestID(bm.Logger(cors.CORS(httpx.WithZone(mux)))))))))))
 	mcpHandler = mcp.Handler(handler, "1.0.0")
 	return handler
 }

@@ -11,4 +11,26 @@ func TestBuild(t *testing.T) {
 	if p := Get(c); p == nil || p.Stripe.PriceID != "price_123" {
 		t.Fatalf("project config not parsed: %+v", p)
 	}
+	if got, want := Get(c).AuthorizedParties(), []string{"https://tracklin.es", "http://localhost:3000"}; !equalStrings(got, want) {
+		t.Fatalf("default authorized parties = %q, want %q", got, want)
+	}
+}
+
+func TestAuthorizedPartiesFromConfig(t *testing.T) {
+	p := &Project{ClerkAuthorizedParties: " https://app.example, http://localhost:3000 ,,"}
+	if got, want := p.AuthorizedParties(), []string{"https://app.example", "http://localhost:3000"}; !equalStrings(got, want) {
+		t.Fatalf("authorized parties = %q, want %q", got, want)
+	}
+}
+
+func equalStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }

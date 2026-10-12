@@ -1,5 +1,6 @@
-// Package ratelimit caps how many requests an API key (tl_ or bf_) can make per minute, counted in
-// Valkey so every backend instance shares the count. Browser sessions aren't limited.
+// Package ratelimit caps requests per minute: per API key (tl_ or bf_), per client address on public
+// routes (PerIP), and on invalid keys (BadKeys). Counted in Valkey so every backend instance shares
+// the count, or in memory without it. Browser sessions aren't limited by key.
 package ratelimit
 
 import (
@@ -13,12 +14,13 @@ import (
 )
 
 // Middleware limits API-key callers to perMinute requests in each clock minute (fixed window).
-// It must run after the API-key middleware. It fails open: with no Valkey, perMinute <= 0, or a
-// Valkey error, requests go through. /mcp itself isn't counted: each tool call it makes passes
-// back through here and is counted then.
+// It must run after the API-key middleware. perMinute <= 0 turns it off; a counter error lets the
+// request through; without Valkey it counts per instance. /mcp itself isn't counted: each tool call
+// it makes passes back through here and is counted then.
 func Middleware(vk valkey.Client, perMinute int, now func() time.Time) func(http.Handler) http.Handler {
+	c := NewCounter(vk)
 	return func(next http.Handler) http.Handler {
-		if vk == nil || perMinute <= 0 {
+		if perMinute <= 0 {
 			return next
 		}
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -27,13 +29,8 @@ func Middleware(vk valkey.Client, perMinute int, now func() time.Time) func(http
 				return
 			}
 			t := now()
-			window := t.Unix() / 60
-			key := "ratelimit:" + auth.OrgID(r.Context()) + ":" + auth.ActorID(r.Context()) + ":" + strconv.FormatInt(window, 10)
-			res := vk.DoMulti(r.Context(),
-				vk.B().Incr().Key(key).Build(),
-				vk.B().Expire().Key(key).Seconds(70).Build(), // a little past the window, then gone
-			)
-			count, err := res[0].AsInt64()
+			key, retry := window("key:"+auth.OrgID(r.Context()), auth.ActorID(r.Context()), t)
+			count, err := c.Add(r.Context(), key, 1, 70*time.Second) // a little past the window, then gone
 			if err != nil {
 				logs.Warnf("ratelimit: %v", err)
 				next.ServeHTTP(w, r)
@@ -42,8 +39,7 @@ func Middleware(vk valkey.Client, perMinute int, now func() time.Time) func(http
 			w.Header().Set("X-RateLimit-Limit", strconv.Itoa(perMinute))
 			w.Header().Set("X-RateLimit-Remaining", strconv.FormatInt(max(int64(perMinute)-count, 0), 10))
 			if count > int64(perMinute) {
-				w.Header().Set("Retry-After", strconv.FormatInt((window+1)*60-t.Unix(), 10))
-				http.Error(w, "rate limit exceeded: try again shortly", http.StatusTooManyRequests)
+				tooMany(w, retry)
 				return
 			}
 			next.ServeHTTP(w, r)

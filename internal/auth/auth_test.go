@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/clerk/clerk-sdk-go/v2"
+	clerkhttp "github.com/clerk/clerk-sdk-go/v2/http"
 )
 
 func TestRequired(t *testing.T) {
@@ -31,6 +32,27 @@ func TestRequired(t *testing.T) {
 	opt.ServeHTTP(rec, httptest.NewRequest("GET", "/", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("optional anon: got %d", rec.Code)
+	}
+}
+
+func TestAuthorizedPartyMatchesConfiguredOrigins(t *testing.T) {
+	params := &clerkhttp.AuthorizationParams{}
+	for _, option := range AuthorizationOptions("https://tracklin.es", "http://localhost:3000") {
+		if err := option(params); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, tc := range []struct {
+		azp  string
+		want bool
+	}{
+		{azp: "https://tracklin.es", want: true},
+		{azp: "http://localhost:3000", want: true},
+		{azp: "https://attacker.example", want: false},
+	} {
+		if got := params.AuthorizedPartyHandler(tc.azp); got != tc.want {
+			t.Errorf("azp %q: got %v, want %v", tc.azp, got, tc.want)
+		}
 	}
 }
 

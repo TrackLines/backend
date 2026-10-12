@@ -19,35 +19,62 @@ type orgClaims struct {
 	} `json:"o"`
 }
 
+// AuthorizationOptions configures Clerk session verification, including the permitted token origins.
+func AuthorizationOptions(parties ...string) []clerkhttp.AuthorizationOption {
+	return []clerkhttp.AuthorizationOption{
+		clerkhttp.CustomClaimsConstructor(func(context.Context) any { return &orgClaims{} }),
+		clerkhttp.AuthorizedPartyMatches(parties...),
+	}
+}
+
+// OptionalWithAuthorizedParties verifies a Bearer token when present; anon requests pass through.
+func OptionalWithAuthorizedParties(parties ...string) func(http.Handler) http.Handler {
+	return clerkhttp.WithHeaderAuthorization(AuthorizationOptions(parties...)...)
+}
+
 // Optional verifies a Bearer session token when present; anon requests pass through.
-var Optional = clerkhttp.WithHeaderAuthorization(clerkhttp.CustomClaimsConstructor(func(context.Context) any { return &orgClaims{} }))
+var Optional = OptionalWithAuthorizedParties("https://tracklin.es", "http://localhost:3000")
 
 // Required is Optional plus 401 when there is no valid session, and 403 when no organization
 // is active: projects, boards and roadmaps belong to an org.
 func Required(next http.Handler) http.Handler {
-	return Optional(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if _, ok := UserID(r.Context()); !ok {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
-		}
-		if OrgID(r.Context()) == "" {
-			http.Error(w, "choose an organization first", http.StatusForbidden)
-			return
-		}
-		next.ServeHTTP(w, r)
-	}))
+	return RequiredWith(Optional)(next)
+}
+
+// RequiredWith applies the required-session checks around the supplied Clerk middleware.
+func RequiredWith(optional func(http.Handler) http.Handler) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return optional(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if _, ok := UserID(r.Context()); !ok {
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
+			if OrgID(r.Context()) == "" {
+				http.Error(w, "choose an organization first", http.StatusForbidden)
+				return
+			}
+			next.ServeHTTP(w, r)
+		}))
+	}
 }
 
 // SessionRequired is Required but refuses API-key callers (403): for actions only a
 // signed-in person may take, like creating or revoking API keys.
 func SessionRequired(next http.Handler) http.Handler {
-	return Required(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if ViaAPIKey(r.Context()) {
-			http.Error(w, "requires a signed-in session, not an API key", http.StatusForbidden)
-			return
-		}
-		next.ServeHTTP(w, r)
-	}))
+	return SessionRequiredWith(Required)(next)
+}
+
+// SessionRequiredWith applies the signed-in-person check around the supplied required middleware.
+func SessionRequiredWith(required func(http.Handler) http.Handler) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return required(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if ViaAPIKey(r.Context()) {
+				http.Error(w, "requires a signed-in session, not an API key", http.StatusForbidden)
+				return
+			}
+			next.ServeHTTP(w, r)
+		}))
+	}
 }
 
 type apiKeyUserContextKey struct{}

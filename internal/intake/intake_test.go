@@ -47,7 +47,7 @@ func TestIntake(t *testing.T) {
 			req.SetPathValue(k, v)
 		}
 		if ip != "" {
-			req.Header.Set("X-Forwarded-For", ip+", 10.0.0.1")
+			req.Header.Set("X-Forwarded-For", "6.6.6."+ip[len(ip)-1:]+", "+ip) // left: whatever the client sent; right: what our edge saw
 		}
 		rec := httptest.NewRecorder()
 		handler(rec, req)

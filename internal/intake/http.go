@@ -2,9 +2,7 @@ package intake
 
 import (
 	"errors"
-	"net"
 	"net/http"
-	"strings"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/tracklines/backend/internal/auth"
@@ -32,18 +30,9 @@ func writeErr(w http.ResponseWriter, err error) {
 	}
 }
 
-// sender is the caller's address for rate limits: the first X-Forwarded-For hop (we sit behind the
-// web proxy), else the connection's. Only a hash of it is stored.
-func sender(r *http.Request) string {
-	if f := r.Header.Get("X-Forwarded-For"); f != "" {
-		return strings.TrimSpace(strings.Split(f, ",")[0])
-	}
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
-	}
-	return host
-}
+// sender is the caller's address for rate limits (httpx.ClientIP: the hop our edge wrote, not one
+// the client can make up). Only a hash of it is stored.
+func sender(r *http.Request) string { return httpx.ClientIP(r) }
 
 // Form: GET /api/intake/{token} (public) → {"open": true}, or 404 when the link is closed or unknown.
 // It says nothing else about the project.
