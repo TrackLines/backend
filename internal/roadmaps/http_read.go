@@ -21,7 +21,7 @@ func writeErr(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, ErrNotFound):
 		http.Error(w, "not found", http.StatusNotFound)
-	case errors.Is(err, ErrInvalidVisibility), errors.Is(err, ErrOtherProject), errors.Is(err, ErrBadDates), errors.Is(err, ErrInvalidItemStatus):
+	case errors.Is(err, ErrInvalidVisibility), errors.Is(err, ErrOtherProject), errors.Is(err, ErrBadDates), errors.Is(err, ErrInvalidItemStatus), errors.Is(err, ErrInvalidUpdate):
 		http.Error(w, err.Error(), http.StatusBadRequest)
 	default:
 		logs.Errorf("roadmaps: %v", err)

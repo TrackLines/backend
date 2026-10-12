@@ -123,8 +123,11 @@ func (s *Service) Handler() http.Handler {
 	mux.Handle("DELETE /api/board-templates/{id}", signedIn(b.DeleteTemplate))
 	mux.Handle("GET /api/boards/{id}", signedIn(b.Get))
 	mux.Handle("GET /api/boards/{id}/flow", signedIn(b.Flow))
-	mux.Handle("PATCH /api/boards/{id}", signedIn(b.Update)) // name and estimate_scale settings
-	mux.Handle("DELETE /api/boards/{id}", signedIn(b.Delete))
+	mux.Handle("PATCH /api/boards/{id}", signedIn(b.Update))  // name and estimate_scale settings
+	mux.Handle("DELETE /api/boards/{id}", signedIn(b.Delete)) // never-used boards only; used ones are archived
+	mux.Handle("POST /api/boards/{id}/archive", signedIn(b.Archive))
+	mux.Handle("POST /api/boards/{id}/restore", signedIn(b.Restore))
+	mux.Handle("GET /api/projects/{id}/archived-boards", signedIn(b.Archived))
 
 	// Columns
 	c := columns.NewSystem(s.DB, o.AdminModel())
@@ -244,6 +247,8 @@ func (s *Service) Handler() http.Handler {
 	mux.Handle("DELETE /api/roadmaps/{id}", signedIn(r.Delete))
 	mux.Handle("PUT /api/roadmaps/{id}/items", signedIn(r.ReplaceItems))
 	mux.Handle("PUT /api/roadmaps/{id}/items/{item}/tickets", signedIn(r.SetItemTickets)) // item progress = linked tickets done
+	mux.HandleFunc("GET /api/roadmaps/{id}/updates", r.ListUpdates)                       // public according to roadmap visibility
+	mux.Handle("POST /api/roadmaps/{id}/updates", signedIn(r.PublishUpdate))
 
 	// API keys — AI agent or server/service; managing keys needs a signed-in session
 	k := apikeys.NewSystem(s.DB)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strconv"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -121,6 +122,8 @@ type Board struct {
 	EstimateScale string   `json:"estimate_scale"`
 	Style         string   `json:"style"`
 	AgentReview   bool     `json:"agent_review"`          // agents' moves into Done wait for a person's review
+	ArchivedAt    *string  `json:"archived_at"`           // archived: off the project\'s boards, history kept, no new work
+	Deletable     bool     `json:"deletable"`             // never used (no tickets, no sprints): can be deleted outright
 	TeamID        *string  `json:"team_id"`               // the team whose leaders run this board                 // sprints | kanban
 	HiddenDone    int      `json:"hidden_done,omitempty"` // kanban: Done tickets older than KanbanDoneDays, left off the view // a key of Scales
 	CreatedAt     string   `json:"created_at"`
@@ -146,12 +149,14 @@ type Stats struct {
 type Store struct{ DB *pgxpool.Pool }
 
 const cols = `id, project_id, owner_clerk_id, name, description, estimate_scale, style, team_id, agent_review,
+	to_char(archived_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
+	NOT EXISTS (SELECT 1 FROM tickets t WHERE t.board_id = boards.id) AND NOT EXISTS (SELECT 1 FROM sprints sp WHERE sp.board_id = boards.id),
 	to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
 	to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')`
 
 func scan(row pgx.Row) (Board, error) {
 	var b Board
-	err := row.Scan(&b.ID, &b.ProjectID, &b.OwnerClerkID, &b.Name, &b.Description, &b.EstimateScale, &b.Style, &b.TeamID, &b.AgentReview, &b.CreatedAt, &b.UpdatedAt)
+	err := row.Scan(&b.ID, &b.ProjectID, &b.OwnerClerkID, &b.Name, &b.Description, &b.EstimateScale, &b.Style, &b.TeamID, &b.AgentReview, &b.ArchivedAt, &b.Deletable, &b.CreatedAt, &b.UpdatedAt)
 	return b, notFound(err)
 }
 
@@ -173,6 +178,8 @@ func (s Store) Create(ctx context.Context, owner, projectID, name, desc string) 
 // ListByProject lists a project's boards (without columns); callers check ownership.
 func (s Store) ListByProject(ctx context.Context, projectID string) ([]Board, error) {
 	rows, err := s.DB.Query(ctx, `SELECT boards.id, boards.project_id, boards.owner_clerk_id, boards.name, boards.description, boards.estimate_scale, boards.style, boards.team_id, boards.agent_review,
+		to_char(boards.archived_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
+		NOT EXISTS (SELECT 1 FROM tickets ut WHERE ut.board_id = boards.id) AND NOT EXISTS (SELECT 1 FROM sprints us WHERE us.board_id = boards.id),
 		to_char(boards.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
 		to_char(boards.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
 		count(t.tid) FILTER (WHERE NOT t.done),
@@ -186,13 +193,13 @@ func (s Store) ListByProject(ctx context.Context, projectID string) ([]Board, er
 		LEFT JOIN sprints sp ON sp.board_id = boards.id AND sp.closed_at IS NULL
 		LEFT JOIN LATERAL (SELECT t.id AS tid, t.column_id, t.priority, t.updated_at AS changed, `+TicketDoneSQL+` AS done
 			FROM tickets t WHERE t.board_id = boards.id AND t.sprint_id IS NOT DISTINCT FROM sp.id) t ON true
-		WHERE boards.project_id = $1 GROUP BY boards.id, sp.id ORDER BY boards.created_at`, projectID)
+		WHERE boards.project_id = $1 AND boards.archived_at IS NULL GROUP BY boards.id, sp.id ORDER BY boards.created_at`, projectID)
 	if err != nil {
 		return nil, err
 	}
 	out, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (Board, error) {
 		b, st := Board{}, Stats{}
-		err := row.Scan(&b.ID, &b.ProjectID, &b.OwnerClerkID, &b.Name, &b.Description, &b.EstimateScale, &b.Style, &b.TeamID, &b.AgentReview, &b.CreatedAt, &b.UpdatedAt,
+		err := row.Scan(&b.ID, &b.ProjectID, &b.OwnerClerkID, &b.Name, &b.Description, &b.EstimateScale, &b.Style, &b.TeamID, &b.AgentReview, &b.ArchivedAt, &b.Deletable, &b.CreatedAt, &b.UpdatedAt,
 			&st.Open, &st.InProgress, &st.Done, &st.Urgent, &st.Active, &st.SprintNumber, &st.SprintEndsAt)
 		b.Stats = &st
 		return b, err
@@ -335,8 +342,64 @@ func (s Store) Get(ctx context.Context, id, owner string) (*Board, error) {
 	return &b, nil
 }
 
+// Delete removes a board that was never used (no tickets, no sprints). A used one is archived instead
+// (ErrBoardUsed), so its history isn't lost.
 func (s Store) Delete(ctx context.Context, id, owner string) error {
-	tag, err := s.DB.Exec(ctx, `DELETE FROM boards WHERE id = $1 AND owner_clerk_id = $2`, id, owner)
+	b, err := s.Get(ctx, id, owner)
+	if err != nil {
+		return err
+	}
+	if !b.Deletable {
+		return ErrBoardUsed
+	}
+	_, err = s.DB.Exec(ctx, `DELETE FROM boards WHERE id = $1 AND owner_clerk_id = $2
+		AND NOT EXISTS (SELECT 1 FROM tickets t WHERE t.board_id = boards.id)`, id, owner)
+	return err
+}
+
+var (
+	ErrBoardUsed     = errors.New("this board has been used; archive it instead, so its history is kept")
+	ErrOpenTickets   = errors.New("this board still has unfinished tickets; finish them or move them first")
+	ErrBoardArchived = errors.New("this board is archived; restore it first")
+)
+
+// Archive takes a used board off the project: refused while it has unfinished tickets. Its open sprint
+// closes with no successor (finished tickets stay with it, for velocity history), its planned sprints
+// go and their tickets return to the backlog unplanned.
+func (s Store) Archive(ctx context.Context, id, owner string) error {
+	return pgx.BeginFunc(ctx, s.DB, func(tx pgx.Tx) error {
+		var archived *time.Time
+		if err := tx.QueryRow(ctx, `SELECT archived_at FROM boards WHERE id = $1 AND owner_clerk_id = $2 FOR UPDATE`, id, owner).Scan(&archived); err != nil {
+			return notFound(err)
+		}
+		if archived != nil {
+			return nil
+		}
+		var open int
+		if err := tx.QueryRow(ctx, `SELECT count(*) FROM tickets t WHERE t.board_id = $1 AND NOT `+TicketDoneSQL, id).Scan(&open); err != nil {
+			return err
+		}
+		if open > 0 {
+			return ErrOpenTickets
+		}
+		for _, q := range []string{
+			`UPDATE sprints SET closed_at = now() WHERE board_id = $1 AND closed_at IS NULL`,
+			`UPDATE tickets SET planned_sprint_id = NULL, estimate = NULL, updated_at = now()
+				WHERE planned_sprint_id IN (SELECT ps.id FROM planned_sprints ps WHERE ps.board_id = $1)`,
+			`DELETE FROM planned_sprints WHERE board_id = $1`,
+			`UPDATE boards SET archived_at = now(), updated_at = now() WHERE id = $1`,
+		} {
+			if _, err := tx.Exec(ctx, q, id); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+// Restore puts an archived board back on the project. A sprint board starts its next sprint when someone starts one.
+func (s Store) Restore(ctx context.Context, id, owner string) error {
+	tag, err := s.DB.Exec(ctx, `UPDATE boards SET archived_at = NULL, updated_at = now() WHERE id = $1 AND owner_clerk_id = $2`, id, owner)
 	if err != nil {
 		return notFound(err)
 	}
@@ -344,4 +407,18 @@ func (s Store) Delete(ctx context.Context, id, owner string) error {
 		return ErrNotFound
 	}
 	return nil
+}
+
+// Archived lists a project's archived boards, most recently archived first.
+func (s Store) Archived(ctx context.Context, owner, projectID string) ([]Board, error) {
+	rows, err := s.DB.Query(ctx, `SELECT `+cols+` FROM boards WHERE project_id::text = $1 AND owner_clerk_id = $2 AND archived_at IS NOT NULL
+		ORDER BY archived_at DESC`, projectID, owner)
+	if err != nil {
+		return nil, notFound(err)
+	}
+	out, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (Board, error) { return scan(row) })
+	if out == nil {
+		out = []Board{}
+	}
+	return out, err
 }

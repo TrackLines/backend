@@ -27,6 +27,8 @@ func writeErr(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, ErrNotFound):
 		http.Error(w, "not found", http.StatusNotFound)
+	case errors.Is(err, ErrBoardUsed), errors.Is(err, ErrOpenTickets), errors.Is(err, ErrBoardArchived):
+		http.Error(w, err.Error(), http.StatusConflict)
 	default:
 		logs.Errorf("boards: %v", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -153,6 +155,41 @@ func (h System) Update(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// Archive: POST /api/boards/{id}/archive (board managers). 409 while it has unfinished tickets.
+func (h System) Archive(w http.ResponseWriter, r *http.Request) {
+	if !h.admins.RequireResourceBoardManager(w, r, "board", r.PathValue("id")) {
+		return
+	}
+	if err := h.store.Archive(r.Context(), r.PathValue("id"), auth.OrgID(r.Context())); err != nil {
+		writeErr(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// Restore: POST /api/boards/{id}/restore (board managers).
+func (h System) Restore(w http.ResponseWriter, r *http.Request) {
+	if !h.admins.RequireResourceBoardManager(w, r, "board", r.PathValue("id")) {
+		return
+	}
+	if err := h.store.Restore(r.Context(), r.PathValue("id"), auth.OrgID(r.Context())); err != nil {
+		writeErr(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// Archived: GET /api/projects/{id}/archived-boards.
+func (h System) Archived(w http.ResponseWriter, r *http.Request) {
+	out, err := h.store.Archived(r.Context(), auth.OrgID(r.Context()), r.PathValue("id"))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, out)
+}
+
+// Delete: DELETE /api/boards/{id} (org admins), only a board that was never used (409 otherwise: archive it).
 func (h System) Delete(w http.ResponseWriter, r *http.Request) {
 	if _, _, ok := h.admins.RequireAdmin(w, r); !ok {
 		return

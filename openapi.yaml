@@ -1054,6 +1054,42 @@ paths:
         '204': { description: Dismissed. }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { description: Already triaged. }
+  /boards/{boardId}/archive:
+    parameters:
+      - { name: boardId, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      tags: [Boards]
+      operationId: archiveBoard
+      summary: Archive a used board (board managers)
+      description: >-
+        Takes it off the project's boards; its history stays. Refused (409) while it has unfinished tickets.
+        Its open sprint closes with no next sprint (finished tickets stay with it for velocity); its planned
+        sprints are dropped and their tickets go back to the backlog unplanned. No tickets can be added to or
+        moved onto an archived board (409).
+      responses:
+        '204': { description: Archived. }
+        '403': { description: Not an org admin or this board's team leader. }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: It still has unfinished tickets. }
+  /boards/{boardId}/restore:
+    parameters:
+      - { name: boardId, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      tags: [Boards]
+      operationId: restoreBoard
+      summary: Put an archived board back on its project (board managers)
+      responses:
+        '204': { description: Restored. }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /projects/{projectId}/archived-boards:
+    parameters:
+      - { name: projectId, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      tags: [Boards]
+      operationId: listArchivedBoards
+      summary: A project's archived boards, most recently archived first
+      responses:
+        '200': { description: Boards., content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Board' } } } } }
   /notifications:
     get:
       tags: [Notifications]
@@ -1551,11 +1587,12 @@ paths:
       tags: [Tickets]
       operationId: pageBacklog
       summary: One page of the backlog, filtered and ordered by the server
-      description: Ready tickets first, then blocked ones; then by position. The `counts` field is per type and respects label and priority filters, but not the type filter, for type tabs. Label counts cover the whole backlog. The unpaged list stays at /projects/{projectId}/backlog.
+      description: By default ready tickets come first, then blocked ones, ordered by backlog position. `sort=newest` or `sort=oldest` orders the full filtered backlog by creation date before pagination. The `counts` field is per type and respects label and priority filters, but not the type filter, for type tabs. Label counts cover the whole backlog. The unpaged list stays at /projects/{projectId}/backlog.
       parameters:
         - { name: priority, in: query, schema: { type: array, items: { type: string, enum: [low, medium, high, urgent] } }, style: form, explode: true, description: Any of these priorities; counts follow it. }
         - $ref: '#/components/parameters/ProjectId'
         - { name: type, in: query, schema: { type: string, enum: [bug, feature, task] } }
+        - { name: sort, in: query, description: Order tickets globally before pagination. Defaults to the manual backlog order., schema: { type: string, enum: [manual, newest, oldest], default: manual } }
         - name: label
           in: query
           description: Repeatable; a ticket matches if it has any of them (case-insensitive).
@@ -2277,6 +2314,53 @@ paths:
       summary: Delete a roadmap
       responses:
         '204': { description: Roadmap deleted. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /roadmaps/{roadmapId}/updates:
+    parameters:
+      - name: roadmapId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [Roadmaps]
+      operationId: listRoadmapUpdates
+      summary: List dated progress updates
+      description: Uses the roadmap's public, login-only, or team visibility rules. Responses contain only update status, note, and date; linked ticket and organization details are never included.
+      security:
+        - {}
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Updates oldest first.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/RoadmapUpdate' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: Roadmap is restricted to its owner. }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [Roadmaps]
+      operationId: publishRoadmapUpdate
+      summary: Publish a dated progress update
+      description: Appends an immutable update to a roadmap owned by the caller's active organization.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RoadmapUpdateInput' }
+      responses:
+        '201':
+          description: Update published.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RoadmapUpdate' }
+        '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
 
@@ -3125,6 +3209,20 @@ components:
         start_date: { type: [string, 'null'], format: date, description: Gantt bar start date. }
         target_date: { type: [string, 'null'], format: date }
         manual_status: { type: string, enum: [not_started, in_progress, done] }
+    RoadmapUpdateInput:
+      type: object
+      required: [health, note]
+      properties:
+        health: { type: string, enum: [on_track, at_risk, off_track] }
+        note: { type: string, minLength: 1, maxLength: 2000, description: Plain text or Markdown; rendered as safe text by clients. }
+    RoadmapUpdate:
+      type: object
+      required: [id, health, note, published_at]
+      properties:
+        id: { type: string, format: uuid }
+        health: { type: string, enum: [on_track, at_risk, off_track] }
+        note: { type: string, maxLength: 2000 }
+        published_at: { type: string, format: date-time }
     Roadmap:
       type: object
       properties:
@@ -3234,6 +3332,8 @@ components:
         updated_at: { type: string, format: date-time }
         style: { type: string, enum: [sprints, kanban] }
         agent_review: { type: boolean, description: "Agents' moves into Done wait for a person's review." }
+        archived_at: { type: [string, 'null'], format: date-time, description: Archived boards are off the project page and take no new work. }
+        deletable: { type: boolean, description: 'Never used (no tickets, no sprints): DELETE works; otherwise archive it.' }
         hidden_done: { type: integer, description: "Kanban only. Done tickets finished more than 14 days ago, left off the board." }
         team_id: { type: [string, 'null'], format: uuid, description: The team whose leaders run this board. }
         sprint: { $ref: '#/components/schemas/Sprint' }

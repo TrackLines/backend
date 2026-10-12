@@ -94,7 +94,7 @@ func (s Store) Create(ctx context.Context, owner, name, desc string, limit int) 
 
 func (s Store) List(ctx context.Context, owner string) ([]Project, error) {
 	rows, err := s.DB.Query(ctx, `SELECT `+cols+`,
-		(SELECT count(*) FROM boards b WHERE b.project_id = projects.id),
+		(SELECT count(*) FROM boards b WHERE b.project_id = projects.id AND b.archived_at IS NULL),
 		(SELECT count(*) FROM roadmaps r WHERE r.project_id = projects.id),
 		count(*) FILTER (WHERE t.board_id IS NOT NULL AND NOT t.done),
 		count(*) FILTER (WHERE t.done),

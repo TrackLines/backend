@@ -116,10 +116,10 @@ func writeErr(w http.ResponseWriter, err error) {
 	case errors.Is(err, ErrNotFound):
 		http.Error(w, "not found", http.StatusNotFound)
 		return
-	case errors.Is(err, ErrInvalidType), errors.Is(err, ErrBadPriority), errors.Is(err, ErrBadExternal):
+	case errors.Is(err, ErrInvalidType), errors.Is(err, ErrBadPriority), errors.Is(err, ErrBadBacklogSort), errors.Is(err, ErrBadExternal):
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
-	case errors.Is(err, ErrOnBoard):
+	case errors.Is(err, ErrOnBoard), errors.Is(err, boards.ErrBoardArchived):
 		http.Error(w, err.Error(), http.StatusConflict)
 		return
 	case errors.Is(err, ErrAlreadyAssigned):
@@ -242,7 +242,7 @@ func (h System) Backlog(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusOK, out)
 }
 
-// PageBacklog: GET /api/projects/{id}/backlog/page?type=&label=a&priority=high&page=1&per_page=25.
+// PageBacklog: GET /api/projects/{id}/backlog/page?type=&label=a&priority=high&sort=newest&page=1&per_page=25.
 func (h System) PageBacklog(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	page, ok := intParam(w, q.Get("page"), "page", 1, 0)
@@ -254,7 +254,7 @@ func (h System) PageBacklog(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	org := auth.OrgID(r.Context())
-	out, err := h.store.PageBacklog(r.Context(), org, r.PathValue("id"), q.Get("type"), q["label"], page, perPage, q["priority"]...)
+	out, err := h.store.PageBacklogSorted(r.Context(), org, r.PathValue("id"), q.Get("type"), q["label"], page, perPage, q.Get("sort"), q["priority"]...)
 	if err != nil {
 		writeErr(w, err)
 		return

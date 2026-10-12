@@ -92,7 +92,7 @@ func TestBoardFlow(t *testing.T) {
 		if err := ticketStore.Move(ctx, owner, ticket.ID, done, 0); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := db.Exec(ctx, `UPDATE tickets SET started_at = now() - make_interval(days => $2) - interval '12 hours', done_at = now() - interval '12 hours' WHERE id = $1`, ticket.ID, days); err != nil {
+		if _, err := db.Exec(ctx, `UPDATE tickets SET started_at = now() - make_interval(days => $2) - interval '1 minute', done_at = now() - interval '1 minute' WHERE id = $1`, ticket.ID, days); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -100,7 +100,7 @@ func TestBoardFlow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec(ctx, `UPDATE tickets SET done_at = now() - interval '6 hours' WHERE id = $1`, legacy.ID); err != nil {
+	if _, err := db.Exec(ctx, `UPDATE tickets SET done_at = now() - interval '30 seconds' WHERE id = $1`, legacy.ID); err != nil {
 		t.Fatal(err)
 	}
 

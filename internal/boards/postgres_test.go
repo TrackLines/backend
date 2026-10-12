@@ -105,7 +105,9 @@ func TestStore(t *testing.T) {
 	if err := s.Delete(ctx, b.ID, "b2"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("non-owner delete: %v", err)
 	}
-	if err := s.Delete(ctx, b.ID, "b1"); err != nil {
-		t.Fatal(err)
+	// it has run sprints, so it's archived rather than deleted (TL-154)
+	if err := s.Delete(ctx, b.ID, "b1"); !errors.Is(err, ErrBoardUsed) {
+		t.Fatalf("delete a used board: %v", err)
 	}
+	// archiving a board is covered in tickets/board_archive_test.go (it needs tickets finished first)
 }

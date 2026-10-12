@@ -8,6 +8,7 @@ import (
 	"os"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/golang-migrate/migrate/v4"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -96,6 +97,22 @@ func TestPageBacklog(t *testing.T) {
 	if _, err := s.PageBacklog(ctx, "bp1", pid, "epic", nil, 1, 25); !errors.Is(err, ErrInvalidType) {
 		t.Fatal("bad type:", err)
 	}
+	for i, id := range ids {
+		if _, err := db.Exec(ctx, `UPDATE tickets SET created_at = $2 WHERE id = $1`, id, time.Date(2026, time.October, 1+i, 12, 0, 0, 0, time.UTC)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	newest, err := s.PageBacklogSorted(ctx, "bp1", pid, "", nil, 1, 2, "newest")
+	if err != nil || !slices.Equal(titles(newest), []string{"task4", "bug3"}) {
+		t.Fatalf("newest date order: %v, %v", titles(newest), err)
+	}
+	oldest, err := s.PageBacklogSorted(ctx, "bp1", pid, "", nil, 1, 2, "oldest")
+	if err != nil || !slices.Equal(titles(oldest), []string{"bug0", "bug1"}) {
+		t.Fatalf("oldest date order: %v, %v", titles(oldest), err)
+	}
+	if _, err := s.PageBacklogSorted(ctx, "bp1", pid, "", nil, 1, 2, "random"); !errors.Is(err, ErrBadBacklogSort) {
+		t.Fatal("bad sort:", err)
+	}
 
 	// HTTP: query parsing
 	h := NewSystem(db)
@@ -107,12 +124,12 @@ func TestPageBacklog(t *testing.T) {
 		h.PageBacklog(rec, req)
 		return rec
 	}
-	for _, bad := range []string{"page=0", "page=x", "per_page=101"} {
+	for _, bad := range []string{"page=0", "page=x", "per_page=101", "sort=random"} {
 		if rec := get(bad); rec.Code != 400 {
 			t.Fatalf("%s: %d", bad, rec.Code)
 		}
 	}
-	rec := get("label=ui&label=nope&per_page=1")
+	rec := get("label=ui&label=nope&per_page=1&sort=newest")
 	var got BacklogPage
 	if rec.Code != 200 || json.Unmarshal(rec.Body.Bytes(), &got) != nil || len(got.Tickets) != 1 || got.Counts["all"] != 2 {
 		t.Fatalf("http: %d %s", rec.Code, rec.Body)

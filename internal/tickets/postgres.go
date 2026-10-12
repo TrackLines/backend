@@ -16,6 +16,7 @@ import (
 var (
 	ErrNotFound            = errors.New("ticket not found")
 	ErrInvalidType         = errors.New("type must be bug, feature or task")
+	ErrBadBacklogSort      = errors.New("sort must be manual, newest or oldest")
 	ErrAlreadyAssigned     = errors.New("ticket is already assigned")
 	ErrNotAssignedToCaller = errors.New("ticket is not assigned to caller")
 	ErrSelfParent          = errors.New("a ticket can't be its own parent")
@@ -68,9 +69,13 @@ func (s Store) create(ctx context.Context, owner, actor, columnID, typ, title, d
 		return nil, ErrInvalidType
 	}
 	var boardID, projectID, scale string
-	if err := s.DB.QueryRow(ctx, `SELECT b.id, b.project_id, b.estimate_scale FROM columns c JOIN boards b ON b.id = c.board_id
-		JOIN projects p ON p.id = b.project_id WHERE c.id = $1 AND p.owner_clerk_id = $2`, columnID, owner).Scan(&boardID, &projectID, &scale); err != nil {
+	var archived bool
+	if err := s.DB.QueryRow(ctx, `SELECT b.id, b.project_id, b.estimate_scale, b.archived_at IS NOT NULL FROM columns c JOIN boards b ON b.id = c.board_id
+		JOIN projects p ON p.id = b.project_id WHERE c.id = $1 AND p.owner_clerk_id = $2`, columnID, owner).Scan(&boardID, &projectID, &scale, &archived); err != nil {
 		return nil, notFound(err)
+	}
+	if archived {
+		return nil, boards.ErrBoardArchived
 	}
 	if locked, err := lockedSprint(ctx, s.DB, boardID); err != nil {
 		return nil, err
@@ -153,8 +158,20 @@ const MaxPerPage = 100
 // case-insensitive) and priorities (any of; none = all), ready tickets before blocked ones. Backlog
 // stays the unpaged list.
 func (s Store) PageBacklog(ctx context.Context, owner, projectID, typ string, labels []string, page, perPage int, priorities ...string) (*BacklogPage, error) {
+	return s.PageBacklogSorted(ctx, owner, projectID, typ, labels, page, perPage, "manual", priorities...)
+}
+
+// PageBacklogSorted orders the filtered backlog before paging. Date sorts include every ticket;
+// manual order keeps ready tickets before blocked ones, then follows the user's backlog positions.
+func (s Store) PageBacklogSorted(ctx context.Context, owner, projectID, typ string, labels []string, page, perPage int, sortBy string, priorities ...string) (*BacklogPage, error) {
 	if typ != "" && !ValidType(typ) {
 		return nil, ErrInvalidType
+	}
+	if sortBy == "" {
+		sortBy = "manual"
+	}
+	if sortBy != "manual" && sortBy != "newest" && sortBy != "oldest" {
+		return nil, ErrBadBacklogSort
 	}
 	if !ValidPriorities(priorities) {
 		return nil, ErrBadPriority
@@ -202,9 +219,16 @@ func (s Store) PageBacklog(ctx context.Context, owner, projectID, typ string, la
 		out.Labels = []LabelCount{}
 	}
 
+	order := boards.TicketBlockedSQL + `, t.position, t.created_at, t.id`
+	switch sortBy {
+	case "newest":
+		order = `t.created_at DESC, t.position, t.id`
+	case "oldest":
+		order = `t.created_at, t.position, t.id`
+	}
 	rows, err = s.DB.Query(ctx, `SELECT `+boards.TicketCols+` FROM tickets t
 		WHERE `+where+` AND ($4 = '' OR t.type::text = $4)
-		ORDER BY `+boards.TicketBlockedSQL+`, t.position, t.created_at LIMIT $5 OFFSET $6`,
+		ORDER BY `+order+` LIMIT $5 OFFSET $6`,
 		projectID, lower, priorities, typ, perPage, (page-1)*perPage)
 	if err != nil {
 		return nil, err
@@ -358,16 +382,20 @@ type moveOpts struct {
 func (s Store) move(ctx context.Context, owner, id, toColumn string, pos int, o *moveOpts) error {
 	return pgx.BeginFunc(ctx, s.DB, func(tx pgx.Tx) error {
 		var boardID, scale string
+		var archived bool
 		var from, fromSprint, sprint, fromBoard, fromScale, estimate *string
 		// lock the target board: moves on one board are serialised
-		err := tx.QueryRow(ctx, `SELECT b.id, b.estimate_scale, t.column_id, t.sprint_id,
+		err := tx.QueryRow(ctx, `SELECT b.id, b.estimate_scale, b.archived_at IS NOT NULL, t.column_id, t.sprint_id,
 				(SELECT id FROM sprints WHERE board_id = b.id AND closed_at IS NULL),
 				t.board_id, `+scaleSQL+`, t.estimate
 			FROM tickets t JOIN projects p ON p.id = t.project_id AND p.owner_clerk_id = $2
 			JOIN columns c ON c.id = $3 JOIN boards b ON b.id = c.board_id AND b.project_id = t.project_id
-			WHERE t.id = $1 FOR UPDATE OF b`, id, owner, toColumn).Scan(&boardID, &scale, &from, &fromSprint, &sprint, &fromBoard, &fromScale, &estimate)
+			WHERE t.id = $1 FOR UPDATE OF b`, id, owner, toColumn).Scan(&boardID, &scale, &archived, &from, &fromSprint, &sprint, &fromBoard, &fromScale, &estimate)
 		if err != nil {
 			return notFound(err)
+		}
+		if archived {
+			return boards.ErrBoardArchived
 		}
 		// an estimate only survives a move to a board on the same scale, unless one is given
 		if fromScale == nil || *fromScale != scale {
