@@ -25,6 +25,7 @@ import (
 	"github.com/tracklines/backend/internal/clerkhooks"
 	"github.com/tracklines/backend/internal/columns"
 	"github.com/tracklines/backend/internal/comments"
+	"github.com/tracklines/backend/internal/enquiries"
 	"github.com/tracklines/backend/internal/config"
 	"github.com/tracklines/backend/internal/httpx"
 	"github.com/tracklines/backend/internal/intake"
@@ -303,6 +304,8 @@ func (s *Service) Handler() http.Handler {
 	mux.Handle("POST /api/webhooks/stripe", public("webhook-stripe", 600, s.Billing.Webhook(time.Now)))
 	mux.Handle("POST /webhooks/stripe", public("webhook-stripe", 600, s.Billing.Webhook(time.Now))) // same path as ../bugfixes (stripe listen --forward-to …/webhooks/stripe)
 	// Clerk (via Svix) authenticates by signature: org/user removals clean up admins, team members and API keys
+	// Contact form: files enquiries in ChewedFeed HQ's inbox; a few per address per minute
+	mux.Handle("POST /api/enquiries", public("enquiry", 3, enquiries.NewSystem(config.Get(s.Config).ChewedFeedURL, config.Get(s.Config).ChewedFeedKey).Create))
 	mux.Handle("POST /api/webhooks/clerk", public("webhook-clerk", 600, clerkhooks.NewSystem(s.DB, config.Get(s.Config).ClerkWebhookSecret).Webhook(time.Now)))
 
 	// Every request: API key (tl_…) or optional Clerk auth + users row for signed-in callers, then

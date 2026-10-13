@@ -39,6 +39,8 @@ servers:
 security:
   - bearerAuth: []
 tags:
+  - name: Contact
+    description: The public contact form; messages go to the Tracklines team.
   - name: Projects
     description: Create, list, inspect, update, and delete projects.
   - name: Organizations
@@ -1779,6 +1781,33 @@ paths:
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+
+  /enquiries:
+    post:
+      tags: [Contact]
+      operationId: sendEnquiry
+      summary: Send a contact-form message to the Tracklines team
+      description: Public, no account needed, and rate limited per address. Filed in the ChewedFeed HQ enquiry inbox.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, email, message]
+              properties:
+                name: { type: string, maxLength: 160 }
+                email: { type: string, format: email, maxLength: 320 }
+                company: { type: string, maxLength: 160 }
+                message: { type: string, maxLength: 5000 }
+                source_path: { type: string, maxLength: 500, description: The page the form was sent from. }
+      responses:
+        '204': { description: Sent. }
+        '400': { description: A required field is missing, too long, or the email isn't valid. }
+        '429': { description: Too many messages from this address. }
+        '502': { description: The enquiry system couldn't be reached; try again. }
+        '503': { description: Enquiries aren't configured. }
 
   /mentions:
     get:
