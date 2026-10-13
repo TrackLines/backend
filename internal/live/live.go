@@ -159,6 +159,15 @@ func (s System) Act(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "live session unavailable", 503)
 		return
 	}
+	// only the host runs the standup (TL-235); with no hosted session (its host gone too long), anyone can
+	user, _ := auth.UserID(r.Context())
+	if h, err := s.hosted(r.Context(), boardScope(standup, board), standup); err == nil && h.Host != user {
+		http.Error(w, "only the host can run the standup", http.StatusForbidden)
+		return
+	} else if err != nil && !errors.Is(err, ErrNoSession) {
+		http.Error(w, "live session unavailable", 503)
+		return
+	}
 	var in struct {
 		Action string `json:"action"`
 		Index  *int   `json:"index"`

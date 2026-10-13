@@ -223,6 +223,11 @@ func TestHostedStandup(t *testing.T) {
 		t.Fatalf("joined: %+v", h)
 	}
 	expect(403, "bo", "org_hsu", "focus", `{"ticketId":"t9"}`)
+	// only the host runs the standup: start, next, previous, jump, end (TL-235)
+	for _, body := range []string{`{"action":"resume"}`, `{"action":"next"}`, `{"action":"jump","index":1}`, `{"action":"end"}`} {
+		expect(403, "bo", "org_hsu", "act", body)
+	}
+	expect(200, "ava", "org_hsu", "act", `{"action":"resume"}`)
 	h := expect(200, "ava", "org_hsu", "focus", `{"ticketId":"t9","filters":{"assignee":["mine"]}}`)
 	if h.Focus.TicketID == nil || *h.Focus.TicketID != "t9" || h.Focus.Filters["assignee"][0] != "mine" {
 		t.Fatalf("focus: %+v", h.Focus)
