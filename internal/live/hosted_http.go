@@ -38,6 +38,24 @@ func (s System) project(w http.ResponseWriter, r *http.Request) (scope, string, 
 	return projectScope(refinement, r.PathValue("id")), user, true
 }
 
+// canRefine: user is an org admin, or leads the team of one of the project's sprint boards (TL-241).
+func (s System) canRefine(r *http.Request, user string) (bool, error) {
+	if auth.ViaAPIKey(r.Context()) {
+		return false, nil // like every board-manager action: needs a signed-in session
+	}
+	org := auth.OrgID(r.Context())
+	if s.IsAdmin != nil {
+		if admin, err := s.IsAdmin(r.Context(), org, user); err != nil || admin {
+			return admin, err
+		}
+	}
+	var leader bool
+	err := s.Boards.DB.QueryRow(r.Context(), `SELECT EXISTS (SELECT 1 FROM boards b JOIN team_members tm ON tm.team_id = b.team_id
+		WHERE b.project_id::text = $1 AND b.owner_clerk_id = $2 AND b.style = 'sprints' AND tm.user_clerk_id = $3 AND tm.leader)`,
+		r.PathValue("id"), org, user).Scan(&leader)
+	return leader, err
+}
+
 func hostedErr(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, ErrNoSession):
@@ -67,6 +85,14 @@ func (s System) ProjectStream(w http.ResponseWriter, r *http.Request) {
 func (s System) RefinementStart(w http.ResponseWriter, r *http.Request) {
 	sc, user, ok := s.project(w, r)
 	if !ok {
+		return
+	}
+	// planning is for org admins and the project's sprint boards' team leaders; anyone can join to watch
+	if can, err := s.canRefine(r, user); err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	} else if !can {
+		http.Error(w, "only organization admins or a team leader of this project's boards can run refinement", http.StatusForbidden)
 		return
 	}
 	h, err := s.startHosted(r.Context(), sc, refinement, user)

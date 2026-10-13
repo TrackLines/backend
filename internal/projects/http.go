@@ -69,13 +69,12 @@ func (h System) Create(w http.ResponseWriter, r *http.Request) {
 	if !httpx.Decode(w, r, &in) || !in.valid(w) {
 		return
 	}
-	user, _ := auth.UserID(r.Context())
-	limit, err := billing.ProjectLimit(r.Context(), h.db, user)
+	// the org's plan sets its project limit, whoever creates the project (TL-243)
+	limit, err := billing.ProjectLimit(r.Context(), h.db, auth.OrgID(r.Context()))
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
-	// ponytail: the free tier counts the org's projects but checks the creator's subscription; per-org billing later
 	p, err := h.store.Create(r.Context(), auth.OrgID(r.Context()), in.Name, in.Description, limit)
 	if err != nil {
 		writeErr(w, err)

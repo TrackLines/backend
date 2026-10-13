@@ -100,11 +100,11 @@ func (s Stripe) call(ctx context.Context, method, path string, form url.Values, 
 }
 
 // CreateCustomer is idempotent per clerk user so double clicks can't create two customers.
-func (s Stripe) CreateCustomer(ctx context.Context, clerkID, email string) (string, error) {
+func (s Stripe) CreateCustomer(ctx context.Context, org, email string) (string, error) {
 	var customer struct {
 		ID string `json:"id"`
 	}
-	form := url.Values{"metadata[clerk_id]": {clerkID}}
+	form := url.Values{"metadata[org_id]": {org}}
 	if email != "" {
 		form.Set("email", email)
 	}
@@ -112,7 +112,7 @@ func (s Stripe) CreateCustomer(ctx context.Context, clerkID, email string) (stri
 	// Stripe replays a key for 24h, so a plain per-user key would hand back a customer that
 	// was since deleted in Stripe and break checkout for a day.
 	// ponytail: minute bucket; two creates straddling a minute make an orphan customer (DB keeps the first id).
-	key := fmt.Sprintf("tracklines-customer-%s-%d", clerkID, time.Now().Unix()/60)
+	key := fmt.Sprintf("tracklines-customer-%s-%d", org, time.Now().Unix()/60)
 	if err := s.call(ctx, http.MethodPost, "/v1/customers", form, key, &customer); err != nil {
 		return "", err
 	}
@@ -122,17 +122,17 @@ func (s Stripe) CreateCustomer(ctx context.Context, clerkID, email string) (stri
 	return customer.ID, nil
 }
 
-func (s Stripe) CheckoutURL(ctx context.Context, clerkID, customerID, priceID, successURL, cancelURL string) (string, error) {
+func (s Stripe) CheckoutURL(ctx context.Context, org, customerID, priceID, successURL, cancelURL string) (string, error) {
 	form := url.Values{
-		"mode":                                  {"subscription"},
-		"allow_promotion_codes":                 {"true"},
-		"customer":                              {customerID},
-		"client_reference_id":                   {clerkID},
-		"line_items[0][price]":                  {priceID},
-		"line_items[0][quantity]":               {"1"},
-		"subscription_data[metadata][clerk_id]": {clerkID},
-		"success_url":                           {successURL},
-		"cancel_url":                            {cancelURL},
+		"mode":                                {"subscription"},
+		"allow_promotion_codes":               {"true"},
+		"customer":                            {customerID},
+		"client_reference_id":                 {org},
+		"line_items[0][price]":                {priceID},
+		"line_items[0][quantity]":             {"1"},
+		"subscription_data[metadata][org_id]": {org},
+		"success_url":                         {successURL},
+		"cancel_url":                          {cancelURL},
 	}
 	return s.sessionURL(ctx, "/v1/checkout/sessions", form)
 }

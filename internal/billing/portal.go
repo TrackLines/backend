@@ -18,11 +18,14 @@ func (s Service) Portal(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "billing is not configured", http.StatusServiceUnavailable)
 		return
 	}
-	user, _ := auth.UserID(r.Context())
+	org, _, ok := s.admin(w, r)
+	if !ok {
+		return
+	}
 	var customer, subscription *string
 	var paid bool
 	err := s.DB.QueryRow(r.Context(), `SELECT stripe_customer_id, stripe_subscription_id, COALESCE(stripe_status IN ('active', 'trialing'), false)
-		FROM users WHERE clerk_id = $1`, user).Scan(&customer, &subscription, &paid)
+		FROM org_billing WHERE org_id = $1`, org).Scan(&customer, &subscription, &paid)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		logs.Errorf("billing: portal customer: %v", err)
 		http.Error(w, "billing unavailable", http.StatusServiceUnavailable)
@@ -45,21 +48,27 @@ func (s Service) Portal(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusOK, map[string]string{"url": url})
 }
 
-// status reports the caller's plan for the frontend: {"paid": bool, "project_limit": n (-1 = unlimited),
-// "billed": bool}. billed = paid through a Stripe subscription, so there's billing to manage.
+// status reports the active organization's plan for the frontend: {"paid": bool, "project_limit": n
+// (-1 = unlimited), "billed": bool, "can_manage": bool}. billed = paid through a Stripe subscription,
+// so there's billing to manage; can_manage = the caller is an org admin, who buys and manages it.
 func (s Service) Status(w http.ResponseWriter, r *http.Request) {
+	org := auth.OrgID(r.Context())
 	user, _ := auth.UserID(r.Context())
-	limit, err := ProjectLimit(r.Context(), s.DB, user)
+	limit, err := ProjectLimit(r.Context(), s.DB, org)
 	if err != nil {
 		logs.Errorf("billing: status: %v", err)
 		http.Error(w, "billing unavailable", http.StatusServiceUnavailable)
 		return
 	}
 	var billed bool
-	if err := s.DB.QueryRow(r.Context(), `SELECT COALESCE(bool_or(stripe_subscription_id IS NOT NULL), false) FROM users WHERE clerk_id = $1`, user).Scan(&billed); err != nil {
+	if err := s.DB.QueryRow(r.Context(), `SELECT COALESCE(bool_or(stripe_subscription_id IS NOT NULL), false) FROM org_billing WHERE org_id = $1`, org).Scan(&billed); err != nil {
 		logs.Errorf("billing: status: %v", err)
 		http.Error(w, "billing unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	httpx.JSON(w, http.StatusOK, map[string]any{"paid": limit < 0, "project_limit": limit, "billed": billed})
+	manage := false
+	if s.IsAdmin != nil && org != "" && !auth.ViaAPIKey(r.Context()) {
+		manage, _ = s.IsAdmin(r.Context(), org, user) // can't tell = no buttons; the endpoints check again
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"paid": limit < 0, "project_limit": limit, "billed": billed, "can_manage": manage})
 }

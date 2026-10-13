@@ -66,7 +66,7 @@ func TestWebhook(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	if _, err := db.Exec(ctx, `INSERT INTO users (clerk_id, email, stripe_customer_id) VALUES ('w1', 'w@b.c', 'cus_w1') ON CONFLICT DO NOTHING`); err != nil {
+	if _, err := db.Exec(ctx, `INSERT INTO org_billing (org_id, stripe_customer_id, billing_email) VALUES ('org_w1', 'cus_w1', 'w@b.c') ON CONFLICT DO NOTHING`); err != nil {
 		t.Fatal(err)
 	}
 	subs := map[string]string{"sub_new": `{"id":"sub_new","customer":"cus_w1","status":"active"}`,
@@ -99,7 +99,7 @@ func TestWebhook(t *testing.T) {
 	}
 	status := func() string {
 		var st string
-		_ = db.QueryRow(ctx, `SELECT stripe_status FROM users WHERE clerk_id = 'w1'`).Scan(&st)
+		_ = db.QueryRow(ctx, `SELECT stripe_status FROM org_billing WHERE org_id = 'org_w1'`).Scan(&st)
 		return st
 	}
 
@@ -110,10 +110,10 @@ func TestWebhook(t *testing.T) {
 	if code := send(`{"type":"checkout.session.completed","data":{"object":{"subscription":"sub_new","status":"canceled"}}}`, "whsec"); code != 200 || status() != "active" {
 		t.Fatalf("checkout completed: %d %q", code, status())
 	}
-	if paid, _ := IsPaid(ctx, db, "w1"); !paid {
+	if paid, _ := IsPaid(ctx, db, "org_w1"); !paid {
 		t.Fatal("not paid after checkout")
 	}
-	if len(synced) != 1 || synced[0].ExternalCustomerID != "w1" || synced[0].Email != "w@b.c" || synced[0].Plan != "paid" || synced[0].BillingStatus != "active" {
+	if len(synced) != 1 || synced[0].ExternalCustomerID != "org_w1" || synced[0].Email != "w@b.c" || synced[0].Plan != "paid" || synced[0].BillingStatus != "active" {
 		t.Fatalf("chewedfeed purchase sync: %+v", synced)
 	}
 	// late event for an old canceled subscription must not downgrade the live one
@@ -130,7 +130,7 @@ func TestWebhook(t *testing.T) {
 	if code := send(`{"type":"customer.subscription.deleted","data":{"object":{"id":"sub_new"}}}`, "whsec"); code != 200 || status() != "canceled" {
 		t.Fatalf("cancel: %d %q", code, status())
 	}
-	if paid, _ := IsPaid(ctx, db, "w1"); paid {
+	if paid, _ := IsPaid(ctx, db, "org_w1"); paid {
 		t.Fatal("still paid after cancel")
 	}
 	// stale and unknown-customer events change no row, so only checkout and cancel reach ChewedFeed

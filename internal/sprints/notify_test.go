@@ -3,6 +3,7 @@ package sprints
 import (
 	"context"
 	"errors"
+	"github.com/clerk/clerk-sdk-go/v2"
 	"net/http/httptest"
 	"os"
 	"strings"
@@ -35,7 +36,7 @@ func TestApprovalNotification(t *testing.T) {
 	defer db.Close()
 	if _, err := db.Exec(ctx, `DELETE FROM notifications WHERE org_id = 'an1'; DELETE FROM org_admins WHERE org_id = 'an1';
 		DELETE FROM boards WHERE owner_clerk_id = 'an1'; DELETE FROM projects WHERE owner_clerk_id = 'an1';
-		INSERT INTO org_admins (org_id, user_clerk_id, granted_by) VALUES ('an1', 'user_lead', 'test')`); err != nil {
+		INSERT INTO org_admins (org_id, user_clerk_id, granted_by) VALUES ('an1', 'user_lead', 'test'), ('an1', 'user_planner', 'test')`); err != nil {
 		t.Fatal(err)
 	}
 	var pid string
@@ -60,15 +61,41 @@ func TestApprovalNotification(t *testing.T) {
 
 	h := NewSystem(db, organizations.Admins{DB: db}).WithNotifier(notifications.Store{DB: db})
 	ts := tickets.Store{DB: db}
-	planOne := func(estimate string) {
-		tk, _ := ts.CreateBacklog(ctx, "an1", pid, "task", "work", "")
-		req := httptest.NewRequest("PUT", "/", strings.NewReader(`{"planned_sprint_id":"`+plan.ID+`","estimate":"`+estimate+`"}`)).WithContext(auth.WithAPIKeyUser(ctx, "an1", "Claude"))
-		req.SetPathValue("id", tk.ID)
+	as := func(user string) context.Context {
+		c := &clerk.SessionClaims{RegisteredClaims: clerk.RegisteredClaims{Subject: user}}
+		c.ActiveOrganizationID = "an1"
+		return clerk.ContextWithSessionClaims(ctx, c)
+	}
+	planAs := func(who context.Context, ticket, body string) int {
+		req := httptest.NewRequest("PUT", "/", strings.NewReader(body)).WithContext(who)
+		req.SetPathValue("id", ticket)
 		rec := httptest.NewRecorder()
 		h.PlanTicket(rec, req)
-		if rec.Code != 204 {
-			t.Fatalf("plan: %d %s", rec.Code, rec.Body)
+		return rec.Code
+	}
+	planOne := func(estimate string) {
+		tk, _ := ts.CreateBacklog(ctx, "an1", pid, "task", "work", "")
+		if code := planAs(as("user_planner"), tk.ID, `{"planned_sprint_id":"`+plan.ID+`","estimate":"`+estimate+`"}`); code != 204 {
+			t.Fatalf("plan: %d", code)
 		}
+	}
+
+	// planning is for org admins and the board's team leaders, not any member or an API key (TL-241)
+	tk, _ := ts.CreateBacklog(ctx, "an1", pid, "task", "access", "")
+	if code := planAs(as("user_member"), tk.ID, `{"planned_sprint_id":"`+plan.ID+`","estimate":"1"}`); code != 403 {
+		t.Fatalf("a plain member planned a ticket: %d", code)
+	}
+	if code := planAs(auth.WithAPIKeyUser(ctx, "an1", "Claude"), tk.ID, `{"planned_sprint_id":"`+plan.ID+`","estimate":"1"}`); code != 403 {
+		t.Fatalf("an API key planned a ticket: %d", code)
+	}
+	if code := planAs(as("user_lead"), tk.ID, `{"planned_sprint_id":"`+plan.ID+`","estimate":"1"}`); code != 204 {
+		t.Fatalf("admin plan: %d", code)
+	}
+	if code := planAs(as("user_member"), tk.ID, `{"planned_sprint_id":null}`); code != 403 {
+		t.Fatalf("a plain member took a ticket out of a planned sprint: %d", code)
+	}
+	if code := planAs(as("user_lead"), tk.ID, `{"planned_sprint_id":null}`); code != 204 {
+		t.Fatalf("admin unplan: %d", code)
 	}
 	told := func() int {
 		var n int

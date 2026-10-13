@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/clerk/clerk-sdk-go/v2"
 	"net/http/httptest"
 	"os"
 	"slices"
@@ -69,13 +70,33 @@ func TestHostedRefinement(t *testing.T) {
 	}
 
 	clock := time.UnixMilli(1_000_000)
-	s := System{VK: valkeyForTest(t), Boards: boards.Store{DB: db}, Now: func() time.Time { return clock }}
+	// Ava and Bo are org admins; Cy is a plain member; Dee leads the team of the project's sprint board
+	s := System{VK: valkeyForTest(t), Boards: boards.Store{DB: db}, Now: func() time.Time { return clock },
+		IsAdmin: func(_ context.Context, _, user string) (bool, error) { return user == "ava" || user == "bo", nil }}
+	b, err := boards.Store{DB: db}.Create(ctx, "org_hs", pid, "Sprints", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var team string
+	if err := db.QueryRow(ctx, `INSERT INTO teams (org_id, name) VALUES ('org_hs', 'Web') RETURNING id`).Scan(&team); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(ctx, `UPDATE boards SET team_id = $1 WHERE id = $2`, team, b.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(ctx, `INSERT INTO team_members (team_id, user_clerk_id, leader) VALUES ($1, 'dee', true), ($1, 'cy', false)`, team); err != nil {
+		t.Fatal(err)
+	}
 	type call struct {
 		code int
 		h    Hosted
 		body string
 	}
-	as := func(user, org string) context.Context { return auth.WithAPIKey(ctx, user, org, "ui", "") }
+	as := func(user, org string) context.Context {
+		c := &clerk.SessionClaims{RegisteredClaims: clerk.RegisteredClaims{Subject: user}}
+		c.ActiveOrganizationID = org
+		return clerk.ContextWithSessionClaims(ctx, c)
+	}
 	send := func(user, org, route, body string) call {
 		t.Helper()
 		req := httptest.NewRequest("POST", "/", strings.NewReader(body)).WithContext(as(user, org))
@@ -100,6 +121,18 @@ func TestHostedRefinement(t *testing.T) {
 	// nothing running; another org can't even see the project
 	expect(404, "ava", "org_hs", "get", "")
 	expect(404, "eve", "org_other", "start", "")
+
+	// only org admins and the sprint board's team leaders run refinement; anyone can join to watch (TL-241)
+	expect(403, "cy", "org_hs", "start", "")
+	expect(201, "dee", "org_hs", "start", "")
+	expect(204, "dee", "org_hs", "end", "")
+	req := httptest.NewRequest("POST", "/", nil).WithContext(auth.WithAPIKey(ctx, "ava", "org_hs", "agent", ""))
+	req.SetPathValue("id", pid)
+	rec := httptest.NewRecorder()
+	s.RefinementStart(rec, req)
+	if rec.Code != 403 {
+		t.Fatalf("an API key started a refinement: %d", rec.Code)
+	}
 
 	// Ava starts and hosts; a second session is refused while hers runs
 	h := expect(201, "ava", "org_hs", "start", "")

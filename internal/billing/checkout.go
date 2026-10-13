@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	"github.com/bugfixes/go-bugfixes/logs"
-	"github.com/tracklines/backend/internal/auth"
 	"github.com/tracklines/backend/internal/httpx"
 )
 
@@ -15,8 +14,11 @@ func (s Service) Checkout(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "billing is not configured", http.StatusServiceUnavailable)
 		return
 	}
-	user, _ := auth.UserID(r.Context())
-	paid, err := IsPaid(r.Context(), s.DB, user)
+	org, email, ok := s.admin(w, r)
+	if !ok {
+		return
+	}
+	paid, err := IsPaid(r.Context(), s.DB, org)
 	if err != nil {
 		logs.Errorf("billing: tier: %v", err)
 		http.Error(w, "billing unavailable", http.StatusServiceUnavailable)
@@ -26,7 +28,7 @@ func (s Service) Checkout(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "already subscribed — manage it from the billing portal", http.StatusConflict)
 		return
 	}
-	customer, err := Customer(r.Context(), s.DB, s.Stripe, user)
+	customer, err := Customer(r.Context(), s.DB, s.Stripe, org, email)
 	if err != nil {
 		logs.Errorf("billing: customer: %v", err)
 		http.Error(w, "billing provider unavailable", http.StatusBadGateway)
@@ -39,7 +41,7 @@ func (s Service) Checkout(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "billing provider unavailable", http.StatusBadGateway)
 		return
 	}
-	url, err := s.Stripe.CheckoutURL(r.Context(), user, customer, price, ret+"?billing=success", ret+"?billing=cancelled")
+	url, err := s.Stripe.CheckoutURL(r.Context(), org, customer, price, ret+"?billing=success", ret+"?billing=cancelled")
 	if err != nil {
 		logs.Errorf("billing: checkout: %v", err)
 		http.Error(w, "billing provider unavailable", http.StatusBadGateway)

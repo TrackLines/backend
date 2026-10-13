@@ -2771,7 +2771,8 @@ paths:
     get:
       tags: [Billing]
       operationId: getSubscription
-      summary: Get the caller's plan and project limit
+      summary: Get the active organization's plan and project limit
+      description: The plan belongs to the organization; everyone in it sees it, and its admins buy and manage it.
       responses:
         '200':
           description: Subscription status.
@@ -2784,6 +2785,7 @@ paths:
                   paid: { type: boolean }
                   project_limit: { type: integer, description: '-1 means unlimited.' }
                   billed: { type: boolean, description: "Paid through a Stripe subscription, so the billing portal can manage it. false for free plans and for plans granted by hand; the portal answers 409 for those." }
+                  can_manage: { type: boolean, description: The caller is an org admin, so may upgrade or manage the plan. }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '503': { description: Billing status unavailable. }
 
@@ -2791,7 +2793,7 @@ paths:
     post:
       tags: [Billing]
       operationId: createCheckoutSession
-      summary: Create a Stripe checkout session
+      summary: Create a Stripe checkout session for the active organization's plan
       responses:
         '200':
           description: Stripe Checkout URL.
@@ -2799,7 +2801,8 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/URLResponse' }
         '401': { $ref: '#/components/responses/Unauthorized' }
-        '409': { description: Caller is already subscribed. }
+        '403': { description: Not a signed-in admin of the active organization. }
+        '409': { description: The organization is already subscribed. }
         '503': { description: Billing is not configured or unavailable. }
         '502': { description: Stripe is unavailable. }
 
@@ -2807,7 +2810,7 @@ paths:
     post:
       tags: [Billing]
       operationId: createBillingPortalSession
-      summary: Create a Stripe billing portal session
+      summary: Create a Stripe billing portal session for the active organization
       responses:
         '200':
           description: Stripe Billing Portal URL.
@@ -2815,7 +2818,8 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/URLResponse' }
         '401': { $ref: '#/components/responses/Unauthorized' }
-        '409': { description: Caller has no Stripe customer yet. }
+        '403': { description: Not a signed-in admin of the active organization. }
+        '409': { description: The organization has no Stripe subscription (free, or granted by hand). }
         '503': { description: Billing is not configured or unavailable. }
         '502': { description: Stripe is unavailable. }
 

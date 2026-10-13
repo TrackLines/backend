@@ -33,9 +33,9 @@ func TestPortalAndStatus(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	if _, err := db.Exec(ctx, `INSERT INTO users (clerk_id, email, stripe_customer_id) VALUES ('p0', 'n@b.c', NULL), ('p1', 'c@b.c', 'cus_portal'), ('p2', 'o@b.c', 'cus_stale') ON CONFLICT DO NOTHING;
-		UPDATE users SET stripe_subscription_id = 'sub_1', stripe_status = 'active' WHERE clerk_id = 'p1';
-		UPDATE users SET stripe_status = 'active' WHERE clerk_id = 'p2'`); err != nil { // p2: Pro granted by hand, no subscription
+	// org_p1 pays through Stripe; org_p2 has Pro granted by hand (no subscription); org_p0 is free
+	if _, err := db.Exec(ctx, `INSERT INTO org_billing (org_id, stripe_customer_id, stripe_subscription_id, stripe_status)
+		VALUES ('org_p1', 'cus_portal', 'sub_1', 'active'), ('org_p2', 'cus_stale', NULL, 'active') ON CONFLICT DO NOTHING`); err != nil {
 		t.Fatal(err)
 	}
 	stripeSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -46,34 +46,42 @@ func TestPortalAndStatus(t *testing.T) {
 		_, _ = w.Write([]byte(`{"url":"https://billing.stripe.com/p/1"}`))
 	}))
 	defer stripeSrv.Close()
-	s := Service{DB: db, Stripe: Stripe{SecretKey: "sk", BaseURL: stripeSrv.URL}, PriceID: "p", WebhookSecret: "w", ReturnURL: "http://app/settings"}
+	s := Service{DB: db, Stripe: Stripe{SecretKey: "sk", BaseURL: stripeSrv.URL}, PriceID: "p", WebhookSecret: "w", ReturnURL: "http://app/settings",
+		IsAdmin: adminsExcept("member")}
 
 	rec := httptest.NewRecorder()
-	s.Portal(rec, signedIn(httptest.NewRequest("POST", "/", nil), "p1"))
+	s.Portal(rec, inOrg(httptest.NewRequest("POST", "/", nil), "admin", "org_p1"))
 	if rec.Code != 200 || !json.Valid(rec.Body.Bytes()) {
 		t.Fatalf("portal: %d %s", rec.Code, rec.Body)
 	}
+	// a member can't manage the org's billing (TL-243)
 	rec = httptest.NewRecorder()
-	s.Portal(rec, signedIn(httptest.NewRequest("POST", "/", nil), "p0"))
+	s.Portal(rec, inOrg(httptest.NewRequest("POST", "/", nil), "member", "org_p1"))
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("a member opened the portal: %d", rec.Code)
+	}
+	rec = httptest.NewRecorder()
+	s.Portal(rec, inOrg(httptest.NewRequest("POST", "/", nil), "admin", "org_p0"))
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("no customer: %d", rec.Code)
 	}
-	rec = httptest.NewRecorder()
-	s.Status(rec, signedIn(httptest.NewRequest("GET", "/", nil), "p0"))
-	if rec.Body.String() != `{"billed":false,"paid":false,"project_limit":1}`+"\n" {
-		t.Fatalf("status: %s", rec.Body)
-	}
 	// granted by hand: paid, nothing billed, and the portal says so instead of asking Stripe
 	rec = httptest.NewRecorder()
-	s.Portal(rec, signedIn(httptest.NewRequest("POST", "/", nil), "p2"))
+	s.Portal(rec, inOrg(httptest.NewRequest("POST", "/", nil), "admin", "org_p2"))
 	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "isn't billed through Stripe") {
 		t.Fatalf("granted plan portal: %d %s", rec.Code, rec.Body)
 	}
-	for user, want := range map[string]string{"p1": `{"billed":true,"paid":true,"project_limit":-1}`, "p2": `{"billed":false,"paid":true,"project_limit":-1}`} {
+	// everyone in the org sees its plan; only admins may manage it
+	for _, c := range []struct{ user, org, want string }{
+		{"admin", "org_p0", `{"billed":false,"can_manage":true,"paid":false,"project_limit":1}`},
+		{"admin", "org_p1", `{"billed":true,"can_manage":true,"paid":true,"project_limit":-1}`},
+		{"member", "org_p1", `{"billed":true,"can_manage":false,"paid":true,"project_limit":-1}`},
+		{"admin", "org_p2", `{"billed":false,"can_manage":true,"paid":true,"project_limit":-1}`},
+	} {
 		rec = httptest.NewRecorder()
-		s.Status(rec, signedIn(httptest.NewRequest("GET", "/", nil), user))
-		if rec.Body.String() != want+"\n" {
-			t.Fatalf("status %s: %s", user, rec.Body)
+		s.Status(rec, inOrg(httptest.NewRequest("GET", "/", nil), c.user, c.org))
+		if rec.Body.String() != c.want+"\n" {
+			t.Fatalf("status %s in %s: %s", c.user, c.org, rec.Body)
 		}
 	}
 }

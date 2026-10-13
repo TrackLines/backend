@@ -46,6 +46,8 @@ type System struct {
 	VK     valkey.Client
 	Boards boards.Store
 	Now    func() time.Time
+	// IsAdmin: is user an admin of org (organizations.Admins.IsAdmin); refinement needs a manager (TL-241)
+	IsAdmin func(ctx context.Context, org, user string) (bool, error)
 }
 
 func New(vk valkey.Client, db boards.Store) System { return System{VK: vk, Boards: db, Now: time.Now} }

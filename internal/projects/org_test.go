@@ -67,4 +67,22 @@ func TestOrgSharing(t *testing.T) {
 	if rec := call(carol, "GET", "", "", h.List); strings.Contains(rec.Body.String(), p.ID) {
 		t.Fatalf("other org list leaks: %s", rec.Body)
 	}
+
+	// the org's plan sets the limit, not the creator's (TL-243): org_x is free, so a second project is
+	// refused for anyone in it; once org_x is paid, Bob (no plan of his own) can add more
+	if _, err := db.Exec(ctx, `DELETE FROM org_billing WHERE org_id = 'org_x'`); err != nil {
+		t.Fatal(err)
+	}
+	if rec := call(bob, "POST", "", `{"name":"second"}`, h.Create); rec.Code != http.StatusPaymentRequired {
+		t.Fatalf("free org, second project: %d %s", rec.Code, rec.Body)
+	}
+	if _, err := db.Exec(ctx, `INSERT INTO org_billing (org_id, stripe_status) VALUES ('org_x', 'active')`); err != nil {
+		t.Fatal(err)
+	}
+	if rec := call(bob, "POST", "", `{"name":"second"}`, h.Create); rec.Code != 201 {
+		t.Fatalf("paid org, second project: %d %s", rec.Code, rec.Body)
+	}
+	if rec := call(carol, "POST", "", `{"name":"carol's"}`, h.Create); rec.Code != 201 { // another org's plan is its own
+		t.Fatalf("other org's first project: %d %s", rec.Code, rec.Body)
+	}
 }

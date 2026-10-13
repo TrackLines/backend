@@ -11,17 +11,17 @@ import (
 func TestCreateCustomer(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/customers" || r.Header.Get("Authorization") != "Bearer sk_test" ||
-			!strings.HasPrefix(r.Header.Get("Idempotency-Key"), "tracklines-customer-user_1-") {
+			!strings.HasPrefix(r.Header.Get("Idempotency-Key"), "tracklines-customer-org_1-") {
 			t.Errorf("bad request: %s %v", r.URL.Path, r.Header)
 		}
 		_ = r.ParseForm()
-		if r.Form.Get("metadata[clerk_id]") != "user_1" || r.Form.Get("email") != "a@b.c" {
+		if r.Form.Get("metadata[org_id]") != "org_1" || r.Form.Get("email") != "a@b.c" {
 			t.Errorf("bad form: %v", r.Form)
 		}
 		_, _ = w.Write([]byte(`{"id":"cus_123"}`))
 	}))
 	defer srv.Close()
-	id, err := Stripe{SecretKey: "sk_test", BaseURL: srv.URL}.CreateCustomer(context.Background(), "user_1", "a@b.c")
+	id, err := Stripe{SecretKey: "sk_test", BaseURL: srv.URL}.CreateCustomer(context.Background(), "org_1", "a@b.c")
 	if err != nil || id != "cus_123" {
 		t.Fatalf("got %q %v", id, err)
 	}

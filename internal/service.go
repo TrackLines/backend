@@ -251,6 +251,7 @@ func (s *Service) Handler() http.Handler {
 	// Sprints — per team board; closing opens the next and carries unfinished tickets over
 	sp := sprints.NewSystem(s.DB, o.AdminModel()).WithLive(s.Valkey).WithNotifier(notify)
 	lv := live.New(s.Valkey, boards.Store{DB: s.DB})
+	lv.IsAdmin = o.AdminModel().IsAdmin
 	mux.Handle("POST /api/boards/{id}/live/standup", signedIn(lv.Start))
 	mux.Handle("GET /api/boards/{id}/live/standup", signedIn(lv.Get))
 	mux.Handle("POST /api/boards/{id}/live/standup/action", signedIn(lv.Act))
@@ -312,10 +313,12 @@ func (s *Service) Handler() http.Handler {
 	mux.Handle("POST /api/keys", sessionRequired(http.HandlerFunc(k.Create)))
 	mux.Handle("DELETE /api/keys/{id}", sessionRequired(http.HandlerFunc(k.Revoke)))
 
-	// Billing — answers 503 until Stripe is configured
-	mux.Handle("GET /api/subscription", signedIn(s.Billing.Status))
-	mux.Handle("POST /api/subscription/checkout", signedIn(s.Billing.Checkout))
-	mux.Handle("POST /api/subscription/portal", signedIn(s.Billing.Portal))
+	// Billing — answers 503 until Stripe is configured. The plan is the active org's; its admins buy and manage it.
+	bill := s.Billing
+	bill.IsAdmin = o.AdminModel().IsAdmin
+	mux.Handle("GET /api/subscription", signedIn(bill.Status))
+	mux.Handle("POST /api/subscription/checkout", signedIn(bill.Checkout))
+	mux.Handle("POST /api/subscription/portal", signedIn(bill.Portal))
 	// Stripe authenticates webhooks by signature, not session
 	mux.Handle("POST /api/webhooks/stripe", public("webhook-stripe", 600, s.Billing.Webhook(time.Now)))
 	mux.Handle("POST /webhooks/stripe", public("webhook-stripe", 600, s.Billing.Webhook(time.Now))) // same path as ../bugfixes (stripe listen --forward-to …/webhooks/stripe)

@@ -34,7 +34,7 @@ func TestCustomer(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	if _, err := db.Exec(ctx, `INSERT INTO users (clerk_id, email) VALUES ('c1', 'a@b.c') ON CONFLICT (clerk_id) DO UPDATE SET stripe_customer_id = NULL`); err != nil {
+	if _, err := db.Exec(ctx, `DELETE FROM org_billing WHERE org_id = 'org_c1'`); err != nil {
 		t.Fatal(err)
 	}
 	var calls atomic.Int32
@@ -45,14 +45,14 @@ func TestCustomer(t *testing.T) {
 	defer srv.Close()
 	s := Stripe{BaseURL: srv.URL}
 	for range 2 {
-		if id, err := Customer(ctx, db, s, "c1"); err != nil || id != "cus_1" {
+		if id, err := Customer(ctx, db, s, "org_c1", "a@b.c"); err != nil || id != "cus_1" {
 			t.Fatalf("got %q %v", id, err)
 		}
 	}
 	if calls.Load() != 1 {
 		t.Fatalf("stripe called %d times, want 1 (second call should read the stored id)", calls.Load())
 	}
-	if paid, _ := IsPaid(ctx, db, "c1"); paid {
+	if paid, _ := IsPaid(ctx, db, "org_c1"); paid {
 		t.Fatal("new customer reported as paid")
 	}
 }
