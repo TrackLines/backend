@@ -97,6 +97,12 @@ func (s Store) Revoke(ctx context.Context, id, owner string) error {
 // Owner resolves an active key to its owner and stamps last_used_at.
 // ponytail: one UPDATE per API request; batch the stamp if key traffic ever gets heavy.
 // Owner looks up a live key: its owner, the org it acts in ("" for pre-org keys), name and kind.
+// RevokeKey revokes the key with this plaintext (its owner left the org).
+func (s Store) RevokeKey(ctx context.Context, plain string) error {
+	_, err := s.DB.Exec(ctx, `UPDATE api_keys SET revoked_at = now() WHERE hash = $1 AND revoked_at IS NULL`, hash(plain))
+	return err
+}
+
 func (s Store) Owner(ctx context.Context, plain string) (owner, org, name, kind string, err error) {
 	err = s.DB.QueryRow(ctx, `UPDATE api_keys SET last_used_at = now()
 		WHERE hash = $1 AND revoked_at IS NULL RETURNING owner_clerk_id, COALESCE(org_id, ''), name, kind`, hash(plain)).Scan(&owner, &org, &name, &kind)

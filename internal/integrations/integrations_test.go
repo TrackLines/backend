@@ -49,7 +49,7 @@ func TestBugfixesPanel(t *testing.T) {
 	// a fake Bugfixes: checks the token, serves report 15098 in project 4703
 	lastSeen := time.Now().Add(time.Hour).UTC().Format(time.RFC3339Nano)
 	failing := false
-	bfx := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	bfx := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if failing {
 			http.Error(w, "down", http.StatusBadGateway)
 			return
@@ -67,7 +67,7 @@ func TestBugfixesPanel(t *testing.T) {
 
 	admins := organizations.Admins{DB: db}
 	h := System{store: Store{DB: db, Box: box}, admins: admins, tickets: tickets.Store{DB: db}, now: time.Now}
-	h.reports = BugfixesAPI{Store: h.store}
+	h.reports = BugfixesAPI{Store: h.store, Client: bfx.Client()} // trusts the test server; production uses externalClient
 
 	session := func(user string) context.Context {
 		return clerk.ContextWithSessionClaims(ctx, func() *clerk.SessionClaims {

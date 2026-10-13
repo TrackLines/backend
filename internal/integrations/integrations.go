@@ -191,8 +191,8 @@ func (h System) Connect(w http.ResponseWriter, r *http.Request) {
 	if in.BaseURL == "" {
 		in.BaseURL = DefaultBugfixesURL
 	}
-	if in.Token == "" || len(in.Token) > 500 || !strings.HasPrefix(in.BaseURL, "https://") && !strings.HasPrefix(in.BaseURL, "http://") {
-		http.Error(w, "token is required; base_url must be http(s)", http.StatusBadRequest)
+	if in.Token == "" || len(in.Token) > 500 || !validBaseURL(in.BaseURL) {
+		http.Error(w, "token is required; base_url must be an https address like https://bugfix.es", http.StatusBadRequest)
 		return
 	}
 	if err := h.store.Connect(r.Context(), org, provider, in.BaseURL, in.Token, user); err != nil {

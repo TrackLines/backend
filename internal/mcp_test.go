@@ -58,11 +58,19 @@ func TestMCP(t *testing.T) {
 	b, _ := boards.Store{DB: db}.Create(ctx, "mcp-org", pid, "Backend", "")
 	tk, _ := tickets.Store{DB: db}.Create(ctx, "mcp-org", b.Columns[0].ID, "bug", "Broken", "keep this description")
 
-	srv := httptest.NewServer((&Service{DB: db}).Handler())
+	// the key owner is still in the org (TL-160 asks Clerk; the test answers)
+	member := func(context.Context, string, string) (bool, error) { return true, nil }
+	srv := httptest.NewServer((&Service{DB: db, KeyMember: member}).Handler())
 	defer srv.Close()
 	connect := func(key string) (*sdk.ClientSession, error) {
 		c := sdk.NewClient(&sdk.Implementation{Name: "test", Version: "1"}, nil)
 		return c.Connect(ctx, &sdk.StreamableClientTransport{Endpoint: srv.URL + "/mcp", HTTPClient: &http.Client{Transport: bearer{key}}, MaxRetries: -1}, nil)
+	}
+	// every API response carries the security headers (TL-164)
+	if resp, err := http.Get(srv.URL + "/api/roadmaps/none"); err != nil || resp.Header.Get("X-Content-Type-Options") != "nosniff" || resp.Header.Get("X-Frame-Options") != "DENY" {
+		t.Fatalf("security headers: %v %v", resp, err)
+	} else {
+		resp.Body.Close()
 	}
 	if _, err := connect(""); err == nil {
 		t.Fatal("no key should be refused")

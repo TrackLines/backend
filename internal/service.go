@@ -54,6 +54,8 @@ type Service struct {
 	Flags   *goFlags.Client // s.Flags.Is("name").Enabled()
 	Billing billing.Service
 	Port    string
+	// KeyMember overrides how API keys check their owner is still in the org (tests); nil asks Clerk
+	KeyMember apikeys.Member
 }
 
 func New(cfg *ConfigBuilder.Config, db *pgxpool.Pool, vk valkey.Client, fl *goFlags.Client, bill billing.Service, port string) *Service {
@@ -67,6 +69,10 @@ func (s *Service) Start() error {
 	defer stop()
 	// overdue sprints close themselves (manual close is POST /api/sprints/{id}/close)
 	go sprints.Store{DB: s.DB}.RunAutoClose(ctx, time.Minute)
+	if config.Get(s.Config).ClerkWebhookSecret == "" {
+		// API keys still check membership on use, but removals, deletions and admin clean-up wait on it
+		logs.Warnf("CLERK_WEBHOOK_SECRET is not set: Clerk webhooks are refused, so org removals aren't synced")
+	}
 	return s.serve(ctx, s.Handler())
 }
 
@@ -85,6 +91,10 @@ func (s *Service) Handler() http.Handler {
 	}
 	// Clerk member lists for pickers come from Valkey for a minute; checks that guard changes ask Clerk
 	members := clerkcache.Memberships{Next: organizationmembership.NewClient(&clerk.ClientConfig{}), VK: s.Valkey, TTL: time.Minute}
+	keyMember := s.KeyMember
+	if keyMember == nil {
+		keyMember = stillMember(members)
+	}
 	o := organizations.NewSystem(s.DB).CachingMembers(members)
 	mux.Handle("GET /api/organizations/members", signedIn(o.Members))
 	mux.Handle("GET /api/organizations/me", signedIn(o.Me))             // the caller's admin flag and the teams they lead
@@ -302,10 +312,10 @@ func (s *Service) Handler() http.Handler {
 	// in-process through handler, so MCP and REST can't drift apart
 	mux.Handle("/mcp", required(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { mcpHandler.ServeHTTP(w, r) })))
 	// BadKeys first: an address that keeps presenting invalid keys is refused before more key lookups
-	handler = ratelimit.BadKeys(limits, 20, time.Now)(apikeys.Middleware(s.DB)(ratelimit.Middleware(s.Valkey, config.Get(s.Config).RateLimit, time.Now)(optional(users.Ensure(s.DB)(
+	handler = ratelimit.BadKeys(limits, 20, time.Now)(apikeys.Middleware(s.DB, keyMember)(ratelimit.Middleware(s.Valkey, config.Get(s.Config).RateLimit, time.Now)(optional(users.Ensure(s.DB)(
 		bm.Recoverer(bm.RequestID(bm.Logger(cors.CORS(httpx.WithZone(mux))))))))))
 	mcpHandler = mcp.Handler(handler, "1.0.0")
-	return handler
+	return httpx.SecurityHeaders(handler)
 }
 
 func (s *Service) health(w http.ResponseWriter, r *http.Request) {
@@ -338,4 +348,22 @@ func (s *Service) serve(ctx context.Context, h http.Handler) error {
 		return err
 	}
 	return nil
+}
+
+// stillMember asks Clerk (through the minute-long membership cache) whether user is still in org,
+// for the API key middleware.
+func stillMember(members clerkcache.Memberships) apikeys.Member {
+	return func(ctx context.Context, org, user string) (bool, error) {
+		limit := int64(1)
+		list, err := members.List(ctx, &organizationmembership.ListParams{OrganizationID: org, UserIDs: []string{user}, ListParams: clerk.ListParams{Limit: &limit}})
+		if err != nil || list == nil {
+			return false, err
+		}
+		for _, m := range list.OrganizationMemberships {
+			if m != nil && m.PublicUserData != nil && m.PublicUserData.UserID == user {
+				return true, nil
+			}
+		}
+		return false, nil
+	}
 }

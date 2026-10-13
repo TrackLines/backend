@@ -12,7 +12,7 @@ import (
 // treated as one (so a bf_ row could never grant access), and a signed-in route refuses it.
 func TestBfKeysAreNotKeys(t *testing.T) {
 	var sawKey bool
-	h := Middleware(nil)(auth.Required(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	h := Middleware(nil, nil)(auth.Required(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		sawKey = auth.ViaAPIKey(r.Context())
 		w.WriteHeader(http.StatusNoContent)
 	})))

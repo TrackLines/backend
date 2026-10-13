@@ -93,7 +93,7 @@ func TestKeyHandlers(t *testing.T) {
 	// the key works until revoked; only its owner can revoke it
 	works := func() int {
 		called := false
-		mw := Middleware(db)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { called = auth.ViaAPIKey(r.Context()) }))
+		mw := Middleware(db, nil)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { called = auth.ViaAPIKey(r.Context()) }))
 		req := httptest.NewRequest("GET", "/", nil)
 		req.Header.Set("Authorization", "Bearer "+created.Key)
 		rec := httptest.NewRecorder()
@@ -116,4 +116,63 @@ func TestKeyHandlers(t *testing.T) {
 		t.Fatalf("revoked key still listed: %+v", got)
 	}
 	expect(404, "revoke", as("akh1", "org_akh"), created.ID, "")
+}
+
+// A key whose owner has left its org stops working on its next use, even if the Clerk webhook never
+// arrived: it's refused and revoked. If Clerk can't answer, the key is refused (503), never let in.
+func TestKeyOwnerMustStillBeAMember(t *testing.T) {
+	ctx := context.Background()
+	url := os.Getenv("TEST_DATABASE_URL")
+	m, err := migrate.New("file://../migrations", "pgx5"+url[len("postgres"):])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Up(); err != nil && !errors.Is(err, migrate.ErrNoChange) {
+		t.Fatal(err)
+	}
+	db, err := pgxpool.New(ctx, url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(ctx, `DELETE FROM users WHERE clerk_id = 'akm1'; INSERT INTO users (clerk_id, email) VALUES ('akm1', 'm@k.h')`); err != nil {
+		t.Fatal(err)
+	}
+	s := Store{DB: db}
+	plain, _, err := s.Create(ctx, "akm1", "org_akm", "Claude", KindAI)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var member bool
+	var clerkDown error
+	var asked []string
+	mw := Middleware(db, func(_ context.Context, org, user string) (bool, error) {
+		asked = append(asked, org+"/"+user)
+		return member, clerkDown
+	})
+	use := func() int {
+		let := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusTeapot) }))
+		req := httptest.NewRequest("GET", "/", nil)
+		req.Header.Set("Authorization", "Bearer "+plain)
+		rec := httptest.NewRecorder()
+		let.ServeHTTP(rec, req)
+		return rec.Code
+	}
+
+	member = true
+	if got := use(); got != http.StatusTeapot || asked[0] != "org_akm/akm1" {
+		t.Fatalf("a member's key: %d (asked %v)", got, asked)
+	}
+	clerkDown = errors.New("clerk unavailable")
+	if got := use(); got != http.StatusServiceUnavailable {
+		t.Fatalf("Clerk down: %d", got)
+	}
+	clerkDown, member = nil, false
+	if got := use(); got != http.StatusUnauthorized {
+		t.Fatalf("a leaver's key: %d", got)
+	}
+	member = true // even if they rejoin, the key stays revoked
+	if got := use(); got != http.StatusUnauthorized {
+		t.Fatalf("revoked key used again: %d", got)
+	}
 }

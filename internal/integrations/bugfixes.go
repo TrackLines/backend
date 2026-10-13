@@ -74,7 +74,7 @@ func (b BugfixesAPI) Report(ctx context.Context, org, project, id string) (*Repo
 	req.Header.Set("Authorization", "Bearer "+token)
 	client := b.Client
 	if client == nil {
-		client = &http.Client{Timeout: 5 * time.Second}
+		client = externalClient(5 * time.Second)
 	}
 	resp, err := client.Do(req)
 	if err != nil {

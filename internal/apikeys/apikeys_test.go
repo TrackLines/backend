@@ -55,7 +55,7 @@ func TestKeys(t *testing.T) {
 	// a handler behind the same chain the service uses
 	var seen string
 	var viaKey bool
-	h := Middleware(db)(auth.Required(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	h := Middleware(db, nil)(auth.Required(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		seen, _ = auth.UserID(r.Context())
 		viaKey = auth.ViaAPIKey(r.Context())
 	})))
@@ -83,7 +83,7 @@ func TestKeys(t *testing.T) {
 	if code := call(h, "Bearer some.clerk.jwt"); code != http.StatusUnauthorized {
 		t.Fatalf("non-key bearer should fall through to Clerk (invalid → 401): %d", code)
 	}
-	if code := call(Middleware(db)(auth.SessionRequired(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))), "Bearer "+plain); code != http.StatusForbidden {
+	if code := call(Middleware(db, nil)(auth.SessionRequired(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))), "Bearer "+plain); code != http.StatusForbidden {
 		t.Fatalf("key managing keys: %d, want 403", code)
 	}
 

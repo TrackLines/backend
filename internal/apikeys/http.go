@@ -1,6 +1,7 @@
 package apikeys
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strings"
@@ -18,9 +19,14 @@ func NewSystem(db *pgxpool.Pool) System {
 	return System{store: Store{DB: db}}
 }
 
+// Member reports whether user still belongs to org in Clerk (cached briefly by the caller).
+type Member func(ctx context.Context, org, user string) (bool, error)
+
 // Middleware lets `Authorization: Bearer tl_…` act as the key's owner. Anything else
 // (Clerk JWTs, anon) passes through untouched. A bad or revoked tl_ key is a 401, never anon.
-func Middleware(db *pgxpool.Pool) func(http.Handler) http.Handler {
+// With member set, a key whose owner has left its org is revoked on use and refused, so a missed
+// Clerk webhook can't leave a leaver with access (TL-160); if Clerk can't say, it's a 503.
+func Middleware(db *pgxpool.Pool, member Member) func(http.Handler) http.Handler {
 	s := Store{DB: db}
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -36,6 +42,21 @@ func Middleware(db *pgxpool.Pool) func(http.Handler) http.Handler {
 				}
 				http.Error(w, "invalid api key", http.StatusUnauthorized)
 				return
+			}
+			if member != nil && org != "" {
+				still, err := member(r.Context(), org, owner)
+				if err != nil {
+					logs.Errorf("apikeys: check organization membership: %v", err)
+					http.Error(w, "could not verify organization membership", http.StatusServiceUnavailable)
+					return
+				}
+				if !still {
+					if err := s.RevokeKey(r.Context(), key); err != nil {
+						logs.Errorf("apikeys: revoke a leaver's key: %v", err)
+					}
+					http.Error(w, "invalid api key", http.StatusUnauthorized)
+					return
+				}
 			}
 			next.ServeHTTP(w, r.WithContext(auth.WithAPIKey(r.Context(), owner, org, name, kind)))
 		})
