@@ -85,6 +85,15 @@ func TestMCP(t *testing.T) {
 	if err != nil || len(list.Tools) < 20 {
 		t.Fatalf("tools: %v %v", len(list.Tools), err)
 	}
+	// agents build roadmaps from feature milestones with tickets linked, not one milestone per ticket (TL-201)
+	for _, tool := range list.Tools {
+		if tool.Name == "replace_roadmap_items" && !strings.Contains(tool.Description, "never one per ticket") {
+			t.Fatalf("replace_roadmap_items should steer agents to feature milestones: %s", tool.Description)
+		}
+		if tool.Name == "set_roadmap_item_tickets" && !strings.Contains(tool.Description, "feature milestone") {
+			t.Fatalf("set_roadmap_item_tickets: %s", tool.Description)
+		}
+	}
 	call := func(name string, args map[string]any) *sdk.CallToolResult {
 		t.Helper()
 		res, err := cs.CallTool(ctx, &sdk.CallToolParams{Name: name, Arguments: args})
