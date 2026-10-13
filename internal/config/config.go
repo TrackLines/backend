@@ -40,9 +40,9 @@ type Project struct {
 	UploadThingToken       string `env:"UPLOADTHING_TOKEN"`     // ticket attachments; used to delete stored files
 	SecretKey              string `env:"TRACKLINES_SECRET_KEY"` // 32 bytes base64: seals integration tokens; integrations stay off without it
 	Git                    Git
-	RateLimit              int    `env:"API_KEY_RATE_LIMIT" envDefault:"300"` // requests per minute per API key; 0 turns it off
-	ChewedFeedURL          string `env:"CHEWEDFEED_API_URL"`                  // HQ customer sync; off when unset
-	ChewedFeedKey          string `env:"CHEWEDFEED_ENQUIRY_KEY"`              // tracklines project's enquiry key in ChewedFeed
+	RateLimit              int    `env:"API_KEY_RATE_LIMIT" envDefault:"300"`                        // requests per minute per API key; 0 turns it off
+	ChewedFeedURL          string `env:"CHEWEDFEED_API_URL" envDefault:"https://api.chewedfeed.com"` // ChewedFeed HQ (customer sync, enquiries)
+	ChewedFeedKey          string `env:"CHEWEDFEED_ENQUIRY_KEY"`                                     // tracklines' enquiry key in ChewedFeed; sync and enquiries are off without it
 	// Web Push (notifications with Tracklines closed): `npx web-push generate-vapid-keys`; off without them
 	VAPIDPublicKey  string `env:"VAPID_PUBLIC_KEY"`
 	VAPIDPrivateKey string `env:"VAPID_PRIVATE_KEY"`

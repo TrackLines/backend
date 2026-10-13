@@ -11,6 +11,10 @@ func TestBuild(t *testing.T) {
 	if p := Get(c); p == nil || p.Stripe.PriceID != "price_123" {
 		t.Fatalf("project config not parsed: %+v", p)
 	}
+	// there's one ChewedFeed API; only the enquiry key turns customer sync and enquiries on
+	if got := Get(c).ChewedFeedURL; got != "https://api.chewedfeed.com" {
+		t.Fatalf("default ChewedFeed URL = %q", got)
+	}
 	if got, want := Get(c).AuthorizedParties(), []string{"https://tracklin.es", "http://localhost:3000"}; !equalStrings(got, want) {
 		t.Fatalf("default authorized parties = %q, want %q", got, want)
 	}
