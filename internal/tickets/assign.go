@@ -9,6 +9,7 @@ import (
 	"github.com/bugfixes/go-bugfixes/logs"
 	"github.com/clerk/clerk-sdk-go/v2"
 	"github.com/clerk/clerk-sdk-go/v2/organizationmembership"
+	"github.com/clerk/clerk-sdk-go/v2/user"
 	"github.com/jackc/pgx/v5"
 	"github.com/tracklines/backend/internal/auth"
 	"github.com/tracklines/backend/internal/boards"
@@ -19,6 +20,10 @@ var ErrUnknownAssignee = errors.New("assignee must be an active organization mem
 
 type membershipLister interface {
 	List(ctx context.Context, params *organizationmembership.ListParams) (*clerk.OrganizationMembershipList, error)
+}
+
+type userLister interface {
+	List(ctx context.Context, params *user.ListParams) (*clerk.UserList, error)
 }
 
 // Assignee is a person or AI agent the owner can assign a ticket to.
@@ -197,7 +202,40 @@ func (h System) organizationAssignees(ctx context.Context, org, user string) ([]
 			break
 		}
 	}
+	h.addUsernames(ctx, out)
 	return out, nil
+}
+
+// addUsernames fills in usernames: Clerk's membership list leaves public_user_data.username empty,
+// so they come from its user list. A failure only costs the usernames (names still work).
+func (h System) addUsernames(ctx context.Context, people []Assignee) {
+	if h.users == nil {
+		return
+	}
+	const batch = 100 // Clerk's user_id filter limit
+	for i := 0; i < len(people); i += batch {
+		chunk := people[i:min(i+batch, len(people))]
+		ids := make([]string, len(chunk))
+		for j, p := range chunk {
+			ids[j] = p.ID
+		}
+		list, err := h.users.List(ctx, &user.ListParams{UserIDs: ids, ListParams: clerk.ListParams{Limit: ptr(int64(batch))}})
+		if err != nil || list == nil {
+			logs.Errorf("tickets: look up usernames: %v", err)
+			return
+		}
+		names := make(map[string]string, len(list.Users))
+		for _, u := range list.Users {
+			if u != nil {
+				names[u.ID] = value(u.Username)
+			}
+		}
+		for j := range chunk {
+			if n := names[chunk[j].ID]; n != "" {
+				chunk[j].Username = n
+			}
+		}
+	}
 }
 
 func ptr[T any](v T) *T { return &v }

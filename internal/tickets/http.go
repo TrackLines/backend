@@ -11,6 +11,7 @@ import (
 	"github.com/bugfixes/go-bugfixes/logs"
 	"github.com/clerk/clerk-sdk-go/v2"
 	"github.com/clerk/clerk-sdk-go/v2/organizationmembership"
+	"github.com/clerk/clerk-sdk-go/v2/user"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/tracklines/backend/internal/auth"
 	"github.com/tracklines/backend/internal/boards"
@@ -19,17 +20,21 @@ import (
 
 // NewSystem exposes the ticket handlers; routes are declared in internal/service.go.
 func NewSystem(db *pgxpool.Pool) System {
-	return System{store: Store{DB: db}, memberships: organizationmembership.NewClient(&clerk.ClientConfig{})}
+	return System{store: Store{DB: db}, memberships: organizationmembership.NewClient(&clerk.ClientConfig{}), users: user.NewClient(&clerk.ClientConfig{})}
 }
 
 // CachingMembers lists assignees through l (e.g. clerkcache). Assignment checks still ask Clerk directly.
 func (h System) CachingMembers(l membershipLister) System { h.assigneeMembers = l; return h }
+
+// CachingUsers looks assignees' usernames up through l (e.g. clerkcache).
+func (h System) CachingUsers(l userLister) System { h.users = l; return h }
 
 type System struct {
 	notify          notifications.Notifier // nil: nobody is told
 	store           Store
 	assigneeMembers membershipLister // nil: memberships
 	memberships     membershipLister
+	users           userLister // usernames for the @ picker; nil: none
 }
 
 type ticketInput struct {

@@ -1,4 +1,4 @@
-// Package clerkcache caches Clerk organization membership lists in Valkey, shared across backend
+// Package clerkcache caches Clerk organization membership and user lists in Valkey, shared across backend
 // instances. Use it only for reads that drive the UI (assignee pickers, member lists): checks that
 // guard a change keep asking Clerk directly, so they're never decided on stale data.
 package clerkcache
@@ -13,6 +13,7 @@ import (
 	"github.com/bugfixes/go-bugfixes/logs"
 	"github.com/clerk/clerk-sdk-go/v2"
 	"github.com/clerk/clerk-sdk-go/v2/organizationmembership"
+	"github.com/clerk/clerk-sdk-go/v2/user"
 	"github.com/valkey-io/valkey-go"
 )
 
@@ -29,30 +30,50 @@ type Memberships struct {
 }
 
 func (m Memberships) List(ctx context.Context, params *organizationmembership.ListParams) (*clerk.OrganizationMembershipList, error) {
-	if m.VK == nil {
-		return m.Next.List(ctx, params)
+	return cached(ctx, m.VK, m.TTL, "clerk:memberships:"+params.OrganizationID+":", params, m.Next.List)
+}
+
+type userLister interface {
+	List(ctx context.Context, params *user.ListParams) (*clerk.UserList, error)
+}
+
+// Users is a user lister that answers from Valkey when it can, like Memberships.
+type Users struct {
+	Next userLister
+	VK   valkey.Client
+	TTL  time.Duration
+}
+
+func (u Users) List(ctx context.Context, params *user.ListParams) (*clerk.UserList, error) {
+	return cached(ctx, u.VK, u.TTL, "clerk:users:", params, u.Next.List)
+}
+
+// cached answers fetch(params) from Valkey under prefix + a hash of params, filling it on a miss.
+func cached[P any, T any](ctx context.Context, vk valkey.Client, ttl time.Duration, prefix string, params P, fetch func(context.Context, P) (*T, error)) (*T, error) {
+	if vk == nil {
+		return fetch(ctx, params)
 	}
 	raw, _ := json.Marshal(params)
 	sum := sha256.Sum256(raw)
-	key := "clerk:memberships:" + params.OrganizationID + ":" + hex.EncodeToString(sum[:8])
+	key := prefix + hex.EncodeToString(sum[:8])
 
-	if cached, err := m.VK.Do(ctx, m.VK.B().Get().Key(key).Build()).AsBytes(); err == nil {
-		var list clerk.OrganizationMembershipList
-		if json.Unmarshal(cached, &list) == nil {
-			return &list, nil
+	if hit, err := vk.Do(ctx, vk.B().Get().Key(key).Build()).AsBytes(); err == nil {
+		var out T
+		if json.Unmarshal(hit, &out) == nil {
+			return &out, nil
 		}
 	} else if !valkey.IsValkeyNil(err) {
 		logs.Warnf("clerkcache: get: %v", err)
 	}
 
-	list, err := m.Next.List(ctx, params)
-	if err != nil || list == nil {
-		return list, err
+	out, err := fetch(ctx, params)
+	if err != nil || out == nil {
+		return out, err
 	}
-	if b, err := json.Marshal(list); err == nil {
-		if err := m.VK.Do(ctx, m.VK.B().Set().Key(key).Value(valkey.BinaryString(b)).Ex(m.TTL).Build()).Error(); err != nil {
+	if b, err := json.Marshal(out); err == nil {
+		if err := vk.Do(ctx, vk.B().Set().Key(key).Value(valkey.BinaryString(b)).Ex(ttl).Build()).Error(); err != nil {
 			logs.Warnf("clerkcache: set: %v", err)
 		}
 	}
-	return list, nil
+	return out, nil
 }

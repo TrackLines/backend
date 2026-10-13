@@ -5,6 +5,7 @@ import (
 	"errors"
 	"github.com/clerk/clerk-sdk-go/v2"
 	"github.com/clerk/clerk-sdk-go/v2/organizationmembership"
+	"github.com/clerk/clerk-sdk-go/v2/user"
 	"net/http"
 	"os/signal"
 	"syscall"
@@ -164,7 +165,8 @@ func (s *Service) Handler() http.Handler {
 	mux.Handle("POST /api/notifications/{id}/read", signedIn(nf.Read))
 	mux.Handle("DELETE /api/notifications/read", signedIn(nf.ClearRead)) // clear everything already read
 	mux.Handle("DELETE /api/notifications/{id}", signedIn(nf.Dismiss))
-	t := tickets.NewSystem(s.DB).CachingMembers(members).WithNotifier(notify)
+	t := tickets.NewSystem(s.DB).CachingMembers(members).WithNotifier(notify).
+		CachingUsers(clerkcache.Users{Next: user.NewClient(&clerk.ClientConfig{}), VK: s.Valkey, TTL: time.Minute})
 	push.People = t.People // pushes name who did it
 	mux.Handle("POST /api/columns/{id}/tickets", signedIn(t.Create))
 	mux.Handle("GET /api/tickets/{id}", signedIn(t.Get)) // one ticket + where it lives (deep links)
