@@ -34,6 +34,7 @@ type Assignee struct {
 	// people only, for the @ mention picker: real name (also for "You") and Clerk username
 	Name     string `json:"name,omitempty"`
 	Username string `json:"username,omitempty"`
+	ImageURL string `json:"image_url,omitempty"` // people only: their Clerk avatar, for who's-here lists
 }
 
 // Assign lets a caller assign a ticket to themself, an active organization member, or an active AI key,
@@ -196,7 +197,7 @@ func (h System) organizationAssignees(ctx context.Context, org, user string) ([]
 			if person.UserID == user {
 				label = "You"
 			}
-			out = append(out, Assignee{ID: person.UserID, Label: label, Kind: "person", Name: name, Username: value(person.Username)})
+			out = append(out, Assignee{ID: person.UserID, Label: label, Kind: "person", Name: name, Username: value(person.Username), ImageURL: value(person.ImageURL)})
 		}
 		if int64(len(list.OrganizationMemberships)) < limit || offset+limit >= list.TotalCount {
 			break

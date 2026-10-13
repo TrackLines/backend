@@ -1686,6 +1686,7 @@ paths:
                     kind: { type: string, enum: [person, ai] }
                     name: { type: string, description: 'People only: real name (also when label is "You"), for @ mentions.' }
                     username: { type: string, description: 'People only: Clerk username, when set. @username mentions them.' }
+                    image_url: { type: string, description: 'People only: their Clerk avatar image, when they have one.' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '502': { description: Could not load organization members from Clerk. }
 

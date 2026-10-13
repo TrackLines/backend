@@ -37,14 +37,14 @@ func (u namedUsers) List(_ context.Context, params *user.ListParams) (*clerk.Use
 func TestMentionPeople(t *testing.T) {
 	s := func(v string) *string { return &v }
 	h := System{memberships: namedMembers{
-		{UserID: "user_alan", FirstName: s("Alan"), LastName: s("Smith")},
+		{UserID: "user_alan", FirstName: s("Alan"), LastName: s("Smith"), ImageURL: s("https://img.clerk.com/alan")},
 		{UserID: "user_me", FirstName: s("Ava"), LastName: s("Jones")},
 	}, users: namedUsers{"user_alan": "bob"}}
 	got, err := h.organizationAssignees(context.Background(), "org", "user_me")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got[0].Name != "Alan Smith" || got[0].Username != "bob" || got[1].Label != "You" || got[1].Name != "Ava Jones" || got[1].Username != "" {
+	if got[0].Name != "Alan Smith" || got[0].Username != "bob" || got[0].ImageURL != "https://img.clerk.com/alan" || got[1].Label != "You" || got[1].Name != "Ava Jones" || got[1].Username != "" || got[1].ImageURL != "" {
 		t.Fatalf("assignees: %+v", got)
 	}
 	people, err := h.People(context.Background(), "org")
