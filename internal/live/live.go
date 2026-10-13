@@ -112,9 +112,9 @@ func (s System) Start(w http.ResponseWriter, r *http.Request) {
 	if in.People == nil {
 		in.People = []Participant{}
 	}
-	now := s.Now().UnixMilli()
 	startedBy, _ := auth.UserID(r.Context())
-	v := Standup{People: in.People, Index: 0, SpentMS: 0, RunningSince: &now, StartedBy: startedBy}
+	// opens stopped at the first person: the host starts the clock once everyone's joined (TL-231)
+	v := Standup{People: in.People, Index: 0, SpentMS: 0, RunningSince: nil, StartedBy: startedBy}
 	if err := s.save(r.Context(), r.PathValue("id"), v); err != nil {
 		http.Error(w, "live session unavailable", 503)
 		return

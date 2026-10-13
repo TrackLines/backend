@@ -214,6 +214,10 @@ func TestHostedStandup(t *testing.T) {
 	if h := expect(200, "bo", "org_hsu", "session", ""); h.Host != "ava" {
 		t.Fatalf("starter hosts: %+v", h)
 	}
+	// the clock waits for the host: nobody's turn has started yet (TL-231)
+	if v, err := s.get(ctx, b.ID); err != nil || v.RunningSince != nil || v.SpentMS != 0 || v.Index != 0 {
+		t.Fatalf("a new standup should wait to start: %+v %v", v, err)
+	}
 	expect(404, "eve", "org_other", "session", "")
 	if h := expect(200, "bo", "org_hsu", "join", ""); !slices.Contains(h.People, "bo") {
 		t.Fatalf("joined: %+v", h)
