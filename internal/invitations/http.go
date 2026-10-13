@@ -515,7 +515,19 @@ func writeStoreErr(w http.ResponseWriter, r *http.Request, err error) {
 
 func writeClerkErr(w http.ResponseWriter, action string, err error) {
 	logs.Errorf("invitations: %s: %v", action, err)
-	if w != nil {
-		http.Error(w, "could not "+action, http.StatusBadGateway)
+	if w == nil {
+		return
 	}
+	// Clerk refused it (e.g. invitations_not_supported when the instance doesn't take email
+	// addresses): say why, so an admin can fix the Clerk setting instead of retrying (TL-239)
+	var apiErr *clerk.APIErrorResponse
+	if errors.As(err, &apiErr) && apiErr.HTTPStatusCode >= 400 && apiErr.HTTPStatusCode < 500 && len(apiErr.Errors) > 0 {
+		reason := apiErr.Errors[0].LongMessage
+		if reason == "" {
+			reason = apiErr.Errors[0].Message
+		}
+		http.Error(w, "Clerk refused to "+action+": "+reason, http.StatusUnprocessableEntity)
+		return
+	}
+	http.Error(w, "could not "+action, http.StatusBadGateway)
 }

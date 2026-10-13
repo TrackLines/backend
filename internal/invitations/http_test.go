@@ -25,9 +25,13 @@ import (
 type fakeInvites struct {
 	invitation *clerk.OrganizationInvitation
 	next       int
+	createErr  error // Clerk refusing the invitation
 }
 
 func (f *fakeInvites) Create(_ context.Context, p *organizationinvitation.CreateParams) (*clerk.OrganizationInvitation, error) {
+	if f.createErr != nil {
+		return nil, f.createErr
+	}
 	f.next++
 	copy := *f.invitation
 	copy.ID = fmt.Sprintf("orginv_test_%d", f.next)
@@ -166,6 +170,18 @@ func TestInvitationAcceptanceGrantsScopedMembership(t *testing.T) {
 	}
 	if !projectMember {
 		t.Fatal("project invite did not create project membership")
+	}
+
+	// Clerk refusing an invitation comes back with its reason, so the admin can fix Clerk (TL-239)
+	h.invitations.(*fakeInvites).createErr = &clerk.APIErrorResponse{HTTPStatusCode: 400, Errors: []clerk.Error{{
+		Code: "invitations_not_supported", LongMessage: "invitations are only supported on instances that accept email addresses.",
+	}}}
+	payload, _ := json.Marshal(inviteInput{EmailAddress: "someone@example.test", Scope: "organization"})
+	req := httptest.NewRequest(http.MethodPost, "/api/organizations/invitations", strings.NewReader(string(payload))).WithContext(admin)
+	w := httptest.NewRecorder()
+	h.Create(w, req)
+	if w.Code != http.StatusUnprocessableEntity || !strings.Contains(w.Body.String(), "only supported on instances that accept email addresses") {
+		t.Fatalf("Clerk's refusal should be passed on: %d %s", w.Code, w.Body.String())
 	}
 }
 
