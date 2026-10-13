@@ -26,6 +26,9 @@ type Assignee struct {
 	ID    string `json:"id"`    // value stored in tickets.assigned_to
 	Label string `json:"label"` // "You" or the AI agent's key name
 	Kind  string `json:"kind"`  // "person" or "ai"
+	// people only, for the @ mention picker: real name (also for "You") and Clerk username
+	Name     string `json:"name,omitempty"`
+	Username string `json:"username,omitempty"`
 }
 
 // Assign lets a caller assign a ticket to themself, an active organization member, or an active AI key,
@@ -177,17 +180,18 @@ func (h System) organizationAssignees(ctx context.Context, org, user string) ([]
 				continue
 			}
 			person := membership.PublicUserData
-			label := strings.TrimSpace(strings.Join([]string{value(person.FirstName), value(person.LastName)}, " "))
-			if label == "" {
-				label = person.Identifier
+			name := strings.TrimSpace(strings.Join([]string{value(person.FirstName), value(person.LastName)}, " "))
+			if name == "" {
+				name = person.Identifier
 			}
+			if name == "" {
+				name = person.UserID
+			}
+			label := name
 			if person.UserID == user {
 				label = "You"
 			}
-			if label == "" {
-				label = person.UserID
-			}
-			out = append(out, Assignee{ID: person.UserID, Label: label, Kind: "person"})
+			out = append(out, Assignee{ID: person.UserID, Label: label, Kind: "person", Name: name, Username: value(person.Username)})
 		}
 		if int64(len(list.OrganizationMemberships)) < limit || offset+limit >= list.TotalCount {
 			break

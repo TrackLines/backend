@@ -78,6 +78,9 @@ func (h System) People(ctx context.Context, org string) ([]notifications.Person,
 		} else if first, _, ok := strings.Cut(m.Label, " "); ok {
 			names = append(names, first)
 		}
+		if m.Username != "" {
+			names = append(names, m.Username)
+		}
 		out = append(out, notifications.Person{ID: m.ID, Names: names})
 	}
 	return out, nil
