@@ -72,20 +72,21 @@ func (h System) Mentions(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "limit must be 1–100", http.StatusBadRequest)
 		return
 	}
+	// newest first by the full timestamp, then the uuidv7 id, so same-second mentions keep their order
 	rows, err := h.store.DB.Query(r.Context(), `SELECT * FROM (
 		SELECT DISTINCT ON (m.ticket_id) m.ticket_id::text, p.key_prefix || '-' || t.number, t.title, `+boards.TicketDoneSQL+`, p.name,
-			m.actor, coalesce(m.comment_id::text, ''), to_char(m.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')
+			m.actor, coalesce(m.comment_id::text, ''), to_char(m.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'), m.created_at, m.id
 		FROM ticket_mentions m JOIN tickets t ON t.id = m.ticket_id JOIN projects p ON p.id = t.project_id
 		WHERE m.user_id = $1 AND m.org_id = $2 AND p.owner_clerk_id = $2
-		ORDER BY m.ticket_id, m.created_at DESC) latest
-		ORDER BY 8 DESC LIMIT $3`, user, auth.OrgID(r.Context()), limit)
+		ORDER BY m.ticket_id, m.created_at DESC, m.id DESC) latest
+		ORDER BY 9 DESC, 10 DESC LIMIT $3`, user, auth.OrgID(r.Context()), limit)
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
 	out, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (Mention, error) {
 		var m Mention
-		return m, row.Scan(&m.TicketID, &m.Key, &m.Title, &m.Done, &m.ProjectName, &m.Actor, &m.CommentID, &m.MentionedAt)
+		return m, row.Scan(&m.TicketID, &m.Key, &m.Title, &m.Done, &m.ProjectName, &m.Actor, &m.CommentID, &m.MentionedAt, nil, nil)
 	})
 	if err != nil {
 		writeErr(w, err)

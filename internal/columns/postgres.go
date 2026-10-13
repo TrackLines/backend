@@ -70,18 +70,17 @@ func (s Store) SetWIPLimit(ctx context.Context, owner, id string, limit int) err
 // already hidden by the board view, so they don't block deletion.
 func (s Store) Delete(ctx context.Context, owner, id string) error {
 	return pgx.BeginFunc(ctx, s.DB, func(tx pgx.Tx) error {
-		var boardID, openSprintID string
-		var openSprint bool
+		var boardID string
+		var openSprint *string // nil: the board has no open sprint (kanban, or before the first one)
 		if err := tx.QueryRow(ctx, `SELECT c.board_id,
 				(SELECT id FROM sprints WHERE board_id = b.id AND closed_at IS NULL)
 			FROM columns c JOIN boards b ON b.id = c.board_id
-			WHERE c.id = $1 AND b.owner_clerk_id = $2 FOR UPDATE OF b, c`, id, owner).Scan(&boardID, &openSprintID); err != nil {
+			WHERE c.id = $1 AND b.owner_clerk_id = $2 FOR UPDATE OF b, c`, id, owner).Scan(&boardID, &openSprint); err != nil {
 			return notFound(err)
 		}
-		openSprint = openSprintID != ""
 		var count int
 		if err := tx.QueryRow(ctx, `SELECT count(*) FROM tickets
-			WHERE column_id = $1 AND sprint_id IS NOT DISTINCT FROM $2`, id, pickString(openSprint, &openSprintID, nil)).Scan(&count); err != nil {
+			WHERE column_id = $1 AND sprint_id IS NOT DISTINCT FROM $2`, id, openSprint).Scan(&count); err != nil {
 			return err
 		}
 		if count != 0 {
@@ -101,14 +100,6 @@ func (s Store) Delete(ctx context.Context, owner, id string) error {
 			) UPDATE columns c SET position = ordered.position FROM ordered WHERE c.id = ordered.id`, boardID)
 		return err
 	})
-}
-
-// pickString returns a when useA, otherwise b.
-func pickString(useA bool, a, b *string) *string {
-	if useA {
-		return a
-	}
-	return b
 }
 
 // Reorder requires an exact permutation so columns cannot be silently omitted.
