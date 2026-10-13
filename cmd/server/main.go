@@ -6,6 +6,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/bugfixes/go-bugfixes/logs"
 	goFlags "github.com/flags-gg/go-flags"
@@ -14,6 +15,7 @@ import (
 	"github.com/tracklines/backend/internal/billing"
 	"github.com/tracklines/backend/internal/config"
 	"github.com/tracklines/backend/internal/integrations"
+	"github.com/tracklines/backend/internal/live"
 	"github.com/tracklines/backend/internal/migrations"
 	"github.com/tracklines/backend/internal/secrets"
 	"github.com/valkey-io/valkey-go"
@@ -61,10 +63,11 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("parse valkey url: %w", err)
 	}
-	// Valkey only caches, so the API runs without it (it isn't retried until the next restart)
-	vk, err := valkey.NewClient(vkOpt)
+	// Valkey backs live views (standup, refinement) and the caches; the API still runs without it.
+	// A deploy can start the API before Valkey is ready, so it's retried for about a minute.
+	vk, err := live.Connect(10, time.Sleep, func() (valkey.Client, error) { return valkey.NewClient(vkOpt) })
 	if err != nil {
-		logs.Warnf("valkey unavailable, running without the cache: %v", err)
+		logs.Warnf("valkey unavailable, running without live views or caching until the next restart: %v", err)
 		vk = nil
 	} else {
 		defer vk.Close()

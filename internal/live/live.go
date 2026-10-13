@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/bugfixes/go-bugfixes/logs"
 	"github.com/tracklines/backend/internal/auth"
 	"github.com/tracklines/backend/internal/boards"
 	"github.com/tracklines/backend/internal/httpx"
@@ -119,6 +120,12 @@ func (s System) Start(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = s.publish(r.Context(), r.PathValue("id"), "standup", v)
+	// the starter hosts it (TL-225): a fresh hosted session, replacing any left from an earlier standup
+	sc := boardScope(standup, r.PathValue("id"))
+	_ = s.endHosted(r.Context(), sc, standup)
+	if _, err := s.startHosted(r.Context(), sc, standup, startedBy); err != nil {
+		logs.Errorf("live: start the hosted standup: %v", err)
+	}
 	httpx.JSON(w, http.StatusCreated, v)
 }
 
@@ -162,6 +169,7 @@ func (s System) Act(w http.ResponseWriter, r *http.Request) {
 	if in.Action == "end" {
 		_ = s.VK.Do(r.Context(), s.VK.B().Del().Key(sessionKey(board)).Build()).Error()
 		_ = s.publish(r.Context(), board, "standup-ended", nil)
+		_ = s.endHosted(r.Context(), boardScope(standup, board), standup)
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
@@ -224,6 +232,13 @@ func (s System) Stream(w http.ResponseWriter, r *http.Request) {
 	if !s.authorize(w, r) {
 		return
 	}
+	board := r.PathValue("id")
+	s.stream(w, r, eventsKey(board), "tracklines:live:board:"+board)
+}
+
+// stream serves one live channel as server-sent events: the retained latest event first (so late
+// joiners catch up), then everything published, with a heartbeat to keep proxies from closing it.
+func (s System) stream(w http.ResponseWriter, r *http.Request, events, channel string) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		http.Error(w, "streaming unsupported", 500)
@@ -233,8 +248,7 @@ func (s System) Stream(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("X-Accel-Buffering", "no")
-	board := r.PathValue("id")
-	if raw, err := s.VK.Do(r.Context(), s.VK.B().Get().Key(eventsKey(board)).Build()).ToString(); err == nil {
+	if raw, err := s.VK.Do(r.Context(), s.VK.B().Get().Key(events).Build()).ToString(); err == nil {
 		writeSSE(w, raw)
 		flusher.Flush()
 	}
@@ -242,7 +256,7 @@ func (s System) Stream(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 	go func() {
-		_ = s.VK.Receive(ctx, s.VK.B().Subscribe().Channel("tracklines:live:board:"+board).Build(), func(m valkey.PubSubMessage) {
+		_ = s.VK.Receive(ctx, s.VK.B().Subscribe().Channel(channel).Build(), func(m valkey.PubSubMessage) {
 			select {
 			case msgs <- m.Message:
 			default:

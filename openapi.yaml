@@ -2253,6 +2253,178 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '503': { description: Valkey is unavailable. }
 
+  /projects/{projectId}/live:
+    parameters:
+      - $ref: '#/components/parameters/ProjectId'
+    get:
+      tags: [Projects]
+      operationId: streamProjectLiveEvents
+      summary: Stream the project's hosted refinement session
+      description: >-
+        Server-sent events, like the board stream: the latest retained event on connect, then updates, with a heartbeat
+        every 20 seconds. Events are `refinement-session` (the whole session) and `refinement-session-ended`.
+      responses:
+        '200': { description: Server-sent event stream., content: { text/event-stream: { schema: { type: string } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { description: Valkey is unavailable. }
+
+  /projects/{projectId}/live/refinement:
+    parameters:
+      - $ref: '#/components/parameters/ProjectId'
+    get:
+      tags: [Projects]
+      operationId: getHostedRefinement
+      summary: The project's running refinement session, with who's here
+      responses:
+        '200': { description: The session., content: { application/json: { schema: { $ref: '#/components/schemas/HostedSession' } } } }
+        '404': { description: No session running, or the project isn't in the caller's organization. }
+        '503': { description: Valkey is unavailable. }
+    post:
+      tags: [Projects]
+      operationId: startHostedRefinement
+      summary: Start a refinement session and host it
+      responses:
+        '201': { description: Started; the caller is the host., content: { application/json: { schema: { $ref: '#/components/schemas/HostedSession' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: A session is already running; join it instead. }
+        '503': { description: Valkey is unavailable. }
+    delete:
+      tags: [Projects]
+      operationId: endHostedRefinement
+      summary: End the session for everyone (host only)
+      responses:
+        '204': { description: Ended. }
+        '403': { description: Only the host can end it. }
+        '404': { description: No session running. }
+
+  /projects/{projectId}/live/refinement/join:
+    parameters:
+      - $ref: '#/components/parameters/ProjectId'
+    post:
+      tags: [Projects]
+      operationId: joinHostedRefinement
+      summary: Join the session, and stay in it
+      description: Call every 30 seconds while taking part; anyone not seen for a minute drops off the list. A host gone for two minutes ends the session.
+      responses:
+        '200': { description: The session, with the caller in it., content: { application/json: { schema: { $ref: '#/components/schemas/HostedSession' } } } }
+        '404': { description: No session running. }
+
+  /projects/{projectId}/live/refinement/leave:
+    parameters:
+      - $ref: '#/components/parameters/ProjectId'
+    post:
+      tags: [Projects]
+      operationId: leaveHostedRefinement
+      summary: Leave the session
+      responses:
+        '204': { description: Left. }
+
+  /projects/{projectId}/live/refinement/focus:
+    parameters:
+      - $ref: '#/components/parameters/ProjectId'
+    put:
+      tags: [Projects]
+      operationId: setHostedRefinementFocus
+      summary: Say what the host has open, so followers see it (host only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/HostedFocus' }
+      responses:
+        '200': { description: The session., content: { application/json: { schema: { $ref: '#/components/schemas/HostedSession' } } } }
+        '403': { description: Only the host can set it. }
+        '404': { description: No session running. }
+
+  /projects/{projectId}/live/refinement/host:
+    parameters:
+      - $ref: '#/components/parameters/ProjectId'
+    put:
+      tags: [Projects]
+      operationId: handOverHostedRefinement
+      summary: Hand over hosting, or take over from a host who has gone
+      description: The host can hand over to anyone in the session. Anyone in the session can make themselves host once the host hasn't been seen for a minute.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [user_id], properties: { user_id: { type: string } } }
+      responses:
+        '200': { description: The session with its new host., content: { application/json: { schema: { $ref: '#/components/schemas/HostedSession' } } } }
+        '400': { description: That person isn't in the session. }
+        '403': { description: Only the host can hand over (or take over from a host who has gone). }
+        '404': { description: No session running. }
+
+  /boards/{boardId}/live/standup/session:
+    parameters:
+      - $ref: '#/components/parameters/BoardId'
+    get:
+      tags: [Boards]
+      operationId: getHostedStandup
+      summary: Who's in the standup and what the host has open
+      description: Starting a standup makes the starter its host; ending it ends the session. Events (`standup-session`, `standup-session-ended`) go out on the board's live stream.
+      responses:
+        '200': { description: The session., content: { application/json: { schema: { $ref: '#/components/schemas/HostedSession' } } } }
+        '404': { description: No standup running, or the board isn't in the caller's organization. }
+        '503': { description: Valkey is unavailable. }
+
+  /boards/{boardId}/live/standup/join:
+    parameters:
+      - $ref: '#/components/parameters/BoardId'
+    post:
+      tags: [Boards]
+      operationId: joinHostedStandup
+      summary: Join the standup, and stay in it (call every 30 seconds)
+      responses:
+        '200': { description: The session, with the caller in it., content: { application/json: { schema: { $ref: '#/components/schemas/HostedSession' } } } }
+        '404': { description: No standup running. }
+
+  /boards/{boardId}/live/standup/leave:
+    parameters:
+      - $ref: '#/components/parameters/BoardId'
+    post:
+      tags: [Boards]
+      operationId: leaveHostedStandup
+      summary: Leave the standup
+      responses:
+        '204': { description: Left. }
+
+  /boards/{boardId}/live/standup/focus:
+    parameters:
+      - $ref: '#/components/parameters/BoardId'
+    put:
+      tags: [Boards]
+      operationId: setHostedStandupFocus
+      summary: Say what the host has open and how the board is filtered (host only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/HostedFocus' }
+      responses:
+        '200': { description: The session., content: { application/json: { schema: { $ref: '#/components/schemas/HostedSession' } } } }
+        '403': { description: Only the host can set it. }
+        '404': { description: No standup running. }
+
+  /boards/{boardId}/live/standup/host:
+    parameters:
+      - $ref: '#/components/parameters/BoardId'
+    put:
+      tags: [Boards]
+      operationId: handOverHostedStandup
+      summary: Hand over hosting (e.g. to the next speaker), or take over from a host who has gone
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [user_id], properties: { user_id: { type: string } } }
+      responses:
+        '200': { description: The session with its new host., content: { application/json: { schema: { $ref: '#/components/schemas/HostedSession' } } } }
+        '400': { description: That person isn't in the standup. }
+        '403': { description: Only the host can hand over (or take over from a host who has gone). }
+        '404': { description: No standup running. }
+
   /boards/{boardId}/live/standup/action:
     parameters:
       - $ref: '#/components/parameters/BoardId'
@@ -3124,6 +3296,19 @@ components:
             approved_by: { type: [string, 'null'] }
             approved_at: { type: [string, 'null'], format: date-time }
             needs_approval: { type: boolean, description: Over capacity and not covered by an approval; it won't start until approved or trimmed. }
+    HostedFocus:
+      type: object
+      description: What the host has open, shown to followers.
+      properties:
+        ticketId: { type: string, nullable: true, description: The ticket open; null when none. }
+        filters: { type: object, additionalProperties: { type: array, items: { type: string } }, description: e.g. labels, priorities, assignee. }
+    HostedSession:
+      type: object
+      properties:
+        host: { type: string, description: The host's user id. }
+        startedAt: { type: integer, format: int64, description: Unix milliseconds. }
+        focus: { $ref: '#/components/schemas/HostedFocus' }
+        people: { type: array, items: { type: string }, description: User ids in the session now (seen in the last minute), host included. }
     LiveStandup:
       type: object
       required: [people, index, spentMs, runningSince, startedBy]

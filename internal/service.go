@@ -255,6 +255,21 @@ func (s *Service) Handler() http.Handler {
 	mux.Handle("GET /api/boards/{id}/live/standup", signedIn(lv.Get))
 	mux.Handle("POST /api/boards/{id}/live/standup/action", signedIn(lv.Act))
 	mux.Handle("GET /api/boards/{id}/live", signedIn(lv.Stream))
+	// hosted standup (TL-225): the starter hosts; others join and see the board and ticket the host has open
+	mux.Handle("GET /api/boards/{id}/live/standup/session", signedIn(lv.StandupSession))
+	mux.Handle("POST /api/boards/{id}/live/standup/join", signedIn(lv.StandupJoin)) // also the 30s heartbeat
+	mux.Handle("POST /api/boards/{id}/live/standup/leave", signedIn(lv.StandupLeave))
+	mux.Handle("PUT /api/boards/{id}/live/standup/focus", signedIn(lv.StandupFocus)) // host only
+	mux.Handle("PUT /api/boards/{id}/live/standup/host", signedIn(lv.StandupHost))   // hand over / take over
+	// hosted refinement (TL-223): one per project; others join and follow what the host has open
+	mux.Handle("GET /api/projects/{id}/live", signedIn(lv.ProjectStream))
+	mux.Handle("POST /api/projects/{id}/live/refinement", signedIn(lv.RefinementStart))
+	mux.Handle("GET /api/projects/{id}/live/refinement", signedIn(lv.RefinementGet))
+	mux.Handle("DELETE /api/projects/{id}/live/refinement", signedIn(lv.RefinementEnd))     // host only
+	mux.Handle("POST /api/projects/{id}/live/refinement/join", signedIn(lv.RefinementJoin)) // also the 30s heartbeat
+	mux.Handle("POST /api/projects/{id}/live/refinement/leave", signedIn(lv.RefinementLeave))
+	mux.Handle("PUT /api/projects/{id}/live/refinement/focus", signedIn(lv.RefinementFocus)) // host only
+	mux.Handle("PUT /api/projects/{id}/live/refinement/host", signedIn(lv.RefinementHost))   // hand over / take over
 	mux.Handle("GET /api/boards/{id}/sprints", signedIn(sp.List))
 	mux.Handle("POST /api/boards/{id}/sprints", signedIn(sp.Start))
 	mux.Handle("GET /api/boards/{id}/velocity", signedIn(sp.Velocity)) // per closed sprint + open sprint burn
