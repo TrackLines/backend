@@ -217,6 +217,7 @@ func (s *Service) Handler() http.Handler {
 	cm := comments.NewSystem(s.DB).WithMentions(notify, t.People)
 	mux.Handle("GET /api/tickets/{id}/comments", signedIn(cm.List))
 	mux.Handle("POST /api/tickets/{id}/comments", signedIn(cm.Create))
+	mux.Handle("GET /api/mentions", signedIn(cm.Mentions)) // tickets that @mention the caller, newest first
 
 	// Attachments — files live on UploadThing (browser uploads via the Next.js route); we keep the records
 	at := attachments.NewSystem(s.DB, attachments.UploadThing{Token: config.Get(s.Config).UploadThingToken})

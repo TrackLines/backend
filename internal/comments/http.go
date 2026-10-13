@@ -4,18 +4,22 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/bugfixes/go-bugfixes/logs"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/tracklines/backend/internal/auth"
+	"github.com/tracklines/backend/internal/boards"
 	"github.com/tracklines/backend/internal/httpx"
 	"github.com/tracklines/backend/internal/notifications"
 )
 
-// mentions tells everyone body @mentions (not the author) that they were mentioned on the ticket.
-func (h System) mentions(r *http.Request, org, ticketID, body string) {
-	if h.notify == nil || h.people == nil || !strings.Contains(body, "@") {
+// mentions records and tells everyone the comment @mentions (not the author) that they were
+// mentioned on the ticket.
+func (h System) mentions(r *http.Request, org string, c *Comment, body string) {
+	if h.people == nil || !strings.Contains(body, "@") {
 		return
 	}
 	people, err := h.people(r.Context(), org)
@@ -23,16 +27,71 @@ func (h System) mentions(r *http.Request, org, ticketID, body string) {
 		logs.Errorf("comments: mention lookup: %v", err)
 		return
 	}
-	to := notifications.Mentioned(body, people)
+	var to []string
+	for _, id := range notifications.Mentioned(body, people) {
+		if id != c.Author {
+			to = append(to, id)
+		}
+	}
 	if len(to) == 0 {
 		return
 	}
+	if _, err := h.store.DB.Exec(r.Context(), `INSERT INTO ticket_mentions (org_id, user_id, ticket_id, comment_id, actor)
+		SELECT $1, u, $3, $4, $5 FROM unnest($2::text[]) u`, org, to, c.TicketID, c.ID, c.Author); err != nil {
+		logs.Errorf("comments: record mentions: %v", err)
+	}
 	var name string
 	_ = h.store.DB.QueryRow(r.Context(), `SELECT coalesce(p.key_prefix || '-' || t.number || ': ', '') || t.title
-		FROM tickets t JOIN projects p ON p.id = t.project_id WHERE t.id = $1`, ticketID).Scan(&name)
+		FROM tickets t JOIN projects p ON p.id = t.project_id WHERE t.id = $1`, c.TicketID).Scan(&name)
 	notifications.Send(r.Context(), h.notify, org, to, notifications.Event{
-		Kind: "mention", Text: "mentioned you on " + name, Actor: auth.ActorID(r.Context()), TicketID: ticketID,
+		Kind: "mention", Text: "mentioned you on " + name, Actor: c.Author, TicketID: c.TicketID,
 	})
+}
+
+// Mention is a ticket that mentions the caller, as of its latest mention.
+type Mention struct {
+	TicketID    string `json:"ticket_id"`
+	Key         string `json:"key"`
+	Title       string `json:"title"`
+	Done        bool   `json:"done"`
+	ProjectName string `json:"project_name"`
+	Actor       string `json:"actor"`        // who mentioned them last
+	CommentID   string `json:"comment_id"`   // "" for mentions from before they were recorded
+	MentionedAt string `json:"mentioned_at"` // UTC
+}
+
+// Mentions: GET /api/mentions?limit= — tickets that mention the caller, one per ticket, newest
+// mention first (limit 1–100, default 10).
+func (h System) Mentions(w http.ResponseWriter, r *http.Request) {
+	user, _ := auth.UserID(r.Context())
+	limit, err := strconv.Atoi(r.URL.Query().Get("limit"))
+	if r.URL.Query().Get("limit") == "" {
+		limit, err = 10, nil
+	}
+	if err != nil || limit < 1 || limit > 100 {
+		http.Error(w, "limit must be 1–100", http.StatusBadRequest)
+		return
+	}
+	rows, err := h.store.DB.Query(r.Context(), `SELECT * FROM (
+		SELECT DISTINCT ON (m.ticket_id) m.ticket_id::text, p.key_prefix || '-' || t.number, t.title, `+boards.TicketDoneSQL+`, p.name,
+			m.actor, coalesce(m.comment_id::text, ''), to_char(m.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')
+		FROM ticket_mentions m JOIN tickets t ON t.id = m.ticket_id JOIN projects p ON p.id = t.project_id
+		WHERE m.user_id = $1 AND m.org_id = $2 AND p.owner_clerk_id = $2
+		ORDER BY m.ticket_id, m.created_at DESC) latest
+		ORDER BY 8 DESC LIMIT $3`, user, auth.OrgID(r.Context()), limit)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	out, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (Mention, error) {
+		var m Mention
+		return m, row.Scan(&m.TicketID, &m.Key, &m.Title, &m.Done, &m.ProjectName, &m.Actor, &m.CommentID, &m.MentionedAt)
+	})
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, out)
 }
 
 type System struct {
@@ -88,6 +147,6 @@ func (h System) Create(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	h.mentions(r, org, c.TicketID, in.Body)
+	h.mentions(r, org, c, in.Body)
 	httpx.JSON(w, http.StatusCreated, c)
 }

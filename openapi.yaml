@@ -1780,6 +1780,35 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /mentions:
+    get:
+      tags: [Tickets]
+      operationId: listMentions
+      summary: Tickets that @mention the caller
+      description: One row per ticket, newest mention first. Mentions are recorded when a comment names someone, and stay when the notification is cleared.
+      parameters:
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 10 } }
+      responses:
+        '200':
+          description: Mentioned tickets.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    ticket_id: { type: string, format: uuid }
+                    key: { type: string, example: TL-123 }
+                    title: { type: string }
+                    done: { type: boolean }
+                    project_name: { type: string }
+                    actor: { type: string, description: Who mentioned the caller last (user id or agent name). }
+                    comment_id: { type: string, description: 'The comment, or "" for mentions from before they were recorded.' }
+                    mentioned_at: { type: string, format: date-time }
+        '400': { description: limit is not 1–100. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
   /tickets/{ticketId}/comments:
     parameters:
       - $ref: '#/components/parameters/TicketId'
