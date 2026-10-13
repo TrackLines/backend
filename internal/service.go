@@ -69,6 +69,10 @@ func (s *Service) Start() error {
 	defer stop()
 	// overdue sprints close themselves (manual close is POST /api/sprints/{id}/close)
 	go sprints.Store{DB: s.DB}.RunAutoClose(ctx, time.Minute)
+	// files of deleted attachments (and their tickets, projects, orgs) are removed from UploadThing
+	// organizations deleted in Clerk are purged once their 30 days are up
+	go clerkhooks.RunPurge(ctx, s.DB, time.Hour)
+	go attachments.Sweeper{DB: s.DB, Files: attachments.UploadThing{Token: config.Get(s.Config).UploadThingToken}}.Run(ctx, time.Minute)
 	if config.Get(s.Config).ClerkWebhookSecret == "" {
 		// API keys still check membership on use, but removals, deletions and admin clean-up wait on it
 		logs.Warnf("CLERK_WEBHOOK_SECRET is not set: Clerk webhooks are refused, so org removals aren't synced")
@@ -230,7 +234,7 @@ func (s *Service) Handler() http.Handler {
 	mux.Handle("GET /api/mentions", signedIn(cm.Mentions)) // tickets that @mention the caller, newest first
 
 	// Attachments — files live on UploadThing (browser uploads via the Next.js route); we keep the records
-	at := attachments.NewSystem(s.DB, attachments.UploadThing{Token: config.Get(s.Config).UploadThingToken})
+	at := attachments.NewSystem(s.DB)
 	mux.Handle("GET /api/tickets/{id}/attachments", signedIn(at.List))
 	mux.Handle("POST /api/tickets/{id}/attachments", signedIn(at.Create))
 	mux.Handle("DELETE /api/attachments/{id}", signedIn(at.Delete))

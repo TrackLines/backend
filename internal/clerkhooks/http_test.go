@@ -184,7 +184,10 @@ func TestWebhook(t *testing.T) {
 		t.Fatal("org_c not cleaned up")
 	}
 	if count(`SELECT count(*) FROM projects WHERE owner_clerk_id = 'org_c'`) != 1 {
-		t.Fatal("org_c projects should be kept")
+		t.Fatal("org_c projects should be kept (for 30 days)")
+	}
+	if count(`SELECT count(*) FROM deleted_orgs WHERE org_id = 'org_c'`) != 1 {
+		t.Fatal("org_c's deletion wasn't recorded for the 30-day purge")
 	}
 	if !live(aliceB) || !member("org_b", "alice") {
 		t.Fatal("org deletion touched another org")

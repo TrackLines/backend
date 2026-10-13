@@ -65,7 +65,8 @@ func TestAttachmentHandlers(t *testing.T) {
 	}))
 	defer ut.Close()
 	token := base64.StdEncoding.EncodeToString([]byte(`{"apiKey":"sk_test"}`))
-	h := NewSystem(db, UploadThing{Token: token, BaseURL: ut.URL})
+	h := NewSystem(db)
+	sweeper := Sweeper{DB: db, Files: UploadThing{Token: token, BaseURL: ut.URL}}
 
 	as := func(o string) context.Context { return auth.WithAPIKey(ctx, "user_at", o, "Ava", "") }
 	run := func(action string, c context.Context, id, body string) *httptest.ResponseRecorder {
@@ -108,13 +109,16 @@ func TestAttachmentHandlers(t *testing.T) {
 	}
 	expect(404, "list", as(other), open, "")
 
-	// delete: another org can't; then the record goes and UploadThing is asked to delete the file
+	// delete: another org can't; then the record goes, and the next sweep deletes the file on UploadThing
 	expect(404, "delete", as(other), a.ID, "")
 	expect(204, "delete", as(org), a.ID, "")
+	if _, err := sweeper.Sweep(ctx); err != nil {
+		t.Fatal(err)
+	}
 	mu.Lock()
 	got := strings.Join(deleted, ",")
 	mu.Unlock()
-	if got != "at-key-1" {
+	if !strings.Contains(got, "at-key-1") {
 		t.Fatalf("UploadThing deletes: %q", got)
 	}
 	_ = json.Unmarshal(expect(200, "list", as(org), open, "").Body.Bytes(), &list)

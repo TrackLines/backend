@@ -66,8 +66,9 @@ func (s System) Webhook(now func() time.Time) http.HandlerFunc {
 	}
 }
 
-// apply runs one event's cleanup in a transaction. Projects, boards and tickets of a deleted org are
-// kept (recoverable; nobody can reach them without the org). Ticket assignments are kept too.
+// apply runs one event's cleanup in a transaction. A deleted org's projects, boards, tickets and files
+// are kept 30 days (recoverable; nobody can reach them without the org), then Purge removes them for
+// good. Ticket assignments are kept too.
 func (s System) apply(ctx context.Context, e event) error {
 	var stmts []string
 	var args []any
@@ -102,6 +103,7 @@ func (s System) apply(ctx context.Context, e event) error {
 			`DELETE FROM org_admins WHERE org_id = $1`,
 			`DELETE FROM teams WHERE org_id = $1`, // cascades team_members, project_teams; boards.team_id → NULL
 			`UPDATE api_keys SET revoked_at = now() WHERE org_id = $1 AND revoked_at IS NULL`,
+			`INSERT INTO deleted_orgs (org_id) VALUES ($1) ON CONFLICT DO NOTHING`, // purged after 30 days
 		}
 	default:
 		logs.Debugf("clerk webhook: ignoring %s", e.Type)

@@ -12,12 +12,11 @@ import (
 
 type System struct {
 	store Store
-	ut    UploadThing
 }
 
 // NewSystem exposes the attachment handlers; routes are declared in internal/service.go.
-func NewSystem(db *pgxpool.Pool, ut UploadThing) System {
-	return System{store: Store{DB: db}, ut: ut}
+func NewSystem(db *pgxpool.Pool) System {
+	return System{store: Store{DB: db}}
 }
 
 func writeErr(w http.ResponseWriter, err error) {
@@ -60,17 +59,13 @@ func (h System) Create(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusCreated, a)
 }
 
-// Delete removes attachment {id} and its file on UploadThing. The record goes first; a failed
-// storage delete is logged (orphaned file) rather than leaving a dangling attachment.
+// Delete removes attachment {id}; its file on UploadThing goes with the next sweep (Sweeper), the
+// same way files go when their ticket, project or organization is deleted.
 func (h System) Delete(w http.ResponseWriter, r *http.Request) {
 	org := auth.OrgID(r.Context())
-	key, err := h.store.Delete(r.Context(), org, r.PathValue("id"))
-	if err != nil {
+	if _, err := h.store.Delete(r.Context(), org, r.PathValue("id")); err != nil {
 		writeErr(w, err)
 		return
-	}
-	if err := h.ut.DeleteFiles(r.Context(), key); err != nil {
-		logs.Errorf("attachments: file %s left on UploadThing: %v", key, err)
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
