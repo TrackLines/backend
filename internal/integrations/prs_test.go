@@ -54,7 +54,7 @@ func TestPRWebhooks(t *testing.T) {
 		t.Fatal(err)
 	}
 	box, _ := secrets.New(base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{9}, 32)))
-	h := System{store: Store{DB: db, Box: box}, admins: organizations.Admins{DB: db}, tickets: tickets.Store{DB: db}, now: time.Now}
+	h := System{store: Store{DB: db, Box: box}, admins: organizations.Admins{DB: db}, tickets: tickets.Store{DB: db}, now: time.Now, flag: allOn} // Bitbucket flag on
 
 	var pid string
 	_ = db.QueryRow(ctx, `INSERT INTO projects (owner_clerk_id, name, key_prefix) VALUES ('org_pr', 'Shop', 'SHP') RETURNING id`).Scan(&pid)
@@ -144,6 +144,33 @@ func TestPRWebhooks(t *testing.T) {
 	}
 	if p := prs(onBoard.ID); len(p) != 1 || p[0].State != "merged" {
 		t.Fatalf("merged state: %+v", p)
+	}
+	// a captured "merged" delivery replayed later can't re-close a ticket someone reopened (TL-170);
+	// the body is what's remembered, so changing unsigned headers like X-GitHub-Delivery doesn't help
+	if err := ts.Move(ctx, "org_pr", onBoard.ID, b.Columns[0].ID, 0); err != nil || done(onBoard.ID) {
+		t.Fatalf("reopen: %v", err)
+	}
+	// a merge on its own is already idempotent; the real replay re-sends "opened" then "merged"
+	if code := github(ghPR("open", false, false, "acme/shop", "77")); code != 204 {
+		t.Fatalf("replayed open: %d", code)
+	}
+	if code := github(ghPR("closed", true, false, "acme/shop", "77")); code != 204 || done(onBoard.ID) {
+		t.Fatalf("replayed open-then-merge re-closed the ticket: %d", code)
+	}
+	if p := prs(onBoard.ID); len(p) != 1 || p[0].State != "merged" {
+		t.Fatalf("a replay changed the PR's state: %+v", p)
+	}
+	// a delivery whose handling failed is forgotten, so the provider's retry still gets processed
+	retry := []byte(`{"retry":1}`)
+	if first, _ := h.firstDelivery(ctx, "github", retry); !first {
+		t.Fatal("new delivery seen as a replay")
+	}
+	h.forgetDelivery(ctx, "github", retry)
+	if first, _ := h.firstDelivery(ctx, "github", retry); !first {
+		t.Fatal("a failed delivery's retry was refused")
+	}
+	if first, _ := h.firstDelivery(ctx, "bitbucket:another-link", retry); !first {
+		t.Fatal("deliveries are remembered per provider and link")
 	}
 	// other installations and unlinked repos are ignored
 	other, _ := ts.Create(ctx, "org_pr", b.Columns[0].ID, "task", "untouched", "")

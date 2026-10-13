@@ -25,8 +25,8 @@ import (
 	"github.com/tracklines/backend/internal/clerkhooks"
 	"github.com/tracklines/backend/internal/columns"
 	"github.com/tracklines/backend/internal/comments"
-	"github.com/tracklines/backend/internal/enquiries"
 	"github.com/tracklines/backend/internal/config"
+	"github.com/tracklines/backend/internal/enquiries"
 	"github.com/tracklines/backend/internal/httpx"
 	"github.com/tracklines/backend/internal/intake"
 	"github.com/tracklines/backend/internal/integrations"
@@ -197,7 +197,8 @@ func (s *Service) Handler() http.Handler {
 	in := integrations.NewSystem(s.DB, box, s.Valkey, o.AdminModel(), integrations.Git{
 		GitHubAppID: gc.GitHubAppID, GitHubAppSlug: gc.GitHubAppSlug, GitHubPrivateKey: gc.GitHubPrivateKey,
 		GitHubClientID: gc.GitHubClientID, GitHubSecret: gc.GitHubClientSecret,
-		BitbucketClientID: gc.BitbucketClientID, BitbucketSecret: gc.BitbucketSecret, PublicAPI: gc.PublicAPIURL})
+		BitbucketClientID:  gc.BitbucketClientID, BitbucketSecret: gc.BitbucketSecret, PublicAPI: gc.PublicAPIURL}).
+		WithFlags(s.flagOn) // Bitbucket stays off until its flags.gg flag is on (TL-205)
 	mux.Handle("GET /api/integrations/{provider}", signedIn(in.Connection)) // connected or not; never the secret
 	mux.Handle("PUT /api/integrations/{provider}", signedIn(in.Connect))    // org admins
 	mux.Handle("DELETE /api/integrations/{provider}", signedIn(in.Disconnect))
@@ -356,6 +357,9 @@ func (s *Service) serve(ctx context.Context, h http.Handler) error {
 	}
 	return nil
 }
+
+// flagOn reports a flags.gg flag; with no flags client (tests, local without IDs) everything flagged is off.
+func (s *Service) flagOn(name string) bool { return s.Flags != nil && s.Flags.Is(name).Enabled() }
 
 // stillMember asks Clerk (through the minute-long membership cache) whether user is still in org,
 // for the API key middleware.

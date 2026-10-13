@@ -139,7 +139,7 @@ func TestGitProviders(t *testing.T) {
 		GitHubClientID: "Iv1.app", GitHubSecret: "app_secret", GitHubWeb: github.URL,
 		BitbucketClientID: "bb_id", BitbucketSecret: "bb_secret", BitbucketAuth: bitbucket.URL + "/auth", BitbucketAPI: bitbucket.URL + "/api", PublicAPI: "https://api.example",
 		now: func() time.Time { return now }}
-	h := System{store: Store{DB: db, Box: box}, admins: organizations.Admins{DB: db}, tickets: tickets.Store{DB: db}, git: git, now: time.Now}
+	h := System{store: Store{DB: db, Box: box}, admins: organizations.Admins{DB: db}, tickets: tickets.Store{DB: db}, git: git, now: time.Now, flag: allOn} // Bitbucket flag on
 
 	session := func(org, user string) context.Context {
 		return clerk.ContextWithSessionClaims(ctx, func() *clerk.SessionClaims {

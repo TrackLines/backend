@@ -64,7 +64,7 @@ func (h System) providerParam(w http.ResponseWriter, r *http.Request) (string, b
 		http.Error(w, "provider must be github or bitbucket", http.StatusNotFound)
 		return "", false
 	}
-	return p, true
+	return p, !h.hidden(w, r, p)
 }
 
 func gitErr(w http.ResponseWriter, err error) {
@@ -164,7 +164,13 @@ func (h System) ProjectRepos(w http.ResponseWriter, r *http.Request) {
 		gitErr(w, err)
 		return
 	}
-	httpx.JSON(w, http.StatusOK, out)
+	shown := out[:0]
+	for _, repo := range out {
+		if !h.off(repo.Provider) {
+			shown = append(shown, repo)
+		}
+	}
+	httpx.JSON(w, http.StatusOK, shown)
 }
 
 // LinkRepo: POST /api/projects/{id}/repos {"provider", "full_name"}. Org admins; only repos the
@@ -186,7 +192,7 @@ func (h System) LinkRepo(w http.ResponseWriter, r *http.Request) {
 	if !httpx.Decode(w, r, &in) {
 		return
 	}
-	if in.Provider != GitHub && in.Provider != Bitbucket {
+	if in.Provider != GitHub && in.Provider != Bitbucket || h.off(in.Provider) {
 		http.Error(w, "provider must be github or bitbucket", http.StatusBadRequest)
 		return
 	}
@@ -288,12 +294,21 @@ func (h System) GitHubWebhook(secret string) http.HandlerFunc {
 			http.Error(w, "invalid signature", http.StatusBadRequest)
 			return
 		}
+		if first, err := h.firstDelivery(r.Context(), "github", body); err != nil || !first {
+			if err != nil {
+				gitErr(w, err)
+				return
+			}
+			w.WriteHeader(http.StatusNoContent) // a replay: already handled
+			return
+		}
 		if pr, installation, ok := githubPR(r.Header.Get("X-GitHub-Event"), body); ok {
 			orgs, err := h.orgsFor(r.Context(), GitHub, installation, pr.Repo)
 			if err == nil {
 				err = h.linkPR(r.Context(), orgs, pr)
 			}
 			if err != nil {
+				h.forgetDelivery(r.Context(), "github", body)
 				gitErr(w, err) // 5xx: GitHub redelivers
 				return
 			}
@@ -307,6 +322,7 @@ func (h System) GitHubWebhook(secret string) http.HandlerFunc {
 			}
 			if json.Unmarshal(body, &e) == nil && e.Action == "deleted" && e.Installation.ID != "" {
 				if _, err := h.store.DB.Exec(r.Context(), `DELETE FROM org_integrations WHERE provider = 'github' AND external_id = $1`, e.Installation.ID.String()); err != nil {
+					h.forgetDelivery(r.Context(), "github", body)
 					gitErr(w, err)
 					return
 				}
@@ -343,6 +359,9 @@ func (h System) bitbucketHook(ctx context.Context, org, link, fullName string) e
 // BitbucketWebhook: POST /api/webhooks/bitbucket/{link}. Each linked repo has its own webhook and
 // secret (X-Hub-Signature), so a delivery only ever touches the org and repo that link belongs to.
 func (h System) BitbucketWebhook(w http.ResponseWriter, r *http.Request) {
+	if h.hidden(w, r, Bitbucket) {
+		return
+	}
 	var org, fullName string
 	var sealed []byte
 	err := h.store.DB.QueryRow(r.Context(), `SELECT org_id, full_name, webhook_secret FROM project_repos
@@ -361,8 +380,18 @@ func (h System) BitbucketWebhook(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid signature", http.StatusBadRequest)
 		return
 	}
+	provider := "bitbucket:" + r.PathValue("link") // each link has its own secret, so its own replay record
+	if first, err := h.firstDelivery(r.Context(), provider, body); err != nil || !first {
+		if err != nil {
+			gitErr(w, err)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent) // a replay: already handled
+		return
+	}
 	if pr, ok := bitbucketPR(r.Header.Get("X-Event-Key"), body); ok && strings.EqualFold(pr.Repo, fullName) {
 		if err := h.linkPR(r.Context(), []string{org}, pr); err != nil {
+			h.forgetDelivery(r.Context(), provider, body)
 			gitErr(w, err)
 			return
 		}

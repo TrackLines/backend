@@ -140,6 +140,7 @@ func (s Store) credentials(ctx context.Context, org, provider string) (baseURL, 
 // HTTP
 
 type System struct {
+	flag    func(name string) bool // flags.gg; nil: every flagged provider is off
 	store   Store
 	admins  organizations.Admins
 	reports reportSource
@@ -151,6 +152,9 @@ type System struct {
 // Connection: GET /api/integrations/{provider}: whether the org is connected (never the secret).
 // Any org member can see it; connecting and disconnecting are for admins.
 func (h System) Connection(w http.ResponseWriter, r *http.Request) {
+	if h.hidden(w, r, r.PathValue("provider")) {
+		return
+	}
 	org := auth.OrgID(r.Context())
 	if org == "" {
 		http.Error(w, "sign in to an organization", http.StatusForbidden)
@@ -171,11 +175,14 @@ func (h System) Connection(w http.ResponseWriter, r *http.Request) {
 
 // Connect: PUT /api/integrations/{provider} {"token": "...", "base_url"?}. Org admins only.
 func (h System) Connect(w http.ResponseWriter, r *http.Request) {
+	provider := r.PathValue("provider")
+	if h.hidden(w, r, provider) { // before the admin check: a provider that's off doesn't exist, for anyone
+		return
+	}
 	org, user, ok := h.admins.RequireAdmin(w, r)
 	if !ok {
 		return
 	}
-	provider := r.PathValue("provider")
 	if provider != Bugfixes {
 		http.Error(w, "unknown provider", http.StatusNotFound)
 		return
@@ -209,6 +216,9 @@ func (h System) Connect(w http.ResponseWriter, r *http.Request) {
 
 // Disconnect: DELETE /api/integrations/{provider}. Org admins only.
 func (h System) Disconnect(w http.ResponseWriter, r *http.Request) {
+	if h.hidden(w, r, r.PathValue("provider")) {
+		return
+	}
 	org, _, ok := h.admins.RequireAdmin(w, r)
 	if !ok {
 		return
@@ -219,4 +229,26 @@ func (h System) Disconnect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// WithFlags turns flagged providers on or off through flags.gg (on reports a flag by name).
+func (h System) WithFlags(on func(name string) bool) System { h.flag = on; return h }
+
+// flagged maps providers to the flags.gg flag that gates them. Bitbucket ships off until we have a
+// Bitbucket project to test against (TL-205); GitHub isn't flagged.
+var flagged = map[string]string{Bitbucket: "bitbucket"}
+
+// off reports whether provider is turned off by its flag.
+func (h System) off(provider string) bool {
+	name, ok := flagged[provider]
+	return ok && (h.flag == nil || !h.flag(name))
+}
+
+// hidden answers 404 for a provider that's turned off, as if it didn't exist; true means stop.
+func (h System) hidden(w http.ResponseWriter, r *http.Request, provider string) bool {
+	if h.off(provider) {
+		http.NotFound(w, r)
+		return true
+	}
+	return false
 }
