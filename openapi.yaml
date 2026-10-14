@@ -1364,6 +1364,17 @@ paths:
                   provider: { type: string }
                   connected: { type: boolean }
                   base_url: { type: string }
+                  account: { type: string, description: 'GitHub: the first connected account (kept for older clients); see accounts.' }
+                  accounts:
+                    type: array
+                    description: 'GitHub only: every GitHub account (org or user) the org connected. Each project links repos from whichever account owns them.'
+                    items:
+                      type: object
+                      properties:
+                        installation_id: { type: string }
+                        account: { type: string }
+                        updated_by: { type: string }
+                        updated_at: { type: string, format: date-time }
                   updated_by: { type: string }
                   updated_at: { type: string, format: date-time }
         '403': { description: Not a signed-in org admin. }
@@ -1391,9 +1402,13 @@ paths:
       tags: [Organizations]
       operationId: disconnectIntegration
       summary: Disconnect the org from a provider (org admins)
+      description: 'For GitHub, ?installation=<id> disconnects just that account; without it, every GitHub account is disconnected.'
+      parameters:
+        - { name: installation, in: query, description: 'GitHub only: the installation (account) to disconnect.', schema: { type: string } }
       responses:
         '204': { description: Disconnected. }
         '403': { description: Not a signed-in org admin. }
+        '404': { description: That GitHub account isn't connected to this org. }
 
   /ticket-keys/{key}:
     get:

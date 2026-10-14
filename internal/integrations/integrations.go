@@ -58,7 +58,7 @@ func (s Store) connect(ctx context.Context, org, provider, baseURL, account, ext
 		return err
 	}
 	_, err = s.DB.Exec(ctx, `INSERT INTO org_integrations (org_id, provider, base_url, account, external_id, secret, secret_aad_version, updated_by) VALUES ($1, $2, $3, $4, $5, $6, 1, $7)
-		ON CONFLICT (org_id, provider) DO UPDATE SET base_url = $3, account = $4, external_id = $5, secret = $6, secret_aad_version = 1, updated_by = $7, updated_at = now()`,
+		ON CONFLICT (org_id, provider, external_id) DO UPDATE SET base_url = $3, account = $4, external_id = $5, secret = $6, secret_aad_version = 1, updated_by = $7, updated_at = now()`,
 		org, provider, baseURL, account, externalID, sealed, by)
 	return err
 }
@@ -69,18 +69,18 @@ func secretAAD(org, provider string) string { return org + "|" + provider }
 // The schema migration adds secret_aad_version; rows are marked only after they are re-sealed,
 // so this remains safe to retry if startup is interrupted partway through.
 func (s Store) MigrateSealedSecrets(ctx context.Context) error {
-	rows, err := s.DB.Query(ctx, `SELECT org_id, provider, secret FROM org_integrations WHERE secret_aad_version = 0`)
+	rows, err := s.DB.Query(ctx, `SELECT org_id, provider, external_id, secret FROM org_integrations WHERE secret_aad_version = 0`)
 	if err != nil {
 		return err
 	}
 	type legacySecret struct {
-		org, provider string
-		sealed        []byte
+		org, provider, externalID string
+		sealed                    []byte
 	}
 	var legacy []legacySecret
 	for rows.Next() {
 		var row legacySecret
-		if err := rows.Scan(&row.org, &row.provider, &row.sealed); err != nil {
+		if err := rows.Scan(&row.org, &row.provider, &row.externalID, &row.sealed); err != nil {
 			rows.Close()
 			return err
 		}
@@ -100,16 +100,53 @@ func (s Store) MigrateSealedSecrets(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		if _, err := s.DB.Exec(ctx, `UPDATE org_integrations SET secret = $3, secret_aad_version = 1 WHERE org_id = $1 AND provider = $2 AND secret_aad_version = 0`, row.org, row.provider, sealed); err != nil {
+		// one row: an org can have several GitHub installations (TL-281)
+		if _, err := s.DB.Exec(ctx, `UPDATE org_integrations SET secret = $4, secret_aad_version = 1 WHERE org_id = $1 AND provider = $2 AND external_id = $3 AND secret_aad_version = 0`,
+			row.org, row.provider, row.externalID, sealed); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
+// Disconnect removes the org's connection to provider; for GitHub, every account it connected.
 func (s Store) Disconnect(ctx context.Context, org, provider string) error {
 	_, err := s.DB.Exec(ctx, `DELETE FROM org_integrations WHERE org_id = $1 AND provider = $2`, org, provider)
 	return err
+}
+
+// DisconnectInstallation removes one of the org's GitHub accounts, leaving any others (TL-281).
+func (s Store) DisconnectInstallation(ctx context.Context, org, installation string) error {
+	tag, err := s.DB.Exec(ctx, `DELETE FROM org_integrations WHERE org_id = $1 AND provider = 'github' AND external_id = $2`, org, installation)
+	if err == nil && tag.RowsAffected() == 0 {
+		return ErrNotConnected
+	}
+	return err
+}
+
+// Installation is one GitHub account (org or user) the org connected, by its App installation.
+type Installation struct {
+	ID        string `json:"installation_id"`
+	Account   string `json:"account"`
+	UpdatedBy string `json:"updated_by"`
+	UpdatedAt string `json:"updated_at"`
+}
+
+// Installations lists the org's GitHub accounts, by name.
+func (s Store) Installations(ctx context.Context, org string) ([]Installation, error) {
+	rows, err := s.DB.Query(ctx, `SELECT external_id, account, updated_by, to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')
+		FROM org_integrations WHERE org_id = $1 AND provider = 'github' ORDER BY lower(account), external_id`, org)
+	if err != nil {
+		return nil, err
+	}
+	out, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (Installation, error) {
+		var i Installation
+		return i, r.Scan(&i.ID, &i.Account, &i.UpdatedBy, &i.UpdatedAt)
+	})
+	if out == nil {
+		out = []Installation{}
+	}
+	return out, err
 }
 
 // Get returns the org's connection for provider, or ErrNotConnected.
@@ -158,6 +195,20 @@ func (h System) Connection(w http.ResponseWriter, r *http.Request) {
 	org := auth.OrgID(r.Context())
 	if org == "" {
 		http.Error(w, "sign in to an organization", http.StatusForbidden)
+		return
+	}
+	if r.PathValue("provider") == GitHub { // several accounts (TL-281)
+		list, err := h.store.Installations(r.Context(), org)
+		if err != nil {
+			logs.Errorf("integrations: get: %v", err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		out := map[string]any{"provider": GitHub, "connected": len(list) > 0, "accounts": list}
+		if len(list) > 0 {
+			out["account"] = list[0].Account // kept for older clients
+		}
+		httpx.JSON(w, http.StatusOK, out)
 		return
 	}
 	c, err := h.store.Get(r.Context(), org, r.PathValue("provider"))
@@ -221,6 +272,20 @@ func (h System) Disconnect(w http.ResponseWriter, r *http.Request) {
 	}
 	org, _, ok := h.admins.RequireAdmin(w, r)
 	if !ok {
+		return
+	}
+	// GitHub ?installation=<id>: just that account, the org's others stay connected (TL-281)
+	if id := r.URL.Query().Get("installation"); id != "" && r.PathValue("provider") == GitHub {
+		if err := h.store.DisconnectInstallation(r.Context(), org, id); err != nil {
+			if errors.Is(err, ErrNotConnected) {
+				http.NotFound(w, r)
+				return
+			}
+			logs.Errorf("integrations: disconnect: %v", err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 	if err := h.store.Disconnect(r.Context(), org, r.PathValue("provider")); err != nil {

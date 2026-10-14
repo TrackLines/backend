@@ -439,12 +439,29 @@ func (g Git) bitbucketRepos(ctx context.Context, token string) ([]Repo, error) {
 // Repos lists what the org's connection to provider can see.
 func (h System) Repos(ctx context.Context, org, provider string) ([]Repo, error) {
 	switch provider {
-	case GitHub:
-		_, installation, err := h.store.credentials(ctx, org, GitHub)
+	case GitHub: // every account the org connected (TL-281), each repo once
+		list, err := h.store.Installations(ctx, org)
 		if err != nil {
 			return nil, err
 		}
-		return h.git.githubRepos(ctx, installation)
+		if len(list) == 0 {
+			return nil, ErrNotConnected
+		}
+		var out []Repo
+		seen := map[string]bool{}
+		for _, i := range list {
+			repos, err := h.git.githubRepos(ctx, i.ID)
+			if err != nil {
+				return nil, err
+			}
+			for _, r := range repos {
+				if k := strings.ToLower(r.FullName); !seen[k] {
+					seen[k] = true
+					out = append(out, r)
+				}
+			}
+		}
+		return out, nil
 	case Bitbucket:
 		token, err := h.bitbucketAccess(ctx, org)
 		if err != nil {
