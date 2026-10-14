@@ -10,7 +10,11 @@ import (
 )
 
 // WithNotifier tells board managers when a planned sprint needs their approval; nil: nobody.
-func (h System) WithNotifier(n notifications.Notifier) System { h.notify = n; return h }
+// It also tells them when closing a sprint starts the next one over capacity (TL-149).
+func (h System) WithNotifier(n notifications.Notifier) System {
+	h.notify, h.store.Notify = n, n
+	return h
+}
 
 // approvalState is whether planned sprint id needs approval now (and its board and number).
 func (h System) approvalState(ctx context.Context, org, id string) (board string, number int, needs bool) {

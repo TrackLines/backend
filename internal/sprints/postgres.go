@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/tracklines/backend/internal/boards"
+	"github.com/tracklines/backend/internal/notifications"
 )
 
 var (
@@ -30,7 +31,11 @@ type CloseOptions struct {
 	NextStartsAt   *time.Time
 }
 
-type Store struct{ DB *pgxpool.Pool }
+type Store struct {
+	DB *pgxpool.Pool
+	// Notify tells a board's managers when a sprint starts over capacity (TL-149); nil: nobody
+	Notify notifications.Notifier
+}
 
 func notFound(err error) error {
 	var pg *pgconn.PgError
@@ -130,6 +135,7 @@ func (s Store) CloseWithOptions(ctx context.Context, owner, sprintID string, opt
 		return nil, ErrInvalidStart
 	}
 	var next Sprint
+	var over *overCapacity
 	err := pgx.BeginFunc(ctx, s.DB, func(tx pgx.Tx) error {
 		var id string
 		err := tx.QueryRow(ctx, `SELECT s.id FROM sprints s JOIN boards b ON b.id = s.board_id
@@ -138,12 +144,13 @@ func (s Store) CloseWithOptions(ctx context.Context, owner, sprintID string, opt
 		if err != nil {
 			return notFound(err)
 		}
-		next, err = closeSprint(ctx, tx, id, options)
+		next, over, err = closeSprint(ctx, tx, id, options)
 		return err
 	})
 	if err != nil {
 		return nil, err
 	}
+	s.warnOver(ctx, over)
 	return &next, nil
 }
 
@@ -151,18 +158,20 @@ func (s Store) CloseWithOptions(ctx context.Context, owner, sprintID string, opt
 // with the same length starting now, and carries over every ticket that isn't in the
 // board's last column ("done"), keeping its column and order. If the board planned its next
 // sprint (refinement) and that plan is within capacity or approved, the plan's tickets join it.
-func closeSprint(ctx context.Context, tx pgx.Tx, id string, options CloseOptions) (Sprint, error) {
+// over is set when that leaves the new sprint over capacity (TL-149), for the caller to tell
+// the board's managers once the transaction commits.
+func closeSprint(ctx context.Context, tx pgx.Tx, id string, options CloseOptions) (next Sprint, over *overCapacity, err error) {
 	if err := boards.RecordScope(ctx, tx, id); err != nil {
-		return Sprint{}, err
+		return Sprint{}, nil, err
 	}
 	var boardID string
 	if err := tx.QueryRow(ctx, `UPDATE sprints SET closed_at = now() WHERE id = $1 RETURNING board_id`, id).Scan(&boardID); err != nil {
-		return Sprint{}, err
+		return Sprint{}, nil, err
 	}
 	// refinement: planned sprint 1 becomes the next sprint (its length, unless the closer chose one)
 	plan, err := nextPlan(ctx, tx, boardID)
 	if err != nil {
-		return Sprint{}, err
+		return Sprint{}, nil, err
 	}
 	if plan != nil && options.NextLengthDays == 0 {
 		options.NextLengthDays = plan.LengthDays
@@ -171,21 +180,26 @@ func closeSprint(ctx context.Context, tx pgx.Tx, id string, options CloseOptions
 	if plan != nil {
 		goal = plan.Goal
 	}
-	next, err := boards.ScanSprint(tx.QueryRow(ctx, `INSERT INTO sprints (board_id, number, length_days, starts_at, ends_at, goal)
+	next, err = boards.ScanSprint(tx.QueryRow(ctx, `INSERT INTO sprints (board_id, number, length_days, starts_at, ends_at, goal)
 		SELECT board_id, number + 1, COALESCE(NULLIF($2, 0), length_days), COALESCE($3::timestamptz, now()),
 			COALESCE($3::timestamptz, now()) + make_interval(days => COALESCE(NULLIF($2, 0), length_days)), $4
 		FROM sprints WHERE id = $1 RETURNING `+boards.SprintCols, id, options.NextLengthDays, options.NextStartsAt, goal))
 	if err != nil {
-		return Sprint{}, err
+		return Sprint{}, nil, err
 	}
 	if _, err := tx.Exec(ctx, `UPDATE tickets SET sprint_id = $2 WHERE sprint_id = $1 AND column_id <> (
 		SELECT c.id FROM columns c WHERE c.board_id = $3 ORDER BY c.position DESC LIMIT 1)`, id, next.ID, next.BoardID); err != nil {
-		return Sprint{}, err
+		return Sprint{}, nil, err
 	}
+	var approved *float64 // a lead who approved the plan over capacity agreed to this much
 	if plan != nil {
-		err = movePlanned(ctx, tx, plan, next)
+		approved = plan.Capacity.ApprovedTotal
+		if err := movePlanned(ctx, tx, plan, next); err != nil {
+			return Sprint{}, nil, err
+		}
 	}
-	return next, err
+	over, err = startedOver(ctx, tx, next, approved)
+	return next, over, err
 }
 
 // AutoClose closes every open sprint past its end date. Rows are claimed with
@@ -197,15 +211,19 @@ func (s Store) AutoClose(ctx context.Context) (int, error) {
 	var errs []error
 	for {
 		var id string
+		var over *overCapacity
 		err := pgx.BeginFunc(ctx, s.DB, func(tx pgx.Tx) error {
 			err := tx.QueryRow(ctx, `SELECT id FROM sprints WHERE closed_at IS NULL AND starts_at <= now() AND ends_at <= now()
 				AND NOT (id::text = ANY($1)) ORDER BY ends_at LIMIT 1 FOR UPDATE SKIP LOCKED`, failed).Scan(&id)
 			if err != nil {
 				return err
 			}
-			_, err = closeSprint(ctx, tx, id, CloseOptions{})
+			_, over, err = closeSprint(ctx, tx, id, CloseOptions{})
 			return err
 		})
+		if err == nil {
+			s.warnOver(ctx, over) // committed: now tell them
+		}
 		switch {
 		case errors.Is(err, pgx.ErrNoRows):
 			return closed, errors.Join(errs...)

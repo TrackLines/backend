@@ -64,13 +64,28 @@ func New(cfg *ConfigBuilder.Config, db *pgxpool.Pool, vk valkey.Client, fl *goFl
 	return &Service{Config: cfg, DB: db, Valkey: vk, Flags: fl, Billing: bill, Port: port}
 }
 
+// notifiers are the in-app inbox, Web Push (to people's devices, when the server has VAPID keys), and
+// the two together: what everything that tells people something sends through.
+func (s *Service) notifiers() (notifications.Store, *notifications.Push, notifications.Notifier) {
+	inbox := notifications.Store{DB: s.DB}
+	pc := config.Get(s.Config)
+	push := notifications.NewPush(s.DB, notifications.PushConfig{PublicKey: pc.VAPIDPublicKey, PrivateKey: pc.VAPIDPrivateKey, Subject: pc.VAPIDSubject})
+	var notify notifications.Notifier = inbox
+	if push.Enabled() {
+		notify = notifications.Multi{inbox, push}
+	}
+	return inbox, push, notify
+}
+
 func (s *Service) Start() error {
 	// one shutdown signal for the server and background work, so auto-close stops before main
 	// closes the database pool (it used to tick once more and log "closed pool" on every deploy)
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	// overdue sprints close themselves (manual close is POST /api/sprints/{id}/close)
-	go sprints.Store{DB: s.DB}.RunAutoClose(ctx, time.Minute)
+	// overdue sprints close themselves (manual close is POST /api/sprints/{id}/close); a next sprint
+	// that starts over capacity tells the board's managers (TL-149)
+	_, _, notify := s.notifiers()
+	go sprints.Store{DB: s.DB, Notify: notify}.RunAutoClose(ctx, time.Minute)
 	// the bin and deleted organizations are purged, and deleted files removed, by Railway cron jobs
 	// running this binary as `server purge` (00:00) and `server sweep-files` (00:30): see cmd/server (TL-256)
 	if config.Get(s.Config).ClerkWebhookSecret == "" {
@@ -161,14 +176,7 @@ func (s *Service) Handler() http.Handler {
 
 	// Tickets
 	// Notifications: an in-app inbox for now (external channels later implement the same Notifier)
-	inbox := notifications.Store{DB: s.DB}
-	// Web Push to people's devices too, when the server has VAPID keys (inbox always)
-	pc := config.Get(s.Config)
-	push := notifications.NewPush(s.DB, notifications.PushConfig{PublicKey: pc.VAPIDPublicKey, PrivateKey: pc.VAPIDPrivateKey, Subject: pc.VAPIDSubject})
-	var notify notifications.Notifier = inbox
-	if push.Enabled() {
-		notify = notifications.Multi{inbox, push}
-	}
+	inbox, push, notify := s.notifiers()
 	nf := notifications.NewSystem(inbox).WithPush(push)
 	mux.Handle("GET /api/push", signedIn(nf.PushKey))
 	mux.Handle("POST /api/push/subscriptions", signedIn(nf.Subscribe))
