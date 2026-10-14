@@ -13,7 +13,7 @@ info:
     response carries X-RateLimit-Limit / X-RateLimit-Remaining. MCP tool calls
     count like the REST calls they make. Browser sessions aren't limited.
 
-    Most private endpoints accept a Clerk session token or a TrackLines (`tl_…`)
+    Most private endpoints accept a Clerk session token or a TrackLines (`tl_ai_…` for AI agents, `tl_s_…` for services; older keys are `tl_…`)
     or BugFixes (`bf_…`) agent API key as a Bearer token. Projects, boards and
     roadmaps belong to a Clerk organization: a session sees its active
     organization's data, and a request without an active organization gets
@@ -1694,14 +1694,16 @@ paths:
     post:
       tags: [Tickets]
       operationId: resolveTicket
-      summary: Close a backlog ticket in place
+      summary: Close a ticket as done or won't do
       description: >-
         Marks a backlog ticket resolved without putting it on a board. A resolved ticket counts as done everywhere
         (blockers, sub-ticket progress, the done flag), leaves backlog pages and open-ticket lists, keeps its links
         and stays readable by id. Resolving again is a no-op; moving it onto a board reopens it. If it was the last
         unfinished sub-ticket of its parent, the parent is completed too (resolved if it's in the backlog, moved to
-        its board's Done column if it's on a board), and so on up the chain. A ticket on a board is finished by
-        moving it to the board's last column instead (409). MCP tool resolve_ticket.
+        its board's Done column if it's on a board), and so on up the chain. A ticket on a board is moved to the
+        board's Done column with the resolution (moving it out again reopens it), for people and service keys
+        (e.g. Bugfixes when a report is resolved or ignored). AI keys finish board tickets by moving them
+        instead (409), so a board's agent review still applies. MCP tool resolve_ticket.
         With resolution wont_do it's closed as decided against (the ticket's resolution says so; the reason, if given,
         is added as a comment). No body resolves it as done. Agents cannot resolve tickets that have entered human review.
       parameters:
@@ -2983,7 +2985,7 @@ components:
       type: http
       scheme: bearer
       bearerFormat: JWT or TrackLines API key
-      description: Clerk session token, TrackLines `tl_` key, or BugFixes `bf_` key, depending on the route.
+      description: Clerk session token, TrackLines key (`tl_ai_…`, `tl_s_…`, or an older `tl_…`), or BugFixes `bf_` key, depending on the route.
     bugfixesBearer:
       type: http
       scheme: bearer

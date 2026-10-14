@@ -57,6 +57,14 @@ func (s Store) ResolveAsAgent(ctx context.Context, owner, actor, id, resolution,
 		if duplicate {
 			return ErrIsDuplicate
 		}
+		// a board ticket closes into its Done column, marked done or won't do (TL-272: Bugfixes'
+		// resolve and ignore). Agents still move their own work, so a board's review can't be skipped.
+		if onBoard && !agent {
+			if err := s.closeOnBoard(ctx, owner, id, resolution); err != nil {
+				return err
+			}
+			return s.afterResolve(ctx, owner, actor, id, resolution, reason)
+		}
 		if agent && !onBoard {
 			var reviewed bool
 			if err := s.DB.QueryRow(ctx, `SELECT t.agent_review_at IS NOT NULL FROM tickets t JOIN projects p ON p.id = t.project_id
@@ -69,6 +77,31 @@ func (s Store) ResolveAsAgent(ctx context.Context, owner, actor, id, resolution,
 		}
 		return ErrOnBoard
 	}
+	return s.afterResolve(ctx, owner, actor, id, resolution, reason)
+}
+
+// closeOnBoard moves a board ticket to its Done column and records how it was closed. Moving it out
+// of Done again reopens it (a move clears the resolution).
+func (s Store) closeOnBoard(ctx context.Context, owner, id, resolution string) error {
+	var done string
+	if err := s.DB.QueryRow(ctx, `SELECT c.id FROM tickets t JOIN projects p ON p.id = t.project_id
+		JOIN columns c ON c.board_id = t.board_id WHERE t.id = $1 AND p.owner_clerk_id = $2
+		ORDER BY c.position DESC LIMIT 1`, id, owner).Scan(&done); err != nil {
+		return notFound(err)
+	}
+	var current string
+	_ = s.DB.QueryRow(ctx, `SELECT coalesce(column_id::text, '') FROM tickets WHERE id = $1`, id).Scan(&current)
+	if current != done {
+		if err := s.Move(ctx, owner, id, done, 0); err != nil {
+			return err
+		}
+	}
+	_, err := s.DB.Exec(ctx, `UPDATE tickets SET resolution = $2, resolved_at = COALESCE(resolved_at, now()), updated_at = now() WHERE id = $1`, id, resolution)
+	return err
+}
+
+// afterResolve adds the reason as actor's comment and completes a finished parent.
+func (s Store) afterResolve(ctx context.Context, owner, actor, id, resolution, reason string) error {
 	if reason = strings.TrimSpace(reason); reason != "" && actor != "" {
 		label := map[string]string{ResolutionDone: "Resolved", ResolutionWontDo: "Won't do"}[resolution]
 		if _, err := s.DB.Exec(ctx, `INSERT INTO ticket_comments (ticket_id, body, author) VALUES ($1, $2, $3)`, id, label+": "+reason, actor); err != nil {
@@ -140,7 +173,9 @@ func (h System) Resolve(w http.ResponseWriter, r *http.Request) {
 	}
 	org := auth.OrgID(r.Context())
 	before := h.detail(r.Context(), org, r.PathValue("id"))
-	if err := h.store.ResolveAsAgent(r.Context(), org, auth.ActorID(r.Context()), r.PathValue("id"), in.Resolution, in.Reason, auth.ViaAPIKey(r.Context())); err != nil {
+	// agents are AI keys: service keys (Bugfixes) close tickets for the people who decided in them
+	agent := auth.ViaAPIKey(r.Context()) && auth.APIKeyKind(r.Context()) == "ai"
+	if err := h.store.ResolveAsAgent(r.Context(), org, auth.ActorID(r.Context()), r.PathValue("id"), in.Resolution, in.Reason, agent); err != nil {
 		if errors.Is(err, ErrBadResolution) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return

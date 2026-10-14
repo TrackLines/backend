@@ -12,8 +12,15 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// Prefix marks tracklines API keys, so the auth middleware can tell them from Clerk JWTs.
-const Prefix = "tl_"
+// Prefix marks tracklines API keys, so the auth middleware can tell them from Clerk JWTs. Keys say
+// their kind too, so people can tell them apart (TL-271): tl_ai_… for agents, tl_s_… for services;
+// keys made before that are plain tl_… and still work. The kind that counts is the stored one: the
+// whole key, prefix included, is what's hashed, so an edited prefix is just a wrong key.
+const (
+	Prefix        = "tl_"
+	PrefixAI      = "tl_ai_"
+	PrefixService = "tl_s_"
+)
 
 const (
 	KindAI      = "ai"
@@ -62,9 +69,13 @@ func (s Store) Create(ctx context.Context, owner, org, name, kind string, client
 	if _, err := rand.Read(b); err != nil {
 		return "", nil, err
 	}
-	plain := Prefix + base64.RawURLEncoding.EncodeToString(b)
+	start := PrefixService
+	if kind == KindAI {
+		start = PrefixAI
+	}
+	plain := start + base64.RawURLEncoding.EncodeToString(b)
 	k, err := scan(s.DB.QueryRow(ctx, `INSERT INTO api_keys (owner_clerk_id, org_id, name, kind, prefix, hash, client, label)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING `+cols, owner, org, name, kind, plain[:10], hash(plain), client, label))
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING `+cols, owner, org, name, kind, plain[:12], hash(plain), client, label))
 	if err != nil {
 		return "", nil, err
 	}

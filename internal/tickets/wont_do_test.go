@@ -85,8 +85,16 @@ func TestWontDo(t *testing.T) {
 		t.Fatalf("bad resolution: %d", code)
 	}
 	onBoard, _ := s.Create(ctx, "wd1", b.Columns[0].ID, "task", "on a board", "")
-	if code := resolve(onBoard.ID, `{"resolution":"wont_do"}`); code != 409 {
-		t.Fatalf("board ticket: %d", code)
+	if code := resolve(onBoard.ID, `{"resolution":"wont_do"}`); code != 409 { // an AI key moves its own work
+		t.Fatalf("board ticket, AI key: %d", code)
+	}
+	// Bugfixes (a service key) closes it when the report is ignored: won't do, into the board's Done (TL-272)
+	req := httptest.NewRequest("POST", "/", strings.NewReader(`{"resolution":"wont_do"}`)).WithContext(auth.WithAPIKeyUser(ctx, "wd1", "Bugfixes", "service"))
+	req.SetPathValue("id", onBoard.ID)
+	rec := httptest.NewRecorder()
+	h.Resolve(rec, req)
+	if res, done := resolution(onBoard.ID); rec.Code != 204 || res == nil || *res != "wont_do" || !done {
+		t.Fatalf("board ticket, service key: %d %v %v", rec.Code, res, done)
 	}
 	// changed our mind: onto a board reopens it and clears the resolution
 	if err := s.Move(ctx, "wd1", idea.ID, b.Columns[0].ID, 0); err != nil {

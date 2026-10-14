@@ -85,7 +85,7 @@ func TestKeyHandlers(t *testing.T) {
 	}
 	generated := regexp.MustCompile(`^claude-\d{6}$`)
 	created := agent("akh1", "org_akh", `{"name":"ignored","kind":"ai","client":"claude-code"}`)
-	if !strings.HasPrefix(created.Key, Prefix) || !generated.MatchString(created.Name) || created.Kind != "ai" ||
+	if !strings.HasPrefix(created.Key, PrefixAI) || !generated.MatchString(created.Name) || created.Kind != "ai" ||
 		created.Client == nil || *created.Client != "claude-code" || created.Display != "Claude" {
 		t.Fatalf("created: %+v", created)
 	}
@@ -112,11 +112,12 @@ func TestKeyHandlers(t *testing.T) {
 	}
 	var deploy struct {
 		ID      string `json:"id"`
+		Key     string `json:"key"`
 		Display string `json:"display"`
 	}
 	_ = json.Unmarshal(expect(201, "create", as("akh1", "org_akh"), "", `{"name":"Deploy","kind":"service"}`).Body.Bytes(), &deploy)
-	if deploy.Display != "Deploy" {
-		t.Fatalf("service key display: %+v", deploy)
+	if deploy.Display != "Deploy" || !strings.HasPrefix(deploy.Key, PrefixService) {
+		t.Fatalf("service key: %+v", deploy)
 	}
 	expect(409, "create", as("akh2", "org_akh"), "", `{"name":"deploy","kind":"service"}`)   // akh1's Deploy
 	expect(201, "create", as("akh2", "org_other"), "", `{"name":"Deploy","kind":"service"}`) // another org's names are its own
@@ -150,6 +151,25 @@ func TestKeyHandlers(t *testing.T) {
 	if got := works(); got != 200 {
 		t.Fatalf("new key: %d", got)
 	}
+	// the whole key is the secret: an agent key edited to look like a service key (or back) is no key at all (TL-271)
+	real := created.Key
+	created.Key = PrefixService + strings.TrimPrefix(real, PrefixAI)
+	if got := works(); got != 401 {
+		t.Fatalf("edited prefix: %d", got)
+	}
+	// keys made before typed prefixes (plain tl_…) still work
+	legacy := "tl_" + strings.Repeat("L", 43)
+	if _, err := db.Exec(ctx, `INSERT INTO api_keys (owner_clerk_id, org_id, name, kind, prefix, hash) VALUES ('akh1', 'org_akh', 'old', 'ai', 'tl_LLLLLLL', $1)`, hash(legacy)); err != nil {
+		t.Fatal(err)
+	}
+	created.Key = legacy
+	if got := works(); got != 200 {
+		t.Fatalf("old-format key: %d", got)
+	}
+	if _, err := db.Exec(ctx, `DELETE FROM api_keys WHERE hash = $1`, hash(legacy)); err != nil {
+		t.Fatal(err)
+	}
+	created.Key = real
 	expect(404, "revoke", as("akh2", "org_akh"), created.ID, "")
 	expect(404, "revoke", as("akh1", "org_akh"), "not-a-uuid", "")
 	expect(204, "revoke", as("akh1", "org_akh"), created.ID, "")

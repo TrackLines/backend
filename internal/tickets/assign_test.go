@@ -115,6 +115,18 @@ func TestAssign(t *testing.T) {
 		t.Fatalf("my own agent: %q", got)
 	}
 
+	// a service key can't put a name on a ticket, anyone's, its owner's included (TL-271)
+	for _, who := range []string{"user_1", "user_2", "codex"} {
+		req := httptest.NewRequest("PUT", "/api/tickets/"+tid+"/assignee", strings.NewReader(`{"assignee":"`+who+`"}`))
+		req.SetPathValue("id", tid)
+		req = req.WithContext(auth.WithAPIKey(req.Context(), "user_1", "as1", "deploy", "service"))
+		rec := httptest.NewRecorder()
+		h.Assign(rec, req)
+		if rec.Code != 403 {
+			t.Fatalf("service key assigned %s: %d %s", who, rec.Code, rec.Body)
+		}
+	}
+
 	assignReq := httptest.NewRequest("PUT", "/api/tickets/"+tid+"/assignee", strings.NewReader(`{"assignee":"user_2"}`))
 	assignReq.SetPathValue("id", tid)
 	assignReq = assignReq.WithContext(auth.WithAPIKey(assignReq.Context(), "user_1", "as1", "codex", "ai"))

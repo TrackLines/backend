@@ -92,6 +92,11 @@ func (h System) Assign(w http.ResponseWriter, r *http.Request) {
 	if !httpx.Decode(w, r, &in) {
 		return
 	}
+	// a service key can't put anyone's name on a ticket, same as it can't claim one (TL-271)
+	if auth.ViaAPIKey(r.Context()) && auth.APIKeyKind(r.Context()) != "ai" {
+		http.Error(w, "only people and AI keys can assign tickets", http.StatusForbidden)
+		return
+	}
 	user, _ := auth.UserID(r.Context())
 	org := auth.OrgID(r.Context())
 	member := false

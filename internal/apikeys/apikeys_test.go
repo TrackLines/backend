@@ -43,7 +43,7 @@ func TestKeys(t *testing.T) {
 	s := Store{DB: db}
 
 	plain, k, err := s.Create(ctx, "k1", "o1", "codex", KindAI, nil, nil)
-	if err != nil || !strings.HasPrefix(plain, Prefix) || len(plain) < 40 || k.Prefix != plain[:10] || k.Kind != KindAI {
+	if err != nil || !strings.HasPrefix(plain, PrefixAI) || len(plain) < 40 || k.Prefix != plain[:12] || k.Kind != KindAI {
 		t.Fatalf("create: %q %+v %v", plain, k, err)
 	}
 	var stored int
