@@ -1,6 +1,7 @@
 package tickets
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"github.com/clerk/clerk-sdk-go/v2/organizationmembership"
 	"github.com/clerk/clerk-sdk-go/v2/user"
 	"github.com/jackc/pgx/v5"
+	"github.com/tracklines/backend/internal/apikeys"
 	"github.com/tracklines/backend/internal/auth"
 	"github.com/tracklines/backend/internal/boards"
 	"github.com/tracklines/backend/internal/httpx"
@@ -35,6 +37,7 @@ type Assignee struct {
 	Name     string `json:"name,omitempty"`
 	Username string `json:"username,omitempty"`
 	ImageURL string `json:"image_url,omitempty"` // people only: their Clerk avatar, for who's-here lists
+	owner    string // agents: whose key it is, so others see "Claude (keloran)" (TL-269)
 }
 
 // Assign lets a caller assign a ticket to themself, an active organization member, or an active AI key,
@@ -60,19 +63,25 @@ func (s Store) Assign(ctx context.Context, org, user, id string, assignee *strin
 	return nil, ErrUnknownAssignee
 }
 
-// Assignees lists org AI agent keys. Clerk organization members are added by the HTTP layer.
+// Assignees lists org AI agent keys, by their names (TL-269: "Claude", an "other" agent's label).
+// Clerk organization members are added by the HTTP layer, which also says whose each agent is.
 func (s Store) Assignees(ctx context.Context, org, user string) ([]Assignee, error) {
-	rows, err := s.DB.Query(ctx, `SELECT DISTINCT name FROM api_keys
-		WHERE org_id = $1 AND kind = 'ai' AND revoked_at IS NULL ORDER BY name`, org)
+	rows, err := s.DB.Query(ctx, `SELECT DISTINCT ON (name) name, client, label, owner_clerk_id FROM api_keys
+		WHERE org_id = $1 AND kind = 'ai' AND revoked_at IS NULL ORDER BY name, created_at`, org)
 	if err != nil {
 		return nil, err
 	}
-	names, err := pgx.CollectRows(rows, pgx.RowTo[string])
-	out := []Assignee{{ID: user, Label: "You", Kind: "person"}}
-	for _, n := range names {
-		out = append(out, Assignee{ID: n, Label: n, Kind: "ai"})
-	}
-	return out, err
+	agents, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (Assignee, error) {
+		var a Assignee
+		var client, label *string
+		err := r.Scan(&a.ID, &client, &label, &a.owner)
+		a.Kind, a.Label = "ai", a.ID
+		if client != nil {
+			a.Label = apikeys.DisplayName(*client, value(label))
+		}
+		return a, err
+	})
+	return append([]Assignee{{ID: user, Label: "You", Kind: "person"}}, agents...), err
 }
 
 // Assign: PUT /api/tickets/{id}/assignee {"assignee": "<id>" | null}.
@@ -122,6 +131,17 @@ func (h System) Assignees(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeErr(w, err)
 		return
+	}
+	// someone else's agent says whose it is: "Claude (keloran)"
+	handles := make(map[string]string, len(members))
+	for _, person := range members {
+		local, _, _ := strings.Cut(person.Name, "@") // an email when there's no name: just the part before the @
+		handles[person.ID] = cmp.Or(person.Username, local)
+	}
+	for i := range out {
+		if out[i].Kind == "ai" {
+			out[i].Label = apikeys.Shown(out[i].Label, out[i].owner, handles[out[i].owner], user)
+		}
 	}
 	seen := make(map[string]bool, len(members)+len(out))
 	merged := make([]Assignee, 0, len(members)+len(out))

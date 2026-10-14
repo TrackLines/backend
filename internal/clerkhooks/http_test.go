@@ -84,7 +84,7 @@ func TestWebhook(t *testing.T) {
 	}
 	keys := apikeys.Store{DB: db}
 	mint := func(owner, org string) string {
-		plain, _, err := keys.Create(ctx, owner, org, owner+"-"+org, apikeys.KindAI)
+		plain, _, err := keys.Create(ctx, owner, org, owner+"-"+org, apikeys.KindAI, nil, nil)
 		if err != nil {
 			t.Fatal(err)
 		}

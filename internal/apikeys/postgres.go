@@ -27,6 +27,9 @@ type Key struct {
 	Name       string  `json:"name"`
 	Kind       string  `json:"kind"`
 	Prefix     string  `json:"prefix"`
+	Client     *string `json:"client"`  // agent keys: the client the agent runs in (TL-269)
+	Label      *string `json:"label"`   // "other" agents: what they're called
+	Display    string  `json:"display"` // what it's called: "Claude", or the service key's name
 	CreatedAt  string  `json:"created_at"`
 	LastUsedAt *string `json:"last_used_at"`
 }
@@ -38,25 +41,30 @@ func hash(key string) []byte {
 	return h[:]
 }
 
-const cols = `id, name, kind, prefix,
+const cols = `id, name, kind, prefix, client, label,
 	to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
 	to_char(last_used_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')`
 
 func scan(row pgx.Row) (Key, error) {
 	var k Key
-	err := row.Scan(&k.ID, &k.Name, &k.Kind, &k.Prefix, &k.CreatedAt, &k.LastUsedAt)
+	err := row.Scan(&k.ID, &k.Name, &k.Kind, &k.Prefix, &k.Client, &k.Label, &k.CreatedAt, &k.LastUsedAt)
+	k.Display = k.Name
+	if k.Client != nil {
+		k.Display = DisplayName(*k.Client, value(k.Label))
+	}
 	return k, err
 }
 
 // Create mints a key for owner. The plaintext is returned once and never stored.
-func (s Store) Create(ctx context.Context, owner, org, name, kind string) (string, *Key, error) {
+// client and label are for agent keys (nil for service keys).
+func (s Store) Create(ctx context.Context, owner, org, name, kind string, client, label *string) (string, *Key, error) {
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {
 		return "", nil, err
 	}
 	plain := Prefix + base64.RawURLEncoding.EncodeToString(b)
-	k, err := scan(s.DB.QueryRow(ctx, `INSERT INTO api_keys (owner_clerk_id, org_id, name, kind, prefix, hash)
-		VALUES ($1, $2, $3, $4, $5, $6) RETURNING `+cols, owner, org, name, kind, plain[:10], hash(plain)))
+	k, err := scan(s.DB.QueryRow(ctx, `INSERT INTO api_keys (owner_clerk_id, org_id, name, kind, prefix, hash, client, label)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING `+cols, owner, org, name, kind, plain[:10], hash(plain), client, label))
 	if err != nil {
 		return "", nil, err
 	}
@@ -120,4 +128,19 @@ func (s Store) NameTakenByOther(ctx context.Context, org, owner, name string) (b
 	err := s.DB.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM api_keys
 		WHERE org_id = $1 AND owner_clerk_id <> $2 AND lower(name) = lower($3) AND revoked_at IS NULL)`, org, owner, name).Scan(&taken)
 	return taken, err
+}
+
+// NameInUse: any key in org, live or revoked, already has this name (any case). Generated agent
+// names are never reused, so old work can't be mistaken for a new key's.
+func (s Store) NameInUse(ctx context.Context, org, name string) (bool, error) {
+	var used bool
+	err := s.DB.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM api_keys WHERE org_id = $1 AND lower(name) = lower($2))`, org, name).Scan(&used)
+	return used, err
+}
+
+func value(p *string) string {
+	if p == nil {
+		return ""
+	}
+	return *p
 }

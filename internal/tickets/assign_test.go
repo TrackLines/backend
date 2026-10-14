@@ -2,6 +2,7 @@ package tickets
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http/httptest"
@@ -86,6 +87,32 @@ func TestAssign(t *testing.T) {
 	h.Assignees(listRec, listReq)
 	if listRec.Code != 200 || !strings.Contains(listRec.Body.String(), `"id":"user_2"`) || !strings.Contains(listRec.Body.String(), `"id":"codex"`) {
 		t.Fatalf("assignee list: %d %s", listRec.Code, listRec.Body)
+	}
+
+	// agents are named by client (TL-269): their owner sees "Codex", everyone else "Codex (user_2)"
+	if _, err := db.Exec(ctx, `INSERT INTO users (clerk_id, email) VALUES ('user_2', 'u2@x.y') ON CONFLICT DO NOTHING;
+		INSERT INTO api_keys (owner_clerk_id, org_id, name, kind, prefix, hash, client) VALUES ('user_2', 'as1', 'codex-123456', 'ai', 'tl_e', 'h-u2-codex', 'codex')`); err != nil {
+		t.Fatal(err)
+	}
+	labelFor := func(viewer string) string {
+		req := httptest.NewRequest("GET", "/api/assignees", nil)
+		req = req.WithContext(auth.WithAPIKey(req.Context(), viewer, "as1", "x", "ai"))
+		rec := httptest.NewRecorder()
+		h.Assignees(rec, req)
+		var list []Assignee
+		_ = json.Unmarshal(rec.Body.Bytes(), &list)
+		for _, a := range list {
+			if a.ID == "codex-123456" {
+				return a.Label
+			}
+		}
+		return "missing: " + rec.Body.String()
+	}
+	if got := labelFor("user_1"); got != "Codex (user_2)" {
+		t.Fatalf("someone else's agent: %q", got)
+	}
+	if got := labelFor("user_2"); got != "Codex" {
+		t.Fatalf("my own agent: %q", got)
 	}
 
 	assignReq := httptest.NewRequest("PUT", "/api/tickets/"+tid+"/assignee", strings.NewReader(`{"assignee":"user_2"}`))

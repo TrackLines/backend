@@ -49,7 +49,7 @@ func TestMCP(t *testing.T) {
 	if _, err := db.Exec(ctx, `INSERT INTO users (clerk_id, email) VALUES ('mcp-user', 'm@c.p') ON CONFLICT DO NOTHING`); err != nil {
 		t.Fatal(err)
 	}
-	key, _, err := apikeys.Store{DB: db}.Create(ctx, "mcp-user", "mcp-org", "claude", "ai")
+	key, _, err := apikeys.Store{DB: db}.Create(ctx, "mcp-user", "mcp-org", "claude", "ai", nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

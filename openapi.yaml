@@ -3654,17 +3654,22 @@ components:
       type: object
       properties:
         id: { type: string, format: uuid }
-        name: { type: string }
+        name: { type: string, description: 'The id its work is recorded under. Generated for AI keys (e.g. claude-482193); chosen for service keys.' }
         kind: { type: string, enum: [ai, service], description: AI keys can be assigned tickets; service keys are for servers and integrations. }
+        client: { type: [string, 'null'], enum: [claude-code, claude-desktop, codex, cursor, vscode, gemini, other, null], description: AI keys only. The client the agent runs in. }
+        label: { type: [string, 'null'], description: 'AI keys with client "other": what the agent is called.' }
+        display: { type: string, description: 'What it is called: "Claude", an other agent''s label (or "AI agent"), or a service key''s name. Others see AI keys with their owner: "Claude (keloran)".' }
         prefix: { type: string }
         created_at: { type: string, format: date-time }
         last_used_at: { type: [string, 'null'], format: date-time }
     CreateApiKeyInput:
       type: object
-      required: [name, kind]
+      required: [kind]
       properties:
-        name: { type: string }
         kind: { type: string, enum: [ai, service] }
+        client: { type: string, enum: [claude-code, claude-desktop, codex, cursor, vscode, gemini, other], description: Required for AI keys. Their name is generated from it. }
+        label: { type: string, maxLength: 40, description: 'AI keys with client "other": what the agent is called (optional).' }
+        name: { type: string, description: Required for service keys; ignored for AI keys. }
     CreatedApiKey:
       allOf:
         - $ref: '#/components/schemas/ApiKey'

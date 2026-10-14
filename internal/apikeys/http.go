@@ -3,6 +3,7 @@ package apikeys
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -75,20 +76,29 @@ func (h System) List(w http.ResponseWriter, r *http.Request) {
 }
 
 // Create returns {"key": "tl_…", …}; the plaintext key is only ever shown in this response.
+// Agent keys (kind ai) say their client, and a label for "other"; their name is generated (TL-269).
+// Service keys (scripts, integrations) are named by hand.
 func (h System) Create(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		Name string `json:"name"`
-		Kind string `json:"kind"`
+		Name   string `json:"name"`
+		Kind   string `json:"kind"`
+		Client string `json:"client"`
+		Label  string `json:"label"`
 	}
 	if !httpx.Decode(w, r, &in) {
 		return
 	}
-	if in.Name = strings.TrimSpace(in.Name); in.Name == "" {
-		http.Error(w, "name is required (e.g. the agent using it)", http.StatusBadRequest)
-		return
-	}
 	if in.Kind != KindAI && in.Kind != KindService {
 		http.Error(w, "kind must be ai or service", http.StatusBadRequest)
+		return
+	}
+	user, _ := auth.UserID(r.Context())
+	if in.Kind == KindAI {
+		h.createAgent(w, r, user, in.Client, in.Label)
+		return
+	}
+	if in.Name = strings.TrimSpace(in.Name); in.Name == "" {
+		http.Error(w, "name is required (e.g. the script using it)", http.StatusBadRequest)
 		return
 	}
 	// a key's name is who its work is recorded as (comments, tickets, claims), so it can't pose as a
@@ -97,7 +107,6 @@ func (h System) Create(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "that name is reserved: choose a name for the agent or script using the key", http.StatusBadRequest)
 		return
 	}
-	user, _ := auth.UserID(r.Context())
 	taken, err := h.store.NameTakenByOther(r.Context(), auth.OrgID(r.Context()), user, in.Name)
 	if err != nil {
 		logs.Errorf("apikeys: create: %v", err)
@@ -108,7 +117,50 @@ func (h System) Create(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "someone else in this organization already has a key with that name: choose another", http.StatusConflict)
 		return
 	}
-	plain, k, err := h.store.Create(r.Context(), user, auth.OrgID(r.Context()), in.Name, in.Kind)
+	plain, k, err := h.store.Create(r.Context(), user, auth.OrgID(r.Context()), in.Name, in.Kind, nil, nil)
+	created(w, plain, k, err)
+}
+
+// createAgent mints an agent key for client, under a generated name nobody in the org has used.
+func (h System) createAgent(w http.ResponseWriter, r *http.Request, user, client, label string) {
+	if !ValidClient(client) {
+		http.Error(w, "client must be one of claude-code, claude-desktop, codex, cursor, vscode, gemini or other", http.StatusBadRequest)
+		return
+	}
+	var lbl *string
+	if label = strings.TrimSpace(label); client == "other" && label != "" {
+		if len([]rune(label)) > MaxLabel {
+			http.Error(w, fmt.Sprintf("the agent's name can be up to %d characters", MaxLabel), http.StatusBadRequest)
+			return
+		}
+		if reservedName(label) {
+			http.Error(w, "that name is reserved: choose the agent's name", http.StatusBadRequest)
+			return
+		}
+		lbl = &label
+	}
+	org := auth.OrgID(r.Context())
+	for range 5 {
+		name, err := generatedName(client)
+		if err != nil {
+			created(w, "", nil, err)
+			return
+		}
+		if used, err := h.store.NameInUse(r.Context(), org, name); err != nil || used {
+			if err != nil {
+				created(w, "", nil, err)
+				return
+			}
+			continue
+		}
+		plain, k, err := h.store.Create(r.Context(), user, org, name, KindAI, &client, lbl)
+		created(w, plain, k, err)
+		return
+	}
+	created(w, "", nil, errors.New("no free agent name after 5 tries"))
+}
+
+func created(w http.ResponseWriter, plain string, k *Key, err error) {
 	if err != nil {
 		logs.Errorf("apikeys: create: %v", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)

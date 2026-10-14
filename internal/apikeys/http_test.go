@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -64,31 +65,62 @@ func TestKeyHandlers(t *testing.T) {
 		return out
 	}
 
-	// create: a name and a kind (ai | service); the secret comes back once
-	expect(400, "create", as("akh1", "org_akh"), "", `{"name":"  ","kind":"ai"}`)
+	// create: agent keys say their client and get a generated name (TL-269); the secret comes back once
+	expect(400, "create", as("akh1", "org_akh"), "", `{"kind":"ai"}`)                     // no client
+	expect(400, "create", as("akh1", "org_akh"), "", `{"kind":"ai","client":"emacs"}`)    // not one we know
 	expect(400, "create", as("akh1", "org_akh"), "", `{"name":"Claude","kind":"admin"}`)
-	var created struct {
-		Key  string `json:"key"`
-		ID   string `json:"id"`
-		Name string `json:"name"`
-		Kind string `json:"kind"`
+	type made struct {
+		Key     string  `json:"key"`
+		ID      string  `json:"id"`
+		Name    string  `json:"name"`
+		Kind    string  `json:"kind"`
+		Client  *string `json:"client"`
+		Display string  `json:"display"`
 	}
-	_ = json.Unmarshal(expect(201, "create", as("akh1", "org_akh"), "", `{"name":" Claude ","kind":"ai"}`).Body.Bytes(), &created)
-	if !strings.HasPrefix(created.Key, Prefix) || created.Name != "Claude" || created.Kind != "ai" {
+	agent := func(user, org, body string) made {
+		t.Helper()
+		var m made
+		_ = json.Unmarshal(expect(201, "create", as(user, org), "", body).Body.Bytes(), &m)
+		return m
+	}
+	generated := regexp.MustCompile(`^claude-\d{6}$`)
+	created := agent("akh1", "org_akh", `{"name":"ignored","kind":"ai","client":"claude-code"}`)
+	if !strings.HasPrefix(created.Key, Prefix) || !generated.MatchString(created.Name) || created.Kind != "ai" ||
+		created.Client == nil || *created.Client != "claude-code" || created.Display != "Claude" {
 		t.Fatalf("created: %+v", created)
 	}
+	if again := agent("akh1", "org_akh", `{"kind":"ai","client":"claude-code"}`); again.Name == created.Name || !generated.MatchString(again.Name) {
+		t.Fatalf("a second Claude key needs its own name: %s and %s", created.Name, again.Name)
+	} else {
+		expect(204, "revoke", as("akh1", "org_akh"), again.ID, "")
+	}
+	// "other" agents: named by what they're called, or "AI agent"; the label can't pose as anyone
+	if aider := agent("akh2", "org_other", `{"kind":"ai","client":"other","label":" Aider "}`); aider.Display != "Aider" || !strings.HasPrefix(aider.Name, "agent-") {
+		t.Fatalf("other agent: %+v", aider)
+	}
+	if unnamed := agent("akh2", "org_other", `{"kind":"ai","client":"other"}`); unnamed.Display != "AI agent" {
+		t.Fatalf("unnamed other agent: %+v", unnamed)
+	}
+	expect(400, "create", as("akh2", "org_other"), "", `{"kind":"ai","client":"other","label":"user_admin"}`)
+	expect(400, "create", as("akh2", "org_other"), "", `{"kind":"ai","client":"other","label":"`+strings.Repeat("x", MaxLabel+1)+`"}`)
 
-	// a key can't pose as a person, the system or an integration, or as another member's key (TL-247)
+	// script (service) keys are still named by hand, and can't pose as a person, the system, an
+	// integration, or another member's key (TL-247)
+	expect(400, "create", as("akh1", "org_akh"), "", `{"name":"  ","kind":"service"}`)
 	for _, name := range []string{"user_admin123", "User_X", "legacy", "GitHub", "bitbucket"} {
-		expect(400, "create", as("akh2", "org_akh"), "", `{"name":"`+name+`","kind":"ai"}`)
+		expect(400, "create", as("akh2", "org_akh"), "", `{"name":"`+name+`","kind":"service"}`)
 	}
-	expect(409, "create", as("akh2", "org_akh"), "", `{"name":"claude","kind":"ai"}`)   // akh1's Claude
-	expect(201, "create", as("akh2", "org_other"), "", `{"name":"Claude","kind":"ai"}`) // another org's names are its own
-	var second struct {
-		ID string `json:"id"`
+	var deploy struct {
+		ID      string `json:"id"`
+		Display string `json:"display"`
 	}
-	_ = json.Unmarshal(expect(201, "create", as("akh1", "org_akh"), "", `{"name":"Claude","kind":"ai"}`).Body.Bytes(), &second) // your own name again is fine
-	expect(204, "revoke", as("akh1", "org_akh"), second.ID, "")
+	_ = json.Unmarshal(expect(201, "create", as("akh1", "org_akh"), "", `{"name":"Deploy","kind":"service"}`).Body.Bytes(), &deploy)
+	if deploy.Display != "Deploy" {
+		t.Fatalf("service key display: %+v", deploy)
+	}
+	expect(409, "create", as("akh2", "org_akh"), "", `{"name":"deploy","kind":"service"}`)   // akh1's Deploy
+	expect(201, "create", as("akh2", "org_other"), "", `{"name":"Deploy","kind":"service"}`) // another org's names are its own
+	expect(204, "revoke", as("akh1", "org_akh"), deploy.ID, "")
 
 	// list: my keys in this org, never the secret; not another person's, not another org's
 	mine := list(as("akh1", "org_akh"))
@@ -151,7 +183,7 @@ func TestKeyOwnerMustStillBeAMember(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := Store{DB: db}
-	plain, _, err := s.Create(ctx, "akm1", "org_akm", "Claude", KindAI)
+	plain, _, err := s.Create(ctx, "akm1", "org_akm", "Claude", KindAI, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
