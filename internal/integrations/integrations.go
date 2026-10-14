@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
@@ -184,6 +185,8 @@ type System struct {
 	tickets ticketSource
 	git     Git
 	now     func() time.Time
+	// shortLink finds our short links in PR text (WithShortLinks); nil: only keys and ticket links
+	shortLink *regexp.Regexp
 }
 
 // Connection: GET /api/integrations/{provider}: whether the org is connected (never the secret).

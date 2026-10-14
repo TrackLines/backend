@@ -205,8 +205,9 @@ func (s *Service) Handler() http.Handler {
 	in := integrations.NewSystem(s.DB, box, s.Valkey, o.AdminModel(), integrations.Git{
 		GitHubAppID: gc.GitHubAppID, GitHubAppSlug: gc.GitHubAppSlug, GitHubPrivateKey: gc.GitHubPrivateKey,
 		GitHubClientID: gc.GitHubClientID, GitHubSecret: gc.GitHubClientSecret,
-		BitbucketClientID:  gc.BitbucketClientID, BitbucketSecret: gc.BitbucketSecret, PublicAPI: gc.PublicAPIURL}).
-		WithFlags(s.flagOn) // Bitbucket stays off until its flags.gg flag is on (TL-205)
+		BitbucketClientID:                                 gc.BitbucketClientID, BitbucketSecret: gc.BitbucketSecret, PublicAPI: gc.PublicAPIURL}).
+		WithFlags(s.flagOn).                               // Bitbucket stays off until its flags.gg flag is on (TL-205)
+		WithShortLinks(config.Get(s.Config).ShortLinkBase) // PRs can mention tickets by our short links (TL-283)
 	mux.Handle("GET /api/integrations/{provider}", signedIn(in.Connection)) // connected or not; never the secret
 	mux.Handle("PUT /api/integrations/{provider}", signedIn(in.Connect))    // org admins
 	mux.Handle("DELETE /api/integrations/{provider}", signedIn(in.Disconnect))

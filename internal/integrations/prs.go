@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
@@ -58,6 +59,59 @@ func keysIn(prefix string, texts ...string) []int {
 	return out
 }
 
+var ticketURL = regexp.MustCompile(`/tickets/([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\b`)
+
+// mentioned is the tickets in project that texts mention (TL-283): by key (TL-123), by link
+// (…/tickets/<id>), or by one of our short links (1tn.pw/<code>, looked up in short_links, so only
+// links Tracklines made). Only project's own tickets count, so a link can't reach another org's.
+func (h System) mentioned(ctx context.Context, project, prefix string, texts ...string) ([]string, error) {
+	numbers := keysIn(prefix, texts...)
+	ids := []string{}
+	var codes []string
+	for _, t := range texts {
+		for _, m := range ticketURL.FindAllStringSubmatch(t, -1) {
+			ids = append(ids, strings.ToLower(m[1]))
+		}
+		if h.shortLink != nil {
+			for _, m := range h.shortLink.FindAllStringSubmatch(t, -1) {
+				codes = append(codes, m[1])
+			}
+		}
+	}
+	if len(codes) > 0 {
+		rows, err := h.store.DB.Query(ctx, `SELECT url FROM short_links WHERE short = ANY($1)`, codes)
+		if err != nil {
+			return nil, err
+		}
+		longs, err := pgx.CollectRows(rows, pgx.RowTo[string])
+		if err != nil {
+			return nil, err
+		}
+		for _, long := range longs {
+			if m := ticketURL.FindStringSubmatch(long); m != nil {
+				ids = append(ids, strings.ToLower(m[1]))
+			}
+		}
+	}
+	if len(numbers) == 0 && len(ids) == 0 {
+		return nil, nil
+	}
+	rows, err := h.store.DB.Query(ctx, `SELECT id::text FROM tickets WHERE project_id = $1 AND (number = ANY($2) OR id::text = ANY($3)) ORDER BY number`,
+		project, numbers, ids)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, pgx.RowTo[string])
+}
+
+// WithShortLinks lets PRs mention tickets by our short links (base, e.g. https://1tn.pw).
+func (h System) WithShortLinks(base string) System {
+	if u, err := url.Parse(base); err == nil && u.Host != "" {
+		h.shortLink = regexp.MustCompile(`(?i)\b` + regexp.QuoteMeta(u.Host) + `/([A-Za-z0-9]{4,16})\b`)
+	}
+	return h
+}
+
 // linkPR records pr on the tickets it mentions in each project its repo is linked to (in the
 // orgs that link it), and finishes those tickets when the PR has just been merged.
 func (h System) linkPR(ctx context.Context, orgs []string, pr PullRequest) error {
@@ -71,14 +125,11 @@ func (h System) linkPR(ctx context.Context, orgs []string, pr PullRequest) error
 		if err != nil {
 			return err
 		}
-		for _, n := range keysIn(prefix, pr.Branch, pr.Title, pr.body) {
-			var ticket string
-			if err := h.store.DB.QueryRow(ctx, `SELECT id FROM tickets WHERE project_id = $1 AND number = $2`, project, n).Scan(&ticket); err != nil {
-				if errors.Is(err, pgx.ErrNoRows) {
-					continue
-				}
-				return err
-			}
+		mentioned, err := h.mentioned(ctx, project, prefix, pr.Branch, pr.Title, pr.body)
+		if err != nil {
+			return err
+		}
+		for _, ticket := range mentioned {
 			var was *string
 			_ = h.store.DB.QueryRow(ctx, `SELECT state FROM ticket_prs WHERE ticket_id = $1 AND provider = $2 AND repo = $3 AND number = $4`,
 				ticket, pr.Provider, pr.Repo, pr.Number).Scan(&was)
