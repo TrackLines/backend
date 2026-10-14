@@ -66,8 +66,8 @@ func TestKeyHandlers(t *testing.T) {
 	}
 
 	// create: agent keys say their client and get a generated name (TL-269); the secret comes back once
-	expect(400, "create", as("akh1", "org_akh"), "", `{"kind":"ai"}`)                     // no client
-	expect(400, "create", as("akh1", "org_akh"), "", `{"kind":"ai","client":"emacs"}`)    // not one we know
+	expect(400, "create", as("akh1", "org_akh"), "", `{"kind":"ai"}`)                  // no client
+	expect(400, "create", as("akh1", "org_akh"), "", `{"kind":"ai","client":"emacs"}`) // not one we know
 	expect(400, "create", as("akh1", "org_akh"), "", `{"name":"Claude","kind":"admin"}`)
 	type made struct {
 		Key     string  `json:"key"`

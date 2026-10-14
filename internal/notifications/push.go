@@ -128,7 +128,8 @@ func (p *Push) message(ctx context.Context, org string, e Event) Message {
 		var key string
 		_ = p.DB.QueryRow(ctx, `SELECT coalesce(pr.key_prefix || '-' || t.number, t.id::text) FROM tickets t JOIN projects pr ON pr.id = t.project_id WHERE t.id::text = $1`, e.TicketID).Scan(&key)
 		if key != "" {
-			m.URL, m.Tag = "/tickets/"+key, e.Kind+":"+key
+			// the id, not the key: another of their orgs may have its own TL-12 (TL-276)
+			m.URL, m.Tag = "/tickets/"+e.TicketID, e.Kind+":"+key
 		}
 	} else if e.BoardID != "" {
 		m.URL, m.Tag = "/boards/"+e.BoardID, e.Kind+":"+e.BoardID

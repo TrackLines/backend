@@ -39,6 +39,7 @@ import (
 	"github.com/tracklines/backend/internal/ratelimit"
 	"github.com/tracklines/backend/internal/roadmaps"
 	"github.com/tracklines/backend/internal/secrets"
+	"github.com/tracklines/backend/internal/shortlinks"
 	"github.com/tracklines/backend/internal/sprints"
 	"github.com/tracklines/backend/internal/teams"
 	"github.com/tracklines/backend/internal/tickets"
@@ -182,8 +183,9 @@ func (s *Service) Handler() http.Handler {
 		CachingUsers(clerkcache.Users{Next: user.NewClient(&clerk.ClientConfig{}), VK: s.Valkey, TTL: time.Minute})
 	push.People = t.People // pushes name who did it
 	mux.Handle("POST /api/columns/{id}/tickets", signedIn(t.Create))
-	mux.Handle("GET /api/tickets/{id}", signedIn(t.Get)) // one ticket + where it lives (deep links)
-	mux.Handle("GET /api/search", signedIn(t.Search))    // full-text over titles, descriptions, comments; exact keys first
+	mux.Handle("GET /api/tickets/{id}", signedIn(t.Get))       // one ticket + where it lives (deep links)
+	mux.Handle("GET /api/tickets/{id}/org", signedIn(t.Where)) // which of my orgs it's in, when it isn't in the active one
+	mux.Handle("GET /api/search", signedIn(t.Search))          // full-text over titles, descriptions, comments; exact keys first
 	mux.Handle("GET /api/ticket-keys/{key}", signedIn(t.GetByKey))
 	mux.Handle("PUT /api/tickets/{id}/external", signedIn(t.SetExternal)) // integrations link what they made (API keys only)
 	// Integrations: an org connects other tools (Bugfixes now); tickets they made show live details
@@ -232,7 +234,11 @@ func (s *Service) Handler() http.Handler {
 	cm := comments.NewSystem(s.DB).WithMentions(notify, t.People)
 	mux.Handle("GET /api/tickets/{id}/comments", signedIn(cm.List))
 	mux.Handle("POST /api/tickets/{id}/comments", signedIn(cm.Create))
-	mux.Handle("GET /api/mentions", signedIn(cm.Mentions))          // tickets that @mention the caller, newest first
+	mux.Handle("GET /api/mentions", signedIn(cm.Mentions)) // tickets that @mention the caller, newest first
+
+	// Short links for "Copy link": our own site's links only, through 1tn, each made once
+	sl := shortlinks.System{DB: s.DB, API: config.Get(s.Config).ShortLinkAPI, Base: config.Get(s.Config).ShortLinkBase, Sites: config.Get(s.Config).AuthorizedParties()}
+	mux.Handle("POST /api/short-links", signedIn(sl.Create))
 	mux.Handle("GET /api/mentions/page", signedIn(cm.PageMentions)) // the same, a page at a time with a total; hide_done=true
 
 	// Attachments — files live on UploadThing (browser uploads via the Next.js route); we keep the records

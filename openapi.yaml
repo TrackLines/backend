@@ -1691,6 +1691,23 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '502': { description: Could not load organization members from Clerk. }
 
+  /tickets/{ticketId}/org:
+    get:
+      tags: [Tickets]
+      operationId: ticketOrganization
+      summary: Which of my organizations a ticket is in
+      description: For a ticket link opened while another organization is active, so the app can offer to switch. Answers only a signed-in person who belongs to the ticket's organization; anyone else (and API keys) gets 404, as if it didn't exist.
+      security:
+        - clerkSession: []
+      parameters:
+        - $ref: '#/components/parameters/TicketId'
+      responses:
+        '200':
+          description: The ticket's organization.
+          content:
+            application/json:
+              schema: { type: object, properties: { org_id: { type: string } } }
+        '404': { $ref: '#/components/responses/NotFound' }
   /tickets/{ticketId}/resolve:
     post:
       tags: [Tickets]
@@ -1812,6 +1829,29 @@ paths:
         '429': { description: Too many messages from this address. }
         '502': { description: The enquiry system couldn't be reached; try again. }
         '503': { description: Enquiries aren't configured. }
+
+  /short-links:
+    post:
+      tags: [Tickets]
+      operationId: createShortLink
+      summary: A short link for a Tracklines link
+      description: 'For "Copy link": shortens a link to this site (tickets, boards…) through 1tn. The same link always gives the same short link. Links to any other site are refused.'
+      security:
+        - clerkSession: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [url], properties: { url: { type: string, example: 'https://tracklin.es/tickets/9205518f-7140-44cf-b155-4e9b8d6a2d48' } } }
+      responses:
+        '200':
+          description: The short link.
+          content:
+            application/json:
+              schema: { type: object, properties: { url: { type: string, example: 'https://1tn.pw/yJjWqM' } } }
+        '400': { description: Not a link to this site. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '502': { description: The shortener couldn't be reached or refused it. }
 
   /mentions:
     get:

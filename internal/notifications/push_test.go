@@ -110,7 +110,7 @@ func TestPush(t *testing.T) {
 	}
 	push.Wait()
 	phone := sent["https://fcm.googleapis.com/fcm/send/ava-phone"]
-	if phone.Body != "Bo Smith assigned you PU-1: Fix login" || phone.URL != "/tickets/PU-1" || phone.Tag != "assigned:PU-1" {
+	if phone.Body != "Bo Smith assigned you PU-1: Fix login" || phone.URL != "/tickets/"+tid /* the id, not the key (TL-276) */ || phone.Tag != "assigned:PU-1" {
 		t.Fatalf("message: %+v", phone)
 	}
 	var devices, inbox int

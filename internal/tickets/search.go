@@ -39,7 +39,7 @@ type SearchQuery struct {
 	Unassigned bool
 	Status     string // open | done | ""
 	Limit      int
-	Page       int // 1-based; with Limit, for "load more" (stable: rank, then updated, then id)
+	Page       int  // 1-based; with Limit, for "load more" (stable: rank, then updated, then id)
 	AnyWord    bool // any word may match, most matches first (similar tickets: one typo mustn't hide them, TL-275)
 }
 

@@ -43,6 +43,9 @@ type Project struct {
 	RateLimit              int    `env:"API_KEY_RATE_LIMIT" envDefault:"300"`                        // requests per minute per API key; 0 turns it off
 	ChewedFeedURL          string `env:"CHEWEDFEED_API_URL" envDefault:"https://api.chewedfeed.com"` // ChewedFeed HQ (customer sync, enquiries)
 	ChewedFeedKey          string `env:"CHEWEDFEED_ENQUIRY_KEY"`                                     // tracklines' enquiry key in ChewedFeed; sync and enquiries are off without it
+	// short links for "Copy link" (TL-277), through 1tn
+	ShortLinkAPI  string `env:"SHORT_LINK_API" envDefault:"https://api.1tn.pw"`
+	ShortLinkBase string `env:"SHORT_LINK_BASE" envDefault:"https://1tn.pw"`
 	// Web Push (notifications with Tracklines closed): `npx web-push generate-vapid-keys`; off without them
 	VAPIDPublicKey  string `env:"VAPID_PUBLIC_KEY"`
 	VAPIDPrivateKey string `env:"VAPID_PRIVATE_KEY"`
