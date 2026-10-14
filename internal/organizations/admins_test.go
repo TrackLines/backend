@@ -189,6 +189,15 @@ func TestAdmins(t *testing.T) {
 	if code := manager("leader", true, "board", boardID); code != 403 {
 		t.Fatalf("API key board access: %d", code)
 	}
+	// the yes/no form (assign on move, TL-266): the leader of this board's team, not members, not elsewhere
+	for _, c := range []struct {
+		org, user, board string
+		want             bool
+	}{{"org_creator", "leader", boardID, true}, {"org_creator", "member", boardID, false}, {"org_other", "leader", boardID, false}} {
+		if got, err := a.IsBoardManager(ctx, c.org, c.user, c.board); err != nil || got != c.want {
+			t.Fatalf("IsBoardManager(%s, %s) = %v, %v; want %v", c.org, c.user, got, err, c.want)
+		}
+	}
 	// refinement: approving a planned sprint follows the same rule
 	var plannedID string
 	if err := db.QueryRow(ctx, `INSERT INTO planned_sprints(board_id,position,length_days) VALUES ($1,1,14) RETURNING id`, boardID).Scan(&plannedID); err != nil {

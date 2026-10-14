@@ -219,7 +219,8 @@ func (s *Service) Handler() http.Handler {
 	mux.Handle("PUT /api/tickets/{id}/labels", signedIn(t.SetLabels)) // free-form labels; [] clears
 	mux.Handle("GET /api/assignees", signedIn(t.Assignees))
 	mux.Handle("DELETE /api/tickets/{id}", signedIn(t.Delete))
-	mux.Handle("POST /api/tickets/{id}/move", signedIn(t.Move)) // also pulls a ticket out of the backlog
+	// moving an unassigned ticket assigns it to the mover, except a board's manager during its standup (TL-266)
+	mux.Handle("POST /api/tickets/{id}/move", signedIn(t.AssigningOnMove(o.AdminModel().IsBoardManager, live.New(s.Valkey, boards.Store{DB: s.DB}).StandupRunning).Move)) // also pulls a ticket out of the backlog
 	mux.Handle("POST /api/tickets/{id}/review", signedIn(t.ReviewTicket))
 	mux.Handle("POST /api/tickets/{id}/backlog", signedIn(t.ToBacklog))
 	mux.Handle("POST /api/tickets/{id}/resolve", signedIn(t.Resolve)) // close a backlog ticket in place; completes finished parents
@@ -231,7 +232,7 @@ func (s *Service) Handler() http.Handler {
 	cm := comments.NewSystem(s.DB).WithMentions(notify, t.People)
 	mux.Handle("GET /api/tickets/{id}/comments", signedIn(cm.List))
 	mux.Handle("POST /api/tickets/{id}/comments", signedIn(cm.Create))
-	mux.Handle("GET /api/mentions", signedIn(cm.Mentions)) // tickets that @mention the caller, newest first
+	mux.Handle("GET /api/mentions", signedIn(cm.Mentions))          // tickets that @mention the caller, newest first
 	mux.Handle("GET /api/mentions/page", signedIn(cm.PageMentions)) // the same, a page at a time with a total; hide_done=true
 
 	// Attachments — files live on UploadThing (browser uploads via the Next.js route); we keep the records
@@ -240,7 +241,7 @@ func (s *Service) Handler() http.Handler {
 	mux.Handle("GET /api/tickets/{id}/attachments", signedIn(at.List))
 	mux.Handle("POST /api/tickets/{id}/attachments", signedIn(at.Create))
 	mux.Handle("DELETE /api/attachments/{id}", signedIn(at.Delete))
-	mux.Handle("POST /api/attachments/{id}/keep", signedIn(at.Keep)) // a year-old file: keep it another year (admins, uploader)
+	mux.Handle("POST /api/attachments/{id}/keep", signedIn(at.Keep))     // a year-old file: keep it another year (admins, uploader)
 	mux.Handle("GET /api/attachments/retention", signedIn(at.Retention)) // files due for clean-up and already cleaned up (admins)
 
 	// Backlog — project tickets not on any board/sprint yet (e.g. triaged bugs)

@@ -186,6 +186,18 @@ func (a Admins) RequireAdmin(w http.ResponseWriter, r *http.Request) (org, user 
 	return org, user, true
 }
 
+// IsBoardManager: is user an admin of org, or a leader of the team assigned to board?
+func (a Admins) IsBoardManager(ctx context.Context, org, user, board string) (bool, error) {
+	admin, err := a.IsAdmin(ctx, org, user)
+	if err != nil || admin {
+		return admin, err
+	}
+	var leader bool
+	err = a.DB.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM boards b JOIN team_members tm ON tm.team_id = b.team_id
+		WHERE b.id::text = $1 AND b.owner_clerk_id = $2 AND tm.user_clerk_id = $3 AND tm.leader)`, board, org, user).Scan(&leader)
+	return leader, err
+}
+
 // RequireBoardManager allows an org admin or a leader of the team assigned to a board.
 // It scopes leaders to one board and requires a signed-in session for either role.
 func (a Admins) RequireBoardManager(w http.ResponseWriter, r *http.Request, boardID string) bool {

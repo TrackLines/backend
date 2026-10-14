@@ -318,3 +318,12 @@ func (s System) PublishRefinement(ctx context.Context, board, action string) err
 	}
 	return s.publish(ctx, board, "refinement", map[string]string{"action": action})
 }
+
+// StandupRunning: is a standup running on board right now? false when live sessions are off.
+func (s System) StandupRunning(ctx context.Context, board string) bool {
+	if s.VK == nil {
+		return false
+	}
+	_, err := s.get(ctx, board)
+	return err == nil
+}

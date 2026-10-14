@@ -1,6 +1,7 @@
 package tickets
 
 import (
+	"context"
 	"errors"
 	"github.com/tracklines/backend/internal/notifications"
 	"net/http"
@@ -36,6 +37,16 @@ type System struct {
 	assigneeMembers membershipLister // nil: memberships
 	memberships     membershipLister
 	users           userLister // usernames for the @ picker; nil: none
+	// moving an unassigned ticket assigns it to the mover (TL-266), except a board manager during a
+	// standup (they're running it); nil: no auto-assign
+	boardManager   func(ctx context.Context, org, user, board string) (bool, error)
+	standupRunning func(ctx context.Context, board string) bool
+}
+
+// AssigningOnMove turns on assign-on-move (TL-266): manager says who runs a board, standup whether one is on.
+func (h System) AssigningOnMove(manager func(ctx context.Context, org, user, board string) (bool, error), standup func(ctx context.Context, board string) bool) System {
+	h.boardManager, h.standupRunning = manager, standup
+	return h
 }
 
 // MaxTitle and MaxBody bound a ticket's title and its description (and a comment's body).
@@ -233,10 +244,14 @@ func (h System) Move(w http.ResponseWriter, r *http.Request) {
 	}
 	org := auth.OrgID(r.Context())
 	before := h.detail(r.Context(), org, r.PathValue("id"))
+	from, unassigned := h.store.moveFrom(r.Context(), org, r.PathValue("id"))
 	review, err := h.store.MoveEstimated(r.Context(), org, r.PathValue("id"), in.ColumnID, in.Position, in.Estimate, true, auth.ViaAPIKey(r.Context()))
 	if err != nil {
 		writeErr(w, err)
 		return
+	}
+	if unassigned && from != in.ColumnID {
+		h.assignMover(r, org, r.PathValue("id"), in.ColumnID)
 	}
 	if after := h.detail(r.Context(), org, r.PathValue("id")); after != nil && before != nil {
 		if review {
