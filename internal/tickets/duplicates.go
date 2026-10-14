@@ -49,11 +49,11 @@ func (s Store) MarkDuplicate(ctx context.Context, owner, actor, id, canonical st
 		}
 		var boardID, current, sprintID, estimate, fromColumn *string
 		var alreadyDuplicate bool
-		if err := tx.QueryRow(ctx, `SELECT board_id, duplicate_of, sprint_id, estimate, column_id, resolution = 'duplicate' FROM tickets WHERE id = $1 FOR UPDATE`, id).Scan(&boardID, &current, &sprintID, &estimate, &fromColumn, &alreadyDuplicate); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT board_id, duplicate_of, sprint_id, estimate, column_id, resolution IS NOT DISTINCT FROM 'duplicate' FROM tickets WHERE id = $1 FOR UPDATE`, id).Scan(&boardID, &current, &sprintID, &estimate, &fromColumn, &alreadyDuplicate); err != nil {
 			return notFound(err)
 		}
 		var originalIsDuplicate bool
-		if err := tx.QueryRow(ctx, `SELECT duplicate_of IS NOT NULL OR resolution = 'duplicate' FROM tickets WHERE id = $1 FOR UPDATE`, canonical).Scan(&originalIsDuplicate); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT duplicate_of IS NOT NULL OR resolution IS NOT DISTINCT FROM 'duplicate' FROM tickets WHERE id = $1 FOR UPDATE`, canonical).Scan(&originalIsDuplicate); err != nil {
 			return notFound(err)
 		}
 		if originalIsDuplicate {
