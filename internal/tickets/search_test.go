@@ -105,6 +105,17 @@ func TestSearch(t *testing.T) {
 	if got := search(SearchQuery{Text: "chec"}); len(got) != 2 { // type-ahead: title + comment
 		t.Fatalf("prefix: %v", ids(got))
 	}
+	// similar tickets (TL-275): any word may match, so a typo doesn't hide them; most matches first;
+	// short words are ignored or "a" would match everything. Every-word search still needs them all.
+	if got := search(SearchQuery{Text: "checkout crsh typo"}); len(got) != 0 {
+		t.Fatalf("every word must match: %v", ids(got))
+	}
+	if got := search(SearchQuery{Text: "checkout crash typo", AnyWord: true}); len(got) < 2 || got[0].ID != titleHit.ID {
+		t.Fatalf("any word, best first: %v", ids(got))
+	}
+	if got := search(SearchQuery{Text: "a an login", AnyWord: true}); len(got) != 1 || got[0].ID != descHit.ID {
+		t.Fatalf("any word, short words ignored: %v", ids(got))
+	}
 	// punctuation and operators can't break the query
 	for _, nasty := range []string{"crash & | ! :* (", "'; DROP TABLE tickets; --", "!!!"} {
 		if _, err := s.Search(ctx, "se1", SearchQuery{Text: nasty}); err != nil {

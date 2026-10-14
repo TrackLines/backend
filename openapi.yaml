@@ -866,6 +866,7 @@ paths:
         - { name: label, in: query, schema: { type: array, items: { type: string } }, style: form, explode: true, description: Any of (case-insensitive). }
         - { name: assignee, in: query, schema: { type: string }, description: "me (the caller), unassigned, or a user id / agent name." }
         - { name: status, in: query, schema: { type: string, enum: [open, done] } }
+        - { name: match, in: query, description: 'any: a ticket matching any word (of three letters or more) will do, most matches first, for spotting duplicates despite typos. Default: every word must match.', schema: { type: string, enum: [any] } }
         - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 50, default: 20 } }
         - { name: page, in: query, schema: { type: integer, minimum: 1, default: 1 }, description: '1-based, with limit. "My work" is assignee=me&status=open across every board and project.' }
       responses:

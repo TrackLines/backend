@@ -40,6 +40,7 @@ type SearchQuery struct {
 	Status     string // open | done | ""
 	Limit      int
 	Page       int // 1-based; with Limit, for "load more" (stable: rank, then updated, then id)
+	AnyWord    bool // any word may match, most matches first (similar tickets: one typo mustn't hide them, TL-275)
 }
 
 const maxSearchResults = 50
@@ -48,12 +49,21 @@ var searchWord = regexp.MustCompile(`[\p{L}\p{N}_]+`)
 
 // tsQuery turns what someone typed into a safe prefix query: every word must match, as a prefix
 // ("crash sav" → crash:* & sav:*). Punctuation can't break the query: only words survive.
-func tsQuery(text string) string {
+// With any, a ticket matching one word will do (words under three letters are left out, or "a" would
+// match everything); the rank puts those matching more words first.
+func tsQuery(text string, any bool) string {
 	words := searchWord.FindAllString(strings.ToLower(text), 10)
-	for i, w := range words {
-		words[i] = w + ":*"
+	kept := words[:0]
+	for _, w := range words {
+		if any && len([]rune(w)) < 3 {
+			continue
+		}
+		kept = append(kept, w+":*")
 	}
-	return strings.Join(words, " & ")
+	if any {
+		return strings.Join(kept, " | ")
+	}
+	return strings.Join(kept, " & ")
 }
 
 // Search finds the owner's tickets: an exact key first, then by relevance (title over description
@@ -74,7 +84,7 @@ func (s Store) Search(ctx context.Context, owner string, q SearchQuery) ([]Searc
 	if number < 0 {
 		number = 0
 	}
-	query := tsQuery(q.Text)
+	query := tsQuery(q.Text, q.AnyWord)
 	if keyID != "" {
 		query = "" // the key is the search
 	}
@@ -152,7 +162,7 @@ func lower(v []string) []string {
 func (h System) Search(w http.ResponseWriter, r *http.Request) {
 	v := r.URL.Query()
 	q := SearchQuery{Text: v.Get("q"), ProjectID: v.Get("project"), BoardID: v.Get("board"),
-		Types: v["type"], Priorities: v["priority"], Labels: v["label"], Status: v.Get("status")}
+		Types: v["type"], Priorities: v["priority"], Labels: v["label"], Status: v.Get("status"), AnyWord: v.Get("match") == "any"}
 	for _, t := range q.Types {
 		if !ValidType(t) {
 			http.Error(w, "type must be bug, feature or task", http.StatusBadRequest)
