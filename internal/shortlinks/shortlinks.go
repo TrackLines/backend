@@ -31,15 +31,17 @@ type System struct {
 
 var ErrNotOurs = errors.New("only Tracklines links can be shortened")
 
-// Create: POST /api/short-links {"url": "https://tracklin.es/tickets/<id>"} → {"url": "https://1tn.pw/abc123"}.
+// Create: POST /api/short-links {"url": "https://tracklin.es/tickets/<id>", "title": "TL-204 on Tracklines"}
+// → {"url": "https://1tn.pw/abc123"}.
 func (s System) Create(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		URL string `json:"url"`
+		URL   string `json:"url"`
+		Title string `json:"title"`
 	}
 	if !httpx.Decode(w, r, &in) {
 		return
 	}
-	short, err := s.Shorten(r.Context(), in.URL)
+	short, err := s.Shorten(r.Context(), in.URL, in.Title)
 	if errors.Is(err, ErrNotOurs) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -52,8 +54,16 @@ func (s System) Create(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusOK, map[string]string{"url": short})
 }
 
-// Shorten returns long's short link, making one the first time.
-func (s System) Shorten(ctx context.Context, long string) (string, error) {
+// Description is what the shortener says about every link: our pages need a sign-in, so it can't
+// read them, and anyone can look a short link's details up, so nothing private goes in it.
+const Description = "Sign in to Tracklines to see it."
+
+// MaxTitle bounds a short link's title.
+const MaxTitle = 120
+
+// Shorten returns long's short link, making one the first time, titled title ("Tracklines" if none):
+// the shortener can't read a page behind our sign-in to find one.
+func (s System) Shorten(ctx context.Context, long, title string) (string, error) {
 	u, err := url.Parse(long)
 	if err != nil || u.User != nil || u.Host == "" || !slices.Contains(s.Sites, u.Scheme+"://"+u.Host) || !strings.HasPrefix(u.Path, "/") {
 		return "", ErrNotOurs
@@ -66,7 +76,12 @@ func (s System) Shorten(ctx context.Context, long string) (string, error) {
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return "", err
 	}
-	if short, err = s.create(ctx, long); err != nil {
+	if title = strings.TrimSpace(title); title == "" {
+		title = "Tracklines"
+	} else if r := []rune(title); len(r) > MaxTitle {
+		title = string(r[:MaxTitle])
+	}
+	if short, err = s.create(ctx, long, title); err != nil {
 		return "", err
 	}
 	// two at once: keep whichever was saved first
@@ -78,8 +93,8 @@ func (s System) Shorten(ctx context.Context, long string) (string, error) {
 func (s System) link(short string) string { return strings.TrimRight(s.Base, "/") + "/" + short }
 
 // create asks the shortener; it answers {"short": "yJjWqM"}, or {"status": "<error>"} (still a 200).
-func (s System) create(ctx context.Context, long string) (string, error) {
-	body, _ := json.Marshal(map[string]string{"url": long})
+func (s System) create(ctx context.Context, long, title string) (string, error) {
+	body, _ := json.Marshal(map[string]string{"url": long, "title": title, "description": Description})
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(s.API, "/")+"/create", bytes.NewReader(body))
 	if err != nil {
 		return "", err

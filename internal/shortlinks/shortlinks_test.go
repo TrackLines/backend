@@ -38,9 +38,10 @@ func TestShortLinks(t *testing.T) {
 	var made atomic.Int32
 	answer := `{"short":"yJjWqM","url":"x"}`
 	tn := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var in struct{ URL string `json:"url"` }
+		var in struct{ URL, Title, Description string }
 		_ = json.NewDecoder(r.Body).Decode(&in)
-		if r.URL.Path != "/create" || r.Method != "POST" || !strings.HasPrefix(in.URL, "https://tracklin.es/") {
+		// it can't read our pages (sign-in), so a title must come with the link
+		if r.URL.Path != "/create" || r.Method != "POST" || !strings.HasPrefix(in.URL, "https://tracklin.es/") || in.Title == "" || in.Description == "" {
 			http.Error(w, "bad", 400)
 			return
 		}
@@ -50,10 +51,12 @@ func TestShortLinks(t *testing.T) {
 	defer tn.Close()
 	s := System{DB: db, API: tn.URL, Base: "https://1tn.pw", Sites: []string{"https://tracklin.es", "http://localhost:3000"}}
 	call := func(long string) (int, string) {
-		req := httptest.NewRequest("POST", "/", strings.NewReader(`{"url":"`+long+`"}`))
+		req := httptest.NewRequest("POST", "/", strings.NewReader(`{"url":"`+long+`","title":"TL-204 on Tracklines"}`))
 		rec := httptest.NewRecorder()
 		s.Create(rec, req)
-		var out struct{ URL string `json:"url"` }
+		var out struct {
+			URL string `json:"url"`
+		}
 		_ = json.Unmarshal(rec.Body.Bytes(), &out)
 		return rec.Code, out.URL
 	}
@@ -65,13 +68,20 @@ func TestShortLinks(t *testing.T) {
 	if code, short := call(ticket); code != 200 || short != "https://1tn.pw/yJjWqM" || made.Load() != 1 {
 		t.Fatalf("second copy reuses it: %d %s, made %d", code, short, made.Load())
 	}
+	// no title given: still titled, "Tracklines"
+	req := httptest.NewRequest("POST", "/", strings.NewReader(`{"url":"https://tracklin.es/projects/untitled"}`))
+	rec := httptest.NewRecorder()
+	s.Create(rec, req)
+	if rec.Code != 200 || made.Load() != 2 {
+		t.Fatalf("untitled: %d %s", rec.Code, rec.Body)
+	}
 	// not ours: refused, never sent to the shortener
 	for _, bad := range []string{"https://evil.example/tickets/x", "https://tracklin.es.evil.example/x", "https://user@tracklin.es/x", "javascript:alert(1)", "tracklin.es/tickets/x", ""} {
 		if code, _ := call(bad); code != 400 {
 			t.Errorf("%q: %d", bad, code)
 		}
 	}
-	if made.Load() != 1 {
+	if made.Load() != 2 {
 		t.Fatalf("a refused link reached the shortener: %d", made.Load())
 	}
 	// the shortener refusing (an error in a 200) or down: 502, and nothing kept
