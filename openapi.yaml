@@ -1818,6 +1818,7 @@ paths:
       description: One row per ticket, newest mention first. Mentions are recorded when a comment names someone, and stay when the notification is cleared.
       parameters:
         - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 10 } }
+        - { name: hide_done, in: query, description: true leaves out done and closed tickets., schema: { type: boolean, default: false } }
       responses:
         '200':
           description: Mentioned tickets.
@@ -1837,6 +1838,31 @@ paths:
                     comment_id: { type: string, description: 'The comment, or "" for mentions from before they were recorded.' }
                     mentioned_at: { type: string, format: date-time }
         '400': { description: limit is not 1–100. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /mentions/page:
+    get:
+      tags: [Tickets]
+      operationId: pageMentions
+      summary: Tickets that @mention the caller, a page at a time
+      description: The same list as /mentions, with how many there are in all.
+      parameters:
+        - { name: page, in: query, schema: { type: integer, minimum: 1, default: 1 } }
+        - { name: per_page, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 25 } }
+        - { name: hide_done, in: query, description: true leaves out done and closed tickets., schema: { type: boolean, default: false } }
+      responses:
+        '200':
+          description: One page of mentioned tickets.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  mentions: { type: array, description: As in /mentions., items: { type: object } }
+                  total: { type: integer }
+                  page: { type: integer }
+                  per_page: { type: integer }
+        '400': { description: page or per_page is out of range. }
         '401': { $ref: '#/components/responses/Unauthorized' }
 
   /tickets/{ticketId}/comments:

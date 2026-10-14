@@ -3,6 +3,7 @@ package comments
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -61,39 +62,86 @@ type Mention struct {
 	MentionedAt string `json:"mentioned_at"` // UTC
 }
 
-// Mentions: GET /api/mentions?limit= — tickets that mention the caller, one per ticket, newest
-// mention first (limit 1–100, default 10).
+// Mentions: GET /api/mentions?limit=&hide_done= — tickets that mention the caller, one per ticket, newest
+// mention first (limit 1–100, default 10). hide_done=true leaves out done and closed tickets.
 func (h System) Mentions(w http.ResponseWriter, r *http.Request) {
-	user, _ := auth.UserID(r.Context())
-	limit, err := strconv.Atoi(r.URL.Query().Get("limit"))
-	if r.URL.Query().Get("limit") == "" {
-		limit, err = 10, nil
-	}
-	if err != nil || limit < 1 || limit > 100 {
-		http.Error(w, "limit must be 1–100", http.StatusBadRequest)
+	limit, ok := intParam(w, r, "limit", 10, 100)
+	if !ok {
 		return
 	}
-	// newest first by the full timestamp, then the uuidv7 id, so same-second mentions keep their order
-	rows, err := h.store.DB.Query(r.Context(), `SELECT * FROM (
-		SELECT DISTINCT ON (m.ticket_id) m.ticket_id::text, p.key_prefix || '-' || t.number, t.title, `+boards.TicketDoneSQL+`, p.name,
-			m.actor, coalesce(m.comment_id::text, ''), to_char(m.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'), m.created_at, m.id
-		FROM ticket_mentions m JOIN tickets t ON t.id = m.ticket_id JOIN projects p ON p.id = t.project_id
-		WHERE m.user_id = $1 AND m.org_id = $2 AND p.owner_clerk_id = $2
-		ORDER BY m.ticket_id, m.created_at DESC, m.id DESC) latest
-		ORDER BY 9 DESC, 10 DESC LIMIT $3`, user, auth.OrgID(r.Context()), limit)
-	if err != nil {
-		writeErr(w, err)
-		return
-	}
-	out, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (Mention, error) {
-		var m Mention
-		return m, row.Scan(&m.TicketID, &m.Key, &m.Title, &m.Done, &m.ProjectName, &m.Actor, &m.CommentID, &m.MentionedAt, nil, nil)
-	})
+	out, _, err := h.mentioned(r, limit, 0)
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
 	httpx.JSON(w, http.StatusOK, out)
+}
+
+// MentionsPage is one page of the caller's mentions, with how many there are in all.
+type MentionsPage struct {
+	Mentions []Mention `json:"mentions"`
+	Total    int       `json:"total"`
+	Page     int       `json:"page"`
+	PerPage  int       `json:"per_page"`
+}
+
+// PageMentions: GET /api/mentions/page?page=&per_page=&hide_done= — Mentions a page at a time (per_page 1–100, default 25).
+func (h System) PageMentions(w http.ResponseWriter, r *http.Request) {
+	page, ok := intParam(w, r, "page", 1, 100_000)
+	if !ok {
+		return
+	}
+	perPage, ok := intParam(w, r, "per_page", 25, 100)
+	if !ok {
+		return
+	}
+	out, total, err := h.mentioned(r, perPage, (page-1)*perPage)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, MentionsPage{Mentions: out, Total: total, Page: page, PerPage: perPage})
+}
+
+// intParam reads query parameter name as 1..max, def when absent; a bad value is answered with 400.
+func intParam(w http.ResponseWriter, r *http.Request, name string, def, max int) (int, bool) {
+	raw := r.URL.Query().Get(name)
+	if raw == "" {
+		return def, true
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 1 || n > max {
+		http.Error(w, fmt.Sprintf("%s must be 1–%d", name, max), http.StatusBadRequest)
+		return 0, false
+	}
+	return n, true
+}
+
+// mentioned lists the caller's mentioned tickets (latest mention each, newest first) and how many in all.
+func (h System) mentioned(r *http.Request, limit, offset int) ([]Mention, int, error) {
+	user, _ := auth.UserID(r.Context())
+	hideDone := r.URL.Query().Get("hide_done") == "true"
+	// newest first by the full timestamp, then the uuidv7 id, so same-second mentions keep their order
+	rows, err := h.store.DB.Query(r.Context(), `SELECT *, count(*) OVER () FROM (
+		SELECT DISTINCT ON (m.ticket_id) m.ticket_id::text, p.key_prefix || '-' || t.number, t.title, `+boards.TicketDoneSQL+` AS done, p.name,
+			m.actor, coalesce(m.comment_id::text, ''), to_char(m.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'), m.created_at, m.id
+		FROM ticket_mentions m JOIN tickets t ON t.id = m.ticket_id JOIN projects p ON p.id = t.project_id
+		WHERE m.user_id = $1 AND m.org_id = $2 AND p.owner_clerk_id = $2
+		ORDER BY m.ticket_id, m.created_at DESC, m.id DESC) latest
+		WHERE NOT ($5 AND done)
+		ORDER BY 9 DESC, 10 DESC LIMIT $3 OFFSET $4`, user, auth.OrgID(r.Context()), limit, offset, hideDone)
+	if err != nil {
+		return nil, 0, err
+	}
+	total := 0 // ponytail: counted with the rows, so a page past the end reports 0; count separately if that matters
+	out, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (Mention, error) {
+		var m Mention
+		return m, row.Scan(&m.TicketID, &m.Key, &m.Title, &m.Done, &m.ProjectName, &m.Actor, &m.CommentID, &m.MentionedAt, nil, nil, &total)
+	})
+	if out == nil {
+		out = []Mention{}
+	}
+	return out, total, err
 }
 
 type System struct {

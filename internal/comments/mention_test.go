@@ -90,6 +90,38 @@ func TestMentionNotifications(t *testing.T) {
 	if code, _ := mine("user_ava", "?limit=0"); code != 400 {
 		t.Fatalf("bad limit: %d", code)
 	}
+	// hide_done leaves out done and closed tickets; the page endpoint pages them with a total
+	if _, err := db.Exec(ctx, `UPDATE tickets SET resolved_at = now(), resolution = 'done' WHERE id = $1`, tid2); err != nil {
+		t.Fatal(err)
+	}
+	if _, got := mine("user_ava", "?hide_done=true"); len(got) != 1 || got[0].Key != "MN-1" {
+		t.Fatalf("hide_done: %+v", got)
+	}
+	if _, got := mine("user_ava", ""); len(got) != 2 || !got[1].Done {
+		t.Fatalf("done tickets show by default, marked done: %+v", got)
+	}
+	paged := func(query string) (int, MentionsPage) {
+		req := httptest.NewRequest("GET", "/api/mentions/page"+query, nil).WithContext(auth.WithAPIKey(ctx, "user_ava", "mn1", "ui", ""))
+		rec := httptest.NewRecorder()
+		h.PageMentions(rec, req)
+		var out MentionsPage
+		_ = json.Unmarshal(rec.Body.Bytes(), &out)
+		return rec.Code, out
+	}
+	if code, p := paged("?per_page=1&page=2"); code != 200 || p.Total != 2 || p.Page != 2 || len(p.Mentions) != 1 || p.Mentions[0].Key != "MN-2" {
+		t.Fatalf("page 2: %d %+v", code, p)
+	}
+	if _, p := paged("?per_page=1&hide_done=true"); p.Total != 1 || len(p.Mentions) != 1 || p.Mentions[0].Key != "MN-1" {
+		t.Fatalf("page, hide_done: %+v", p)
+	}
+	if _, p := paged("?page=5"); len(p.Mentions) != 0 {
+		t.Fatalf("past the end: %+v", p)
+	}
+	for _, q := range []string{"?page=0", "?per_page=101", "?page=x"} {
+		if code, _ := paged(q); code != 400 {
+			t.Fatalf("%s: %d", q, code)
+		}
+	}
 	req = httptest.NewRequest("GET", "/api/mentions", nil).WithContext(auth.WithAPIKey(ctx, "user_ava", "other-org", "ui", ""))
 	rec = httptest.NewRecorder()
 	h.Mentions(rec, req)

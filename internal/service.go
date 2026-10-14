@@ -232,6 +232,7 @@ func (s *Service) Handler() http.Handler {
 	mux.Handle("GET /api/tickets/{id}/comments", signedIn(cm.List))
 	mux.Handle("POST /api/tickets/{id}/comments", signedIn(cm.Create))
 	mux.Handle("GET /api/mentions", signedIn(cm.Mentions)) // tickets that @mention the caller, newest first
+	mux.Handle("GET /api/mentions/page", signedIn(cm.PageMentions)) // the same, a page at a time with a total; hide_done=true
 
 	// Attachments — files live on UploadThing (browser uploads via the Next.js route); we keep the records
 	at := attachments.NewSystem(s.DB)
