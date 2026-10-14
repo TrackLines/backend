@@ -1973,6 +1973,64 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /attachments/{attachmentId}/keep:
+    post:
+      tags: [Attachments]
+      operationId: keepAttachment
+      summary: Keep a year-old file for another year
+      description: Files are warned about a year after they're added (or last kept) and deleted at 13 months unless kept. Org admins and the file's uploader can keep it; API keys can't.
+      parameters:
+        - name: attachmentId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '204': { description: Kept for another year. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: Not an org admin or the file's uploader, or an API key. }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /attachments/retention:
+    get:
+      tags: [Attachments]
+      operationId: attachmentRetention
+      summary: The org's file clean-up
+      description: Files due to be deleted (warned, soonest first) and files the clean-up has deleted (newest first, the latest 500). Org admins only; API keys can't.
+      responses:
+        '200':
+          description: Due and deleted files.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  due:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string, format: uuid }
+                        ticket_id: { type: string, format: uuid }
+                        ticket_key: { type: string }
+                        ticket_title: { type: string }
+                        name: { type: string }
+                        size: { type: integer }
+                        created_by: { type: string }
+                        delete_on: { type: string, format: date-time }
+                  deleted:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        ticket_id: { type: string, format: uuid }
+                        ticket_key: { type: string }
+                        ticket_title: { type: string }
+                        name: { type: string }
+                        size: { type: integer }
+                        created_by: { type: string }
+                        deleted_at: { type: string, format: date-time }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: Not an org admin, or an API key. }
+
   /boards/{boardId}/velocity:
     parameters:
       - $ref: '#/components/parameters/BoardId'
@@ -3495,6 +3553,7 @@ components:
         content_type: { type: string }
         created_by: { type: string }
         created_at: { type: string, format: date-time }
+        delete_on: { type: string, format: date, description: 'Set once the file is a year old: the day it is deleted unless kept.' }
     RoadmapInput:
       type: object
       required: [title]

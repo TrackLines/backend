@@ -14,12 +14,26 @@ type Counter interface {
 }
 
 // NewCounter counts in Valkey (shared by every instance) or, without it, in this instance's memory,
-// so limits never switch off just because Valkey is missing.
+// so limits never switch off just because Valkey is missing. If Valkey fails mid-flight, that call is
+// counted in memory too, rather than let through uncounted (TL-251).
 func NewCounter(vk valkey.Client) Counter {
+	mem := &memoryCounter{counts: map[string]memoryCount{}}
 	if vk != nil {
-		return valkeyCounter{vk}
+		return fallbackCounter{valkeyCounter{vk}, mem}
 	}
-	return &memoryCounter{counts: map[string]memoryCount{}}
+	return mem
+}
+
+// fallbackCounter counts in primary, or in backup when primary errors.
+type fallbackCounter struct {
+	primary, backup Counter
+}
+
+func (c fallbackCounter) Add(ctx context.Context, key string, n int64, ttl time.Duration) (int64, error) {
+	if v, err := c.primary.Add(ctx, key, n, ttl); err == nil {
+		return v, nil
+	}
+	return c.backup.Add(ctx, key, n, ttl)
 }
 
 type valkeyCounter struct{ vk valkey.Client }
@@ -53,6 +67,11 @@ func (c *memoryCounter) Add(_ context.Context, key string, n int64, ttl time.Dur
 			if now.After(v.expires) {
 				delete(c.counts, k)
 			}
+		}
+		// ponytail: under a flood of live keys, start afresh rather than sweep the whole map on every
+		// call; counts reset, which is mild next to stalling every request behind the lock
+		if len(c.counts) > 50_000 {
+			c.counts = map[string]memoryCount{}
 		}
 	}
 	v := c.counts[key]

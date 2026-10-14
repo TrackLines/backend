@@ -223,7 +223,9 @@ func TestHostedStandup(t *testing.T) {
 	s := System{VK: valkeyForTest(t), Boards: boards.Store{DB: db}, Now: func() time.Time { return clock }}
 	send := func(user, org, route, body string) (int, Hosted, string) {
 		t.Helper()
-		req := httptest.NewRequest("POST", "/", strings.NewReader(body)).WithContext(auth.WithAPIKey(ctx, user, org, "ui", ""))
+		c := &clerk.SessionClaims{RegisteredClaims: clerk.RegisteredClaims{Subject: user}}
+		c.ActiveOrganizationID = org
+		req := httptest.NewRequest("POST", "/", strings.NewReader(body)).WithContext(clerk.ContextWithSessionClaims(ctx, c))
 		req.SetPathValue("id", b.ID)
 		rec := httptest.NewRecorder()
 		map[string]func(){"standup": func() { s.Start(rec, req) }, "act": func() { s.Act(rec, req) }, "session": func() { s.StandupSession(rec, req) },
@@ -246,6 +248,18 @@ func TestHostedStandup(t *testing.T) {
 	expect(201, "ava", "org_hsu", "standup", `{"people":[{"id":"ava","label":"Ava"},{"id":"bo","label":"Bo"}]}`)
 	if h := expect(200, "bo", "org_hsu", "session", ""); h.Host != "ava" {
 		t.Fatalf("starter hosts: %+v", h)
+	}
+	// nobody can take over a running standup by starting another (TL-250); an API key can't start one
+	expect(409, "bo", "org_hsu", "standup", `{"people":[]}`)
+	if h := expect(200, "bo", "org_hsu", "session", ""); h.Host != "ava" {
+		t.Fatalf("the standup was taken over: %+v", h)
+	}
+	keyReq := httptest.NewRequest("POST", "/", strings.NewReader(`{"people":[]}`)).WithContext(auth.WithAPIKey(ctx, "bo", "org_hsu", "agent", ""))
+	keyReq.SetPathValue("id", b.ID)
+	keyRec := httptest.NewRecorder()
+	s.Start(keyRec, keyReq)
+	if keyRec.Code != 403 {
+		t.Fatalf("an API key started a standup: %d", keyRec.Code)
 	}
 	// the clock waits for the host: nobody's turn has started yet (TL-231)
 	if v, err := s.get(ctx, b.ID); err != nil || v.RunningSince != nil || v.SpentMS != 0 || v.Index != 0 {

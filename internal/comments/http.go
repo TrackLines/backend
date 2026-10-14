@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/bugfixes/go-bugfixes/logs"
 	"github.com/jackc/pgx/v5"
@@ -133,6 +134,9 @@ func (h System) List(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusOK, out)
 }
 
+// maxBody bounds a comment, as tickets.MaxBody bounds a description (TL-251).
+const maxBody = 100_000
+
 // Create posts {"body", "parent_comment_id"?} on ticket {id}; author is the caller (API key name or user).
 func (h System) Create(w http.ResponseWriter, r *http.Request) {
 	var in struct {
@@ -140,6 +144,10 @@ func (h System) Create(w http.ResponseWriter, r *http.Request) {
 		ParentID *string `json:"parent_comment_id"`
 	}
 	if !httpx.Decode(w, r, &in) {
+		return
+	}
+	if utf8.RuneCountInString(in.Body) > maxBody { // TL-251
+		http.Error(w, "comment must be "+strconv.Itoa(maxBody)+" characters or fewer", http.StatusBadRequest)
 		return
 	}
 	org := auth.OrgID(r.Context())

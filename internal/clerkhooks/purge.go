@@ -4,7 +4,6 @@ import (
 	"context"
 	"time"
 
-	"github.com/bugfixes/go-bugfixes/logs"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -28,6 +27,7 @@ var orgData = []string{
 	`DELETE FROM teams WHERE org_id = $1`,
 	`DELETE FROM org_admins WHERE org_id = $1`,
 	`DELETE FROM api_keys WHERE org_id = $1`,
+	`DELETE FROM expired_attachments WHERE org_id = $1`,
 	`DELETE FROM deleted_orgs WHERE org_id = $1`,
 }
 
@@ -54,22 +54,4 @@ func Purge(ctx context.Context, db *pgxpool.Pool, now time.Time) (int, error) {
 		}
 	}
 	return len(orgs), nil
-}
-
-// RunPurge purges every interval until ctx ends.
-func RunPurge(ctx context.Context, db *pgxpool.Pool, every time.Duration) {
-	t := time.NewTicker(every)
-	defer t.Stop()
-	for {
-		if n, err := Purge(ctx, db, time.Now()); err != nil && ctx.Err() == nil {
-			logs.Errorf("clerkhooks: purge deleted organizations: %v", err)
-		} else if n > 0 {
-			logs.Logf("clerkhooks: purged %d deleted organization(s)", n)
-		}
-		select {
-		case <-ctx.Done():
-			return
-		case <-t.C:
-		}
-	}
 }

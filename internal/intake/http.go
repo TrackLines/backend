@@ -32,7 +32,7 @@ func writeErr(w http.ResponseWriter, err error) {
 
 // sender is the caller's address for rate limits (httpx.ClientIP: the hop our edge wrote, not one
 // the client can make up). Only a hash of it is stored.
-func sender(r *http.Request) string { return httpx.ClientIP(r) }
+func sender(r *http.Request) string { return httpx.RateKey(r) }
 
 // Form: GET /api/intake/{token} (public) → {"open": true}, or 404 when the link is closed or unknown.
 // It says nothing else about the project.

@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/bugfixes/go-bugfixes/logs"
 	"github.com/clerk/clerk-sdk-go/v2"
@@ -37,6 +38,12 @@ type System struct {
 	users           userLister // usernames for the @ picker; nil: none
 }
 
+// MaxTitle and MaxBody bound a ticket's title and its description (and a comment's body).
+const (
+	MaxTitle = 200
+	MaxBody  = 100_000
+)
+
 type ticketInput struct {
 	Type        string    `json:"type"` // bug | feature | task; defaults to task on create, unchanged on update
 	Title       string    `json:"title"`
@@ -57,6 +64,15 @@ func (in ticketInput) createType() string {
 func (in *ticketInput) valid(w http.ResponseWriter) bool {
 	if in.Title = strings.TrimSpace(in.Title); in.Title == "" {
 		http.Error(w, "title is required", http.StatusBadRequest)
+		return false
+	}
+	// bounds (TL-251): a title shows on cards, pushes and MCP output; a near-1MB description broke search
+	if utf8.RuneCountInString(in.Title) > MaxTitle {
+		http.Error(w, "title must be "+strconv.Itoa(MaxTitle)+" characters or fewer", http.StatusBadRequest)
+		return false
+	}
+	if utf8.RuneCountInString(in.Description) > MaxBody {
+		http.Error(w, "description must be "+strconv.Itoa(MaxBody)+" characters or fewer", http.StatusBadRequest)
 		return false
 	}
 	if !slices.Contains([]string{"", "low", "medium", "high", "urgent"}, in.Priority) {
@@ -250,7 +266,7 @@ func (h System) Backlog(w http.ResponseWriter, r *http.Request) {
 // PageBacklog: GET /api/projects/{id}/backlog/page?type=&label=a&priority=high&sort=newest&page=1&per_page=25.
 func (h System) PageBacklog(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	page, ok := intParam(w, q.Get("page"), "page", 1, 0)
+	page, ok := intParam(w, q.Get("page"), "page", 1, 100_000) // unbounded, (page-1)*per_page overflowed into a 500
 	if !ok {
 		return
 	}

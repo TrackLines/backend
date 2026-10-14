@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -112,13 +113,22 @@ func TestAttachmentHandlers(t *testing.T) {
 	// delete: another org can't; then the record goes, and the next sweep deletes the file on UploadThing
 	expect(404, "delete", as(other), a.ID, "")
 	expect(204, "delete", as(org), a.ID, "")
-	if _, err := sweeper.Sweep(ctx); err != nil {
+	sweepGot := func() string {
+		t.Helper()
+		if _, err := sweeper.Sweep(ctx); err != nil {
+			t.Fatal(err)
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		return strings.Join(deleted, ",")
+	}
+	if got := sweepGot(); strings.Contains(got, "at-key-1") { // it waits in today's deleted batch (TL-256)
+		t.Fatalf("deleted from UploadThing straight away: %q", got)
+	}
+	if _, err := db.Exec(ctx, `UPDATE deleted_files SET deleted_on = current_date - 30 WHERE file_key = 'at-key-1'`); err != nil {
 		t.Fatal(err)
 	}
-	mu.Lock()
-	got := strings.Join(deleted, ",")
-	mu.Unlock()
-	if !strings.Contains(got, "at-key-1") {
+	if got := sweepGot(); !strings.Contains(got, "at-key-1") {
 		t.Fatalf("UploadThing deletes: %q", got)
 	}
 	_ = json.Unmarshal(expect(200, "list", as(org), open, "").Body.Bytes(), &list)
@@ -126,4 +136,19 @@ func TestAttachmentHandlers(t *testing.T) {
 		t.Fatalf("still listed: %+v", list)
 	}
 	expect(404, "delete", as(org), a.ID, "")
+
+	// limits (TL-253): files up to 10 MB; a ticket holds up to 10, the 11th is refused with a notice
+	var full string
+	_ = db.QueryRow(ctx, `INSERT INTO tickets (project_id, created_by, title, position) VALUES ($1, 'x', 'full', 2) RETURNING id`, pid).Scan(&full)
+	big := `{"key":"at-big","url":"https://app.ufs.sh/f/at-big","name":"big.zip","size":` + strconv.Itoa(MaxFileBytes+1) + `}`
+	if rec := expect(400, "create", as(org), full, big); !strings.Contains(rec.Body.String(), "10 MB") {
+		t.Fatalf("too big: %s", rec.Body)
+	}
+	for i := range MaxPerTicket {
+		k := "at-n-" + strconv.Itoa(i)
+		expect(201, "create", as(org), full, file(k, "https://app.ufs.sh/f/"+k))
+	}
+	if rec := expect(409, "create", as(org), full, file("at-n-extra", "https://app.ufs.sh/f/at-n-extra")); !strings.Contains(rec.Body.String(), "remove one to add another") {
+		t.Fatalf("eleventh: %s", rec.Body)
+	}
 }

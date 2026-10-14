@@ -111,3 +111,13 @@ func (s Store) Owner(ctx context.Context, plain string) (owner, org, name, kind 
 	}
 	return owner, org, name, kind, err
 }
+
+// NameTakenByOther: another member has a live key in org with this name (any case). One person may
+// reuse a name across their own keys; two people sharing one would act as each other.
+// ponytail: checked before insert, not a unique index; a same-instant race by two members is the gap.
+func (s Store) NameTakenByOther(ctx context.Context, org, owner, name string) (bool, error) {
+	var taken bool
+	err := s.DB.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM api_keys
+		WHERE org_id = $1 AND owner_clerk_id <> $2 AND lower(name) = lower($3) AND revoked_at IS NULL)`, org, owner, name).Scan(&taken)
+	return taken, err
+}

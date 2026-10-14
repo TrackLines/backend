@@ -2,9 +2,7 @@ package attachments
 
 import (
 	"context"
-	"time"
 
-	"github.com/bugfixes/go-bugfixes/logs"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -22,9 +20,15 @@ type Sweeper struct {
 	Files fileDeleter
 }
 
-// Sweep deletes up to 100 queued files; a failed batch stays queued and is retried next time.
+// KeepDays is how long a deleted file waits in its day's batch before it's deleted from storage, so a
+// mistake can still be undone (TL-256): the batch dated D goes on day D+30.
+const KeepDays = 30
+
+// Sweep deletes up to 100 queued files whose day's batch is due; a failed batch stays queued and is
+// retried next time.
 func (s Sweeper) Sweep(ctx context.Context) (int, error) {
-	rows, err := s.DB.Query(ctx, `SELECT file_key FROM deleted_files ORDER BY deleted_at LIMIT 100`)
+	rows, err := s.DB.Query(ctx, `SELECT file_key FROM deleted_files WHERE deleted_on <= current_date - $1::int
+		ORDER BY deleted_on, deleted_at LIMIT 100`, KeepDays)
 	if err != nil {
 		return 0, err
 	}
@@ -40,20 +44,14 @@ func (s Sweeper) Sweep(ctx context.Context) (int, error) {
 	return len(keys), err
 }
 
-// Run sweeps every interval until ctx ends.
-func (s Sweeper) Run(ctx context.Context, every time.Duration) {
-	t := time.NewTicker(every)
-	defer t.Stop()
+// SweepAll deletes every due file, a batch of 100 at a time, until none are left or one fails.
+func (s Sweeper) SweepAll(ctx context.Context) (int, error) {
+	total := 0
 	for {
-		if n, err := s.Sweep(ctx); err != nil && ctx.Err() == nil {
-			logs.Errorf("attachments: delete files from UploadThing: %v", err)
-		} else if n > 0 {
-			logs.Logf("attachments: deleted %d file(s) from UploadThing", n)
-		}
-		select {
-		case <-ctx.Done():
-			return
-		case <-t.C:
+		n, err := s.Sweep(ctx)
+		total += n
+		if err != nil || n == 0 {
+			return total, err
 		}
 	}
 }

@@ -23,3 +23,14 @@ func ClientIP(r *http.Request) string {
 	}
 	return host
 }
+
+// RateKey is who a rate limit counts: the client's address, but an IPv6 address by its /64. One
+// machine is usually given a whole /64, so counting single addresses let one caller rotate through
+// billions of them and never be limited (TL-251).
+func RateKey(r *http.Request) string {
+	ip := net.ParseIP(ClientIP(r))
+	if ip == nil || ip.To4() != nil {
+		return ClientIP(r)
+	}
+	return ip.Mask(net.CIDRMask(64, 128)).String() + "/64"
+}

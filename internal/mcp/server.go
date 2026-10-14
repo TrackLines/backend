@@ -76,7 +76,8 @@ func requester(api http.Handler, header http.Header) caller {
 			_ = json.NewEncoder(&buf).Encode(body)
 		}
 		req := httptest.NewRequestWithContext(ctx, method, path, &buf)
-		for _, h := range []string{"Authorization", "X-Request-Id"} {
+		// the caller's address too, so per-address limits count each caller, not every MCP call as one (TL-251)
+		for _, h := range []string{"Authorization", "X-Request-Id", "X-Forwarded-For"} {
 			if v := header.Get(h); v != "" {
 				req.Header.Set(h, v)
 			}

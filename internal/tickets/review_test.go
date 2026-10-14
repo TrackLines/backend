@@ -110,6 +110,14 @@ func TestAgentReview(t *testing.T) {
 	if rec := resolve(person, bypass.ID); rec.Code != http.StatusNoContent {
 		t.Fatalf("person resolve: %d %s", rec.Code, rec.Body)
 	}
+	// nor by taking work off a review board before asking for review: backlog, then resolve (TL-249)
+	sneak, _ := s.Create(ctx, "rv1", doing, "task", "half done", "")
+	if rec := backlog(agent, sneak.ID); rec.Code != http.StatusConflict {
+		t.Fatalf("agent took work off a review board: %d %s", rec.Code, rec.Body)
+	}
+	if rec := backlog(person, sneak.ID); rec.Code != http.StatusNoContent { // people still can
+		t.Fatalf("person backlog: %d %s", rec.Code, rec.Body)
+	}
 	// agents can't review their own work; nor review what isn't waiting
 	if rec := review(agent, c.ID, `{"approve":true}`); rec.Code != 403 {
 		t.Fatalf("agent review: %d", rec.Code)

@@ -16,28 +16,33 @@ var (
 	ErrNotFound = errors.New("not found")
 	ErrBadFile  = errors.New("file must be an UploadThing upload (https, *.ufs.sh or utfs.io) with a key and name")
 	ErrDone     = errors.New("ticket is done — move it out of Done to change its attachments")
+	ErrTooMany  = errors.New("this ticket already has as many files as it can hold: remove one to add another")
+	ErrTooBig   = errors.New("files can be up to 10 MB")
+	ErrCantKeep = errors.New("only an organization admin or whoever uploaded it can keep this file")
 )
 
 type Attachment struct {
-	ID          string `json:"id"`
-	TicketID    string `json:"ticket_id"`
-	Key         string `json:"key"`
-	URL         string `json:"url"`
-	Name        string `json:"name"`
-	Size        int64  `json:"size"`
-	ContentType string `json:"content_type"`
-	CreatedBy   string `json:"created_by"`
-	CreatedAt   string `json:"created_at"`
+	ID          string  `json:"id"`
+	TicketID    string  `json:"ticket_id"`
+	Key         string  `json:"key"`
+	URL         string  `json:"url"`
+	Name        string  `json:"name"`
+	Size        int64   `json:"size"`
+	ContentType string  `json:"content_type"`
+	CreatedBy   string  `json:"created_by"`
+	CreatedAt   string  `json:"created_at"`
+	DeleteOn    *string `json:"delete_on,omitempty"` // warned about (TL-259): the day it goes unless kept
 }
 
 type Store struct{ DB *pgxpool.Pool }
 
 const cols = `a.id, a.ticket_id, a.file_key, a.url, a.name, a.size_bytes, a.content_type, a.created_by,
-	to_char(a.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')`
+	to_char(a.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
+	CASE WHEN a.warned_at IS NULL THEN NULL ELSE to_char(` + deleteOnSQL + ` AT TIME ZONE 'UTC', 'YYYY-MM-DD') END`
 
 func scan(row pgx.Row) (Attachment, error) {
 	var a Attachment
-	err := row.Scan(&a.ID, &a.TicketID, &a.Key, &a.URL, &a.Name, &a.Size, &a.ContentType, &a.CreatedBy, &a.CreatedAt)
+	err := row.Scan(&a.ID, &a.TicketID, &a.Key, &a.URL, &a.Name, &a.Size, &a.ContentType, &a.CreatedBy, &a.CreatedAt, &a.DeleteOn)
 	return a, err
 }
 
@@ -74,18 +79,34 @@ func ValidUploadThingFile(raw, key string) bool {
 	return strings.HasSuffix(u.EscapedPath(), "/f/"+url.PathEscape(key))
 }
 
+// MaxPerTicket and MaxFileBytes bound a ticket's attachments (TL-253); raise them here (and in the
+// frontend's lib/attachment-limits.ts).
+const (
+	MaxPerTicket = 10
+	MaxFileBytes = 10 << 20
+)
+
 // Create records an uploaded file on the owner's ticket.
 func (s Store) Create(ctx context.Context, owner, actor, ticketID string, a Attachment) (*Attachment, error) {
 	if strings.TrimSpace(a.Name) == "" || !ValidUploadThingFile(a.URL, a.Key) {
 		return nil, ErrBadFile
 	}
+	if a.Size > MaxFileBytes {
+		return nil, ErrTooBig
+	}
 	var done bool
-	if err := s.DB.QueryRow(ctx, `SELECT `+boards.TicketDoneSQL+` FROM tickets t JOIN projects p ON p.id = t.project_id
-		WHERE t.id = $1 AND p.owner_clerk_id = $2`, ticketID, owner).Scan(&done); err != nil {
+	var count int
+	if err := s.DB.QueryRow(ctx, `SELECT `+boards.TicketDoneSQL+`, (SELECT count(*) FROM ticket_attachments a WHERE a.ticket_id = t.id)
+		FROM tickets t JOIN projects p ON p.id = t.project_id
+		WHERE t.id = $1 AND p.owner_clerk_id = $2`, ticketID, owner).Scan(&done, &count); err != nil {
 		return nil, notFound(err)
 	}
 	if done {
 		return nil, ErrDone
+	}
+	// ponytail: counted before the insert; two uploads landing at the same instant could make 11
+	if count >= MaxPerTicket {
+		return nil, ErrTooMany
 	}
 	out, err := scan(s.DB.QueryRow(ctx, `INSERT INTO ticket_attachments AS a (ticket_id, file_key, url, name, size_bytes, content_type, created_by)
 		SELECT t.id, $3, $4, $5, $6, $7, $8 FROM tickets t JOIN projects p ON p.id = t.project_id

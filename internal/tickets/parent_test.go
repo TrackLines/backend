@@ -122,7 +122,8 @@ func TestParent(t *testing.T) {
 	if err := s.Delete(ctx, "pa1", epic); err != nil {
 		t.Fatal(err)
 	}
-	if d, _ := s.Get(ctx, "pa1", a); d.Parent != nil || len(d.Children) != 1 {
+	if d, err := s.Get(ctx, "pa1", a); err != nil || d.Parent != nil || len(d.Children) != 1 {
+		t.Logf("get: %v", err)
 		t.Fatalf("after parent delete: %+v", d)
 	}
 }

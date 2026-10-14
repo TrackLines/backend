@@ -70,10 +70,8 @@ func (s *Service) Start() error {
 	defer stop()
 	// overdue sprints close themselves (manual close is POST /api/sprints/{id}/close)
 	go sprints.Store{DB: s.DB}.RunAutoClose(ctx, time.Minute)
-	// files of deleted attachments (and their tickets, projects, orgs) are removed from UploadThing
-	// organizations deleted in Clerk are purged once their 30 days are up
-	go clerkhooks.RunPurge(ctx, s.DB, time.Hour)
-	go attachments.Sweeper{DB: s.DB, Files: attachments.UploadThing{Token: config.Get(s.Config).UploadThingToken}}.Run(ctx, time.Minute)
+	// the bin and deleted organizations are purged, and deleted files removed, by Railway cron jobs
+	// running this binary as `server purge` (00:00) and `server sweep-files` (00:30): see cmd/server (TL-256)
 	if config.Get(s.Config).ClerkWebhookSecret == "" {
 		// API keys still check membership on use, but removals, deletions and admin clean-up wait on it
 		logs.Warnf("CLERK_WEBHOOK_SECRET is not set: Clerk webhooks are refused, so org removals aren't synced")
@@ -237,9 +235,12 @@ func (s *Service) Handler() http.Handler {
 
 	// Attachments — files live on UploadThing (browser uploads via the Next.js route); we keep the records
 	at := attachments.NewSystem(s.DB)
+	at.IsAdmin = o.AdminModel().IsAdmin
 	mux.Handle("GET /api/tickets/{id}/attachments", signedIn(at.List))
 	mux.Handle("POST /api/tickets/{id}/attachments", signedIn(at.Create))
 	mux.Handle("DELETE /api/attachments/{id}", signedIn(at.Delete))
+	mux.Handle("POST /api/attachments/{id}/keep", signedIn(at.Keep)) // a year-old file: keep it another year (admins, uploader)
+	mux.Handle("GET /api/attachments/retention", signedIn(at.Retention)) // files due for clean-up and already cleaned up (admins)
 
 	// Backlog — project tickets not on any board/sprint yet (e.g. triaged bugs)
 	mux.Handle("GET /api/projects/{id}/backlog", signedIn(t.Backlog))
@@ -323,8 +324,8 @@ func (s *Service) Handler() http.Handler {
 	mux.Handle("POST /api/webhooks/stripe", public("webhook-stripe", 600, s.Billing.Webhook(time.Now)))
 	mux.Handle("POST /webhooks/stripe", public("webhook-stripe", 600, s.Billing.Webhook(time.Now))) // same path as ../bugfixes (stripe listen --forward-to …/webhooks/stripe)
 	// Clerk (via Svix) authenticates by signature: org/user removals clean up admins, team members and API keys
-	// Contact form: files enquiries in ChewedFeed HQ's inbox; a few per address per minute
-	mux.Handle("POST /api/enquiries", public("enquiry", 3, enquiries.NewSystem(config.Get(s.Config).ChewedFeedURL, config.Get(s.Config).ChewedFeedKey).Create))
+	// Contact form: files enquiries in ChewedFeed HQ's inbox; a few per address per minute, and 20 a minute in all
+	mux.Handle("POST /api/enquiries", ratelimit.Total(limits, "enquiry-all", 20, time.Now)(public("enquiry", 3, enquiries.NewSystem(config.Get(s.Config).ChewedFeedURL, config.Get(s.Config).ChewedFeedKey).Create)))
 	mux.Handle("POST /api/webhooks/clerk", public("webhook-clerk", 600, clerkhooks.NewSystem(s.DB, config.Get(s.Config).ClerkWebhookSecret).Webhook(time.Now)))
 
 	// Every request: API key (tl_…) or optional Clerk auth + users row for signed-in callers, then

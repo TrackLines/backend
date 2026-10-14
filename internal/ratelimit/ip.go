@@ -21,14 +21,14 @@ func tooMany(w http.ResponseWriter, retry int64) {
 	http.Error(w, "rate limit exceeded: try again shortly", http.StatusTooManyRequests)
 }
 
-// PerIP limits a route to perMinute requests per client address (httpx.ClientIP), for routes anyone
-// can call without signing in: the public request form, public roadmaps, webhooks. Counter errors
-// let the request through.
+// PerIP limits a route to perMinute requests per client address (httpx.RateKey: IPv6 by /64), for
+// routes anyone can call without signing in: the public request form, public roadmaps, webhooks.
+// Counter errors let the request through (NewCounter falls back to memory first, so that's rare).
 func PerIP(c Counter, name string, perMinute int, now func() time.Time) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			t := now()
-			key, retry := window(name, httpx.ClientIP(r), t)
+			key, retry := window(name, httpx.RateKey(r), t)
 			n, err := c.Add(r.Context(), key, 1, 70*time.Second)
 			if err != nil {
 				logs.Warnf("ratelimit %s: %v", name, err)
@@ -62,7 +62,7 @@ func BadKeys(c Counter, perMinute int, now func() time.Time) func(http.Handler) 
 				next.ServeHTTP(w, r)
 				return
 			}
-			key, retry := window("badkey", httpx.ClientIP(r), now())
+			key, retry := window("badkey", httpx.RateKey(r), now())
 			if n, err := c.Add(r.Context(), key, 0, 70*time.Second); err == nil && n >= int64(perMinute) {
 				tooMany(w, retry)
 				return
@@ -84,3 +84,19 @@ func (s *statusRecorder) Flush() {
 }
 
 func (s *statusRecorder) Unwrap() http.ResponseWriter { return s.ResponseWriter }
+
+// Total limits a route to perMinute requests in all, whoever sends them: a ceiling for public routes
+// whose every request costs something elsewhere (enquiries land in a person's inbox), so spreading
+// across addresses can't flood it (TL-251).
+func Total(c Counter, name string, perMinute int, now func() time.Time) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			key, retry := window(name, "all", now())
+			if n, err := c.Add(r.Context(), key, 1, 70*time.Second); err == nil && n > int64(perMinute) {
+				tooMany(w, retry)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}

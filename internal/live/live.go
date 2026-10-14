@@ -115,6 +115,19 @@ func (s System) Start(w http.ResponseWriter, r *http.Request) {
 		in.People = []Participant{}
 	}
 	startedBy, _ := auth.UserID(r.Context())
+	// starting one mid-standup would make the caller its host (TL-250): people only, and not while
+	// someone else's is running and they're still there (it ends itself once its host has gone)
+	if auth.ViaAPIKey(r.Context()) {
+		http.Error(w, "sign in to run a standup", http.StatusForbidden)
+		return
+	}
+	if h, err := s.hosted(r.Context(), boardScope(standup, r.PathValue("id")), standup); err == nil && h.Host != startedBy {
+		http.Error(w, "a standup is already running: join it", http.StatusConflict)
+		return
+	} else if err != nil && !errors.Is(err, ErrNoSession) {
+		http.Error(w, "live session unavailable", 503)
+		return
+	}
 	// opens stopped at the first person: the host starts the clock once everyone's joined (TL-231)
 	v := Standup{People: in.People, Index: 0, SpentMS: 0, RunningSince: nil, StartedBy: startedBy}
 	if err := s.save(r.Context(), r.PathValue("id"), v); err != nil {

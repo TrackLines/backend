@@ -1,6 +1,7 @@
 package attachments
 
 import (
+	"context"
 	"errors"
 	"net/http"
 
@@ -12,6 +13,8 @@ import (
 
 type System struct {
 	store Store
+	// IsAdmin: is user an org admin (organizations.Admins.IsAdmin); admins can keep any file (TL-259)
+	IsAdmin func(ctx context.Context, org, user string) (bool, error)
 }
 
 // NewSystem exposes the attachment handlers; routes are declared in internal/service.go.
@@ -23,8 +26,12 @@ func writeErr(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, ErrNotFound):
 		http.Error(w, "not found", http.StatusNotFound)
-	case errors.Is(err, ErrBadFile):
+	case errors.Is(err, ErrBadFile), errors.Is(err, ErrTooBig):
 		http.Error(w, err.Error(), http.StatusBadRequest)
+	case errors.Is(err, ErrCantKeep):
+		http.Error(w, err.Error(), http.StatusForbidden)
+	case errors.Is(err, ErrTooMany):
+		http.Error(w, err.Error(), http.StatusConflict)
 	case errors.Is(err, ErrDone):
 		http.Error(w, err.Error(), http.StatusConflict)
 	default:
@@ -68,4 +75,51 @@ func (h System) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// Keep: POST /api/attachments/{id}/keep holds on to a file due for clean-up for another year (TL-259).
+// People only: an org admin, or whoever uploaded it.
+func (h System) Keep(w http.ResponseWriter, r *http.Request) {
+	user, signedIn := auth.UserID(r.Context())
+	if auth.ViaAPIKey(r.Context()) || !signedIn {
+		http.Error(w, "sign in to keep a file", http.StatusForbidden)
+		return
+	}
+	org := auth.OrgID(r.Context())
+	err := h.store.Keep(r.Context(), org, r.PathValue("id"), func(uploader string) bool {
+		if uploader == user {
+			return true
+		}
+		admin := false
+		if h.IsAdmin != nil {
+			admin, _ = h.IsAdmin(r.Context(), org, user)
+		}
+		return admin
+	})
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// Retention: GET /api/attachments/retention is the org's file clean-up (TL-260): files due to be
+// deleted and files already deleted. Org admins only, and people only.
+func (h System) Retention(w http.ResponseWriter, r *http.Request) {
+	user, signedIn := auth.UserID(r.Context())
+	org := auth.OrgID(r.Context())
+	admin := false
+	if signedIn && !auth.ViaAPIKey(r.Context()) && h.IsAdmin != nil {
+		admin, _ = h.IsAdmin(r.Context(), org, user)
+	}
+	if !admin {
+		http.Error(w, "only org admins can see the file clean-up", http.StatusForbidden)
+		return
+	}
+	out, err := h.store.Retention(r.Context(), org)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, out)
 }

@@ -11,13 +11,17 @@ import (
 	"github.com/bugfixes/go-bugfixes/logs"
 	goFlags "github.com/flags-gg/go-flags"
 	service "github.com/tracklines/backend/internal"
+	"github.com/tracklines/backend/internal/attachments"
 	"github.com/tracklines/backend/internal/auth"
 	"github.com/tracklines/backend/internal/billing"
+	"github.com/tracklines/backend/internal/clerkhooks"
 	"github.com/tracklines/backend/internal/config"
 	"github.com/tracklines/backend/internal/integrations"
 	"github.com/tracklines/backend/internal/live"
 	"github.com/tracklines/backend/internal/migrations"
+	"github.com/tracklines/backend/internal/notifications"
 	"github.com/tracklines/backend/internal/secrets"
+	"github.com/tracklines/backend/internal/tickets"
 	"github.com/valkey-io/valkey-go"
 )
 
@@ -92,7 +96,65 @@ func run() error {
 	return service.New(c, db, vk, fl, bill, port).Start()
 }
 
+// Railway cron jobs run this binary with a job name (TL-256): `purge` at 00:00 UTC (tickets 30 days
+// in the bin, organizations deleted 30 days ago) and `sweep-files` at 00:30 UTC (deleted files whose
+// day's batch is 30 days old). Each does its work and exits.
+func job(name string) error {
+	c, err := config.Build()
+	if err != nil {
+		return fmt.Errorf("build config: %w", err)
+	}
+	ctx := context.Background()
+	db, err := c.Database.GetPGXPoolClient(ctx)
+	if err != nil {
+		return fmt.Errorf("connect postgres: %w", err)
+	}
+	defer db.Close()
+	now := time.Now()
+	switch name {
+	case "purge":
+		tk, err := tickets.PurgeBin(ctx, db, now)
+		if err != nil {
+			return fmt.Errorf("purge the ticket bin: %w", err)
+		}
+		orgs, err := clerkhooks.Purge(ctx, db, now)
+		if err != nil {
+			return fmt.Errorf("purge deleted organizations: %w", err)
+		}
+		// year-old attachments: warn (admins and uploaders), and delete the ones nobody kept (TL-259)
+		warned, err := attachments.WarnOld(ctx, db, notifications.Store{DB: db}, now)
+		if err != nil {
+			return fmt.Errorf("warn about old attachments: %w", err)
+		}
+		expired, err := attachments.DeleteExpired(ctx, db, now)
+		if err != nil {
+			return fmt.Errorf("delete expired attachments: %w", err)
+		}
+		logs.Logf("purge: %d ticket(s) from the bin, %d deleted organization(s), %d attachment(s) warned about, %d expired", tk, orgs, warned, expired)
+	case "sweep-files":
+		n, err := attachments.Sweeper{DB: db, Files: attachments.UploadThing{Token: config.Get(c).UploadThingToken}}.SweepAll(ctx)
+		logs.Logf("sweep-files: deleted %d file(s) from UploadThing", n)
+		if err != nil {
+			return fmt.Errorf("delete files from UploadThing: %w", err)
+		}
+	default:
+		return fmt.Errorf("unknown job %q: purge or sweep-files", name)
+	}
+	return nil
+}
+
 func main() {
+	args := os.Args[1:]
+	if len(args) > 0 && args[0] == "/server" { // a start command of "/server purge" on top of the image's ENTRYPOINT
+		args = args[1:]
+	}
+	if len(args) > 0 {
+		if err := job(args[0]); err != nil {
+			_, _ = fmt.Fprintf(os.Stderr, "%s %s: %v\n", ServiceName, args[0], err)
+			os.Exit(1)
+		}
+		return
+	}
 	logs.Logf("Starting %s version %s (build %s)", ServiceName, BuildVersion, BuildHash)
 	if err := run(); err != nil {
 		logs.Local().Warnf("%s stopped: %v", ServiceName, err)

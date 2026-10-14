@@ -91,7 +91,23 @@ func (h System) Create(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "kind must be ai or service", http.StatusBadRequest)
 		return
 	}
+	// a key's name is who its work is recorded as (comments, tickets, claims), so it can't pose as a
+	// person (user_…), as the system or an integration, or as another member's key (TL-247)
+	if reservedName(in.Name) {
+		http.Error(w, "that name is reserved: choose a name for the agent or script using the key", http.StatusBadRequest)
+		return
+	}
 	user, _ := auth.UserID(r.Context())
+	taken, err := h.store.NameTakenByOther(r.Context(), auth.OrgID(r.Context()), user, in.Name)
+	if err != nil {
+		logs.Errorf("apikeys: create: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	if taken {
+		http.Error(w, "someone else in this organization already has a key with that name: choose another", http.StatusConflict)
+		return
+	}
 	plain, k, err := h.store.Create(r.Context(), user, auth.OrgID(r.Context()), in.Name, in.Kind)
 	if err != nil {
 		logs.Errorf("apikeys: create: %v", err)
@@ -116,4 +132,11 @@ func (h System) Revoke(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// reservedName: names a key mustn't take, because work is recorded under them already: people
+// (Clerk ids, user_…), imported work (legacy), and the PR integrations' comments (github, bitbucket).
+func reservedName(name string) bool {
+	n := strings.ToLower(strings.TrimSpace(name))
+	return strings.HasPrefix(n, "user_") || n == "legacy" || n == "github" || n == "bitbucket"
 }

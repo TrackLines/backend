@@ -325,9 +325,17 @@ func (s Store) Release(ctx context.Context, owner, actor, id string) error {
 
 // Delete removes a ticket; if it was its parent's last unfinished sub-ticket, the parent completes.
 func (s Store) Delete(ctx context.Context, owner, id string) error {
+	// into the bin, not gone (TL-256): hidden everywhere now, purged with its comments and the rest
+	// after Retention; its files go in today's deleted batch, deleted from storage on the same clock
 	var parent *string
-	err := s.DB.QueryRow(ctx, `DELETE FROM tickets t USING projects p
-		WHERE t.id = $1 AND p.id = t.project_id AND p.owner_clerk_id = $2 RETURNING t.parent_id`, id, owner).Scan(&parent)
+	err := pgx.BeginFunc(ctx, s.DB, func(tx pgx.Tx) error {
+		if err := tx.QueryRow(ctx, `UPDATE tickets_all t SET deleted_at = now() FROM projects p
+			WHERE t.id = $1 AND p.id = t.project_id AND p.owner_clerk_id = $2 AND t.deleted_at IS NULL RETURNING t.parent_id`, id, owner).Scan(&parent); err != nil {
+			return err
+		}
+		_, err := tx.Exec(ctx, `INSERT INTO deleted_files (file_key) SELECT file_key FROM ticket_attachments WHERE ticket_id = $1 ON CONFLICT DO NOTHING`, id)
+		return err
+	})
 	if err != nil {
 		return notFound(err)
 	}
@@ -482,17 +490,21 @@ func (s Store) ToBacklogAs(ctx context.Context, owner, id string, agent bool) er
 	return pgx.BeginFunc(ctx, s.DB, func(tx pgx.Tx) error {
 		var from, fromSprint *string
 		var duplicate bool
-		var reviewPending bool
-		err := tx.QueryRow(ctx, `SELECT t.column_id, t.sprint_id, t.duplicate_of IS NOT NULL, t.review_requested_at IS NOT NULL FROM tickets t
+		var reviewPending, reviewBoard bool
+		err := tx.QueryRow(ctx, `SELECT t.column_id, t.sprint_id, t.duplicate_of IS NOT NULL, t.review_requested_at IS NOT NULL,
+				COALESCE(b.agent_review, false) FROM tickets t
 			JOIN projects p ON p.id = t.project_id AND p.owner_clerk_id = $2
-			WHERE t.id = $1 FOR UPDATE OF t`, id, owner).Scan(&from, &fromSprint, &duplicate, &reviewPending)
+			LEFT JOIN boards b ON b.id = t.board_id
+			WHERE t.id = $1 FOR UPDATE OF t`, id, owner).Scan(&from, &fromSprint, &duplicate, &reviewPending, &reviewBoard)
 		if err != nil {
 			return notFound(err)
 		}
 		if duplicate {
 			return ErrIsDuplicate
 		}
-		if agent && reviewPending {
+		// on a board where a person reviews agent work, an agent can't take a ticket off it: from the
+		// backlog it could resolve the ticket as done with nobody looking (TL-249)
+		if agent && (reviewPending || reviewBoard) {
 			return ErrAgentReviewBypass
 		}
 		if from == nil {
@@ -649,11 +661,13 @@ func (s Store) Get(ctx context.Context, owner, id string) (*Detail, error) {
 		return nil, err
 	}
 	if parentID != nil {
+		// a parent in the bin isn't shown: the child reads as top-level, as when deletes were final (TL-256)
 		var p Dep
-		if err := s.DB.QueryRow(ctx, `SELECT t.id, t.title, `+boards.TicketDoneSQL+` FROM tickets t WHERE t.id = $1`, *parentID).Scan(&p.ID, &p.Title, &p.Done); err != nil {
+		if err := s.DB.QueryRow(ctx, `SELECT t.id, t.title, `+boards.TicketDoneSQL+` FROM tickets t WHERE t.id = $1`, *parentID).Scan(&p.ID, &p.Title, &p.Done); err == nil {
+			d.Parent = &p
+		} else if !errors.Is(err, pgx.ErrNoRows) {
 			return nil, err
 		}
-		d.Parent = &p
 	}
 	if d.Children, err = s.ChildrenFor(ctx, id); err != nil {
 		return nil, err
@@ -771,4 +785,14 @@ func deref(s *string) string {
 		return ""
 	}
 	return *s
+}
+
+// Retention is how long a deleted ticket stays in the bin before it's purged for good (TL-256).
+const Retention = 30 * 24 * time.Hour
+
+// PurgeBin permanently deletes tickets binned more than Retention before now. Their comments,
+// labels, links and attachments go with them (cascade); their files were queued when binned.
+func PurgeBin(ctx context.Context, db *pgxpool.Pool, now time.Time) (int64, error) {
+	tag, err := db.Exec(ctx, `DELETE FROM tickets_all WHERE deleted_at < $1`, now.Add(-Retention))
+	return tag.RowsAffected(), err
 }

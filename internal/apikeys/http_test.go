@@ -78,6 +78,18 @@ func TestKeyHandlers(t *testing.T) {
 		t.Fatalf("created: %+v", created)
 	}
 
+	// a key can't pose as a person, the system or an integration, or as another member's key (TL-247)
+	for _, name := range []string{"user_admin123", "User_X", "legacy", "GitHub", "bitbucket"} {
+		expect(400, "create", as("akh2", "org_akh"), "", `{"name":"`+name+`","kind":"ai"}`)
+	}
+	expect(409, "create", as("akh2", "org_akh"), "", `{"name":"claude","kind":"ai"}`)   // akh1's Claude
+	expect(201, "create", as("akh2", "org_other"), "", `{"name":"Claude","kind":"ai"}`) // another org's names are its own
+	var second struct {
+		ID string `json:"id"`
+	}
+	_ = json.Unmarshal(expect(201, "create", as("akh1", "org_akh"), "", `{"name":"Claude","kind":"ai"}`).Body.Bytes(), &second) // your own name again is fine
+	expect(204, "revoke", as("akh1", "org_akh"), second.ID, "")
+
 	// list: my keys in this org, never the secret; not another person's, not another org's
 	mine := list(as("akh1", "org_akh"))
 	if len(mine) != 1 || mine[0]["id"] != created.ID || strings.Contains(expect(200, "list", as("akh1", "org_akh"), "", "").Body.String(), created.Key) {

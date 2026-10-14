@@ -57,6 +57,19 @@ func TestDeletedTicketsFilesAreSwept(t *testing.T) {
 
 	files := &fakeFiles{fail: true}
 	s := Sweeper{DB: db, Files: files}
+	// deleted files wait in their day's batch: nothing goes today, nor on day 29; on day 30 the batch goes (TL-256)
+	age := func(days int) {
+		if _, err := db.Exec(ctx, `UPDATE deleted_files SET deleted_on = current_date - $1::int WHERE file_key IN ('sw-a', 'sw-b')`, days); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, days := range []int{0, KeepDays - 1} {
+		age(days)
+		if n, err := s.Sweep(ctx); err != nil || n != 0 {
+			t.Fatalf("swept a %d-day-old batch: %d %v", days, n, err)
+		}
+	}
+	age(KeepDays)
 	if _, err := s.Sweep(ctx); err == nil {
 		t.Fatal("a failing UploadThing should be reported")
 	}
