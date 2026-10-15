@@ -220,7 +220,18 @@ func (h System) Connection(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	httpx.JSON(w, http.StatusOK, map[string]any{"provider": c.Provider, "connected": true, "base_url": c.BaseURL, "account": c.Account, "updated_by": c.UpdatedBy, "updated_at": c.UpdatedAt})
+	out := map[string]any{"provider": c.Provider, "connected": true, "base_url": c.BaseURL, "account": c.Account, "updated_by": c.UpdatedBy, "updated_at": c.UpdatedAt}
+	if c.Provider == Bitbucket {
+		// one person's connection: show which workspaces it reaches (TL-286); left out if Bitbucket can't say
+		if token, err := h.bitbucketAccess(r.Context(), org); err == nil {
+			if ws, err := h.git.bitbucketWorkspaces(r.Context(), token); err == nil {
+				out["workspaces"] = ws
+			} else {
+				logs.Warnf("integrations: bitbucket workspaces: %v", err)
+			}
+		}
+	}
+	httpx.JSON(w, http.StatusOK, out)
 }
 
 // Connect: PUT /api/integrations/{provider} {"token": "...", "base_url"?}. Org admins only.

@@ -125,7 +125,10 @@ func TestGitProviders(t *testing.T) {
 		case strings.HasPrefix(r.URL.Path, "/api/repositories/chewed/feed/hooks/") && r.Method == "DELETE":
 			deletedHooks = append(deletedHooks, strings.TrimPrefix(r.URL.Path, "/api/repositories/chewed/feed/hooks/"))
 			w.WriteHeader(http.StatusNoContent)
-		case r.URL.Path == "/api/repositories" && r.Header.Get("Authorization") == "Bearer bb_access2":
+		// TL-286: the person's workspaces, then each workspace's repos (the cross-workspace list is retired)
+		case r.URL.Path == "/api/user/workspaces" && r.Header.Get("Authorization") == "Bearer bb_access2":
+			_, _ = w.Write([]byte(`{"values":[{"workspace":{"slug":"chewed","name":"Chewed Feed"}}]}`))
+		case r.URL.Path == "/api/repositories/chewed" && r.Header.Get("Authorization") == "Bearer bb_access2":
 			_, _ = w.Write([]byte(`{"values":[{"full_name":"chewed/feed","is_private":true,"mainbranch":{"name":"master"}}]}`))
 		default:
 			http.Error(w, "nope "+r.URL.Path, http.StatusNotFound)
@@ -252,6 +255,10 @@ func TestGitProviders(t *testing.T) {
 	}
 	if strings.Join(grants, ",") != "authorization_code,authorization_code,refresh_token" {
 		t.Fatalf("grants: %v", grants)
+	}
+	// the card says which workspaces the connection reaches (TL-286)
+	if rec := call(h.Connection, admin, "GET", "/", "", map[string]string{"provider": "bitbucket"}); !strings.Contains(rec.Body.String(), `"workspaces":[{"slug":"chewed","name":"Chewed Feed"}]`) {
+		t.Fatalf("bitbucket workspaces: %s", rec.Body)
 	}
 
 	// provider not configured on the server: 503

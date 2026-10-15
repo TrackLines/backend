@@ -2,6 +2,7 @@ package integrations
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"crypto"
 	"crypto/rand"
@@ -16,6 +17,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -94,7 +96,9 @@ func (g Git) do(req *http.Request, out any) error {
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return fmt.Errorf("%w: %s %s → HTTP %d", ErrProviderCall, req.Method, req.URL.Path, resp.StatusCode)
+		// the status's name and the provider's own message too: logs (Bugfixes) strip numbers
+		return fmt.Errorf("%w: %s %s → HTTP %d %s: %s", ErrProviderCall, req.Method, req.URL.Path, resp.StatusCode,
+			http.StatusText(resp.StatusCode), providerMessage(body))
 	}
 	if out == nil {
 		return nil
@@ -412,21 +416,70 @@ func (h System) bitbucketAccess(ctx context.Context, org string) (string, error)
 }
 
 // ponytail: first 100 repos only; follow "next" when a workspace has more.
+// bitbucketRepos lists the repos the connected person is a member of, workspace by workspace:
+// GET /user/workspaces, then /repositories/{workspace}. Bitbucket retired the cross-workspace
+// GET /repositories?role=member (TL-286); that's only tried if the per-workspace calls aren't there.
 func (g Git) bitbucketRepos(ctx context.Context, token string) ([]Repo, error) {
-	var page struct {
-		Values []struct {
-			FullName   string `json:"full_name"`
-			IsPrivate  bool   `json:"is_private"`
-			MainBranch *struct {
-				Name string `json:"name"`
-			} `json:"mainbranch"`
-		} `json:"values"`
+	workspaces, err := g.bitbucketWorkspaces(ctx, token)
+	if err != nil {
+		out, legacy := g.bitbucketRepoPages(ctx, "/repositories?role=member&pagelen=100", token)
+		if legacy != nil {
+			return nil, err // the current API's error says more than the retired one's
+		}
+		return out, nil
 	}
-	if err := g.bitbucketGet(ctx, "/repositories?role=member&pagelen=100", token, &page); err != nil {
+	var out []Repo
+	for _, w := range workspaces {
+		repos, err := g.bitbucketRepoPages(ctx, "/repositories/"+url.PathEscape(w.Slug)+"?role=member&pagelen=100", token)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, repos...)
+	}
+	return out, nil
+}
+
+// BitbucketWorkspace is a workspace the connected person belongs to: its repos can be linked.
+type BitbucketWorkspace struct {
+	Slug string `json:"slug"`
+	Name string `json:"name"`
+}
+
+// bitbucketWorkspaces lists the connected person's workspaces (GET /user/workspaces), by name.
+func (g Git) bitbucketWorkspaces(ctx context.Context, token string) ([]BitbucketWorkspace, error) {
+	var access []struct {
+		Workspace BitbucketWorkspace `json:"workspace"`
+	}
+	if err := g.bitbucketPages(ctx, "/user/workspaces?pagelen=100", token, &access); err != nil {
 		return nil, err
 	}
-	out := make([]Repo, 0, len(page.Values))
-	for _, r := range page.Values {
+	out := []BitbucketWorkspace{}
+	for _, a := range access {
+		if a.Workspace.Slug != "" {
+			a.Workspace.Name = cmp.Or(a.Workspace.Name, a.Workspace.Slug)
+			out = append(out, a.Workspace)
+		}
+	}
+	slices.SortFunc(out, func(a, b BitbucketWorkspace) int {
+		return cmp.Compare(strings.ToLower(a.Name), strings.ToLower(b.Name))
+	})
+	return out, nil
+}
+
+// bitbucketRepoPages reads every page of a repository list.
+func (g Git) bitbucketRepoPages(ctx context.Context, path, token string) ([]Repo, error) {
+	var values []struct {
+		FullName   string `json:"full_name"`
+		IsPrivate  bool   `json:"is_private"`
+		MainBranch *struct {
+			Name string `json:"name"`
+		} `json:"mainbranch"`
+	}
+	if err := g.bitbucketPages(ctx, path, token, &values); err != nil {
+		return nil, err
+	}
+	out := make([]Repo, 0, len(values))
+	for _, r := range values {
 		branch := "main"
 		if r.MainBranch != nil && r.MainBranch.Name != "" {
 			branch = r.MainBranch.Name
@@ -434,6 +487,54 @@ func (g Git) bitbucketRepos(ctx context.Context, token string) ([]Repo, error) {
 		out = append(out, Repo{FullName: r.FullName, DefaultBranch: branch, Private: r.IsPrivate})
 	}
 	return out, nil
+}
+
+// maxBitbucketPages bounds a listing: 20 pages of 100.
+const maxBitbucketPages = 20
+
+// bitbucketPages follows a paged Bitbucket list ({"values": [...], "next": "<url>"}) into out, a
+// pointer to a slice. Only "next" links on the same API host are followed.
+func (g Git) bitbucketPages(ctx context.Context, path, token string, out any) error {
+	base := orDefault(g.BitbucketAPI, "https://api.bitbucket.org/2.0")
+	all := []json.RawMessage{}
+	next := base + path
+	for range maxBitbucketPages {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, next, nil)
+		if err != nil {
+			return err
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
+		var page struct {
+			Values []json.RawMessage `json:"values"`
+			Next   string            `json:"next"`
+		}
+		if err := g.do(req, &page); err != nil {
+			return err
+		}
+		all = append(all, page.Values...)
+		if page.Next == "" || !strings.HasPrefix(page.Next, base+"/") {
+			break
+		}
+		next = page.Next
+	}
+	raw, _ := json.Marshal(all)
+	return json.Unmarshal(raw, out)
+}
+
+// providerMessage is the error a provider gave, briefly: Bitbucket's {"error": {"message"}}, GitHub's {"message"}.
+func providerMessage(body []byte) string {
+	var e struct {
+		Message string `json:"message"`
+		Error   struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	_ = json.Unmarshal(body, &e)
+	m := strings.TrimSpace(cmp.Or(e.Error.Message, e.Message))
+	if len(m) > 200 {
+		m = m[:200]
+	}
+	return m
 }
 
 // Repos lists what the org's connection to provider can see.
