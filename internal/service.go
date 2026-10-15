@@ -8,6 +8,7 @@ import (
 	"github.com/clerk/clerk-sdk-go/v2/user"
 	"net/http"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -64,17 +65,33 @@ func New(cfg *ConfigBuilder.Config, db *pgxpool.Pool, vk valkey.Client, fl *goFl
 	return &Service{Config: cfg, DB: db, Valkey: vk, Flags: fl, Billing: bill, Port: port}
 }
 
-// notifiers are the in-app inbox, Web Push (to people's devices, when the server has VAPID keys), and
-// the two together: what everything that tells people something sends through.
-func (s *Service) notifiers() (notifications.Store, *notifications.Push, notifications.Notifier) {
+// notifiers are the in-app inbox, Web Push (to people's devices, when the server has VAPID keys),
+// Google Chat spaces (TL-288, when the server can seal their URLs), and all of them together: what
+// everything that tells people something sends through.
+func (s *Service) notifiers() (notifications.Store, *notifications.Push, *integrations.GoogleChat, notifications.Notifier) {
 	inbox := notifications.Store{DB: s.DB}
 	pc := config.Get(s.Config)
 	push := notifications.NewPush(s.DB, notifications.PushConfig{PublicKey: pc.VAPIDPublicKey, PrivateKey: pc.VAPIDPrivateKey, Subject: pc.VAPIDSubject})
-	var notify notifications.Notifier = inbox
+	all := notifications.Multi{inbox}
 	if push.Enabled() {
-		notify = notifications.Multi{inbox, push}
+		all = append(all, push)
 	}
-	return inbox, push, notify
+	var chat *integrations.GoogleChat
+	if box, err := secrets.New(pc.SecretKey); err == nil {
+		chat = &integrations.GoogleChat{Store: integrations.Store{DB: s.DB, Box: box}, Site: siteURL(pc.AuthorizedParties())}
+		all = append(all, chat)
+	}
+	return inbox, push, chat, all
+}
+
+// siteURL is the web app's address (links in Google Chat): the first https origin Clerk allows.
+func siteURL(parties []string) string {
+	for _, p := range parties {
+		if strings.HasPrefix(p, "https://") {
+			return p
+		}
+	}
+	return ""
 }
 
 func (s *Service) Start() error {
@@ -84,7 +101,7 @@ func (s *Service) Start() error {
 	defer stop()
 	// overdue sprints close themselves (manual close is POST /api/sprints/{id}/close); a next sprint
 	// that starts over capacity tells the board's managers (TL-149)
-	_, _, notify := s.notifiers()
+	_, _, _, notify := s.notifiers()
 	go sprints.Store{DB: s.DB, Notify: notify}.RunAutoClose(ctx, time.Minute)
 	// the bin and deleted organizations are purged, and deleted files removed, by Railway cron jobs
 	// running this binary as `server purge` (00:00) and `server sweep-files` (00:30): see cmd/server (TL-256)
@@ -176,7 +193,7 @@ func (s *Service) Handler() http.Handler {
 
 	// Tickets
 	// Notifications: an in-app inbox for now (external channels later implement the same Notifier)
-	inbox, push, notify := s.notifiers()
+	inbox, push, chat, notify := s.notifiers()
 	nf := notifications.NewSystem(inbox).WithPush(push)
 	mux.Handle("GET /api/push", signedIn(nf.PushKey))
 	mux.Handle("POST /api/push/subscriptions", signedIn(nf.Subscribe))
@@ -190,6 +207,9 @@ func (s *Service) Handler() http.Handler {
 	t := tickets.NewSystem(s.DB).CachingMembers(members).WithNotifier(notify).
 		CachingUsers(clerkcache.Users{Next: user.NewClient(&clerk.ClientConfig{}), VK: s.Valkey, TTL: time.Minute})
 	push.People = t.People // pushes name who did it
+	if chat != nil {
+		chat.People = t.People // so do Google Chat posts
+	}
 	mux.Handle("POST /api/columns/{id}/tickets", signedIn(t.Create))
 	mux.Handle("GET /api/tickets/{id}", signedIn(t.Get))       // one ticket + where it lives (deep links)
 	mux.Handle("GET /api/tickets/{id}/org", signedIn(t.Where)) // which of my orgs it's in, when it isn't in the active one
@@ -205,8 +225,14 @@ func (s *Service) Handler() http.Handler {
 	in := integrations.NewSystem(s.DB, box, s.Valkey, o.AdminModel(), integrations.Git{
 		GitHubAppID: gc.GitHubAppID, GitHubAppSlug: gc.GitHubAppSlug, GitHubPrivateKey: gc.GitHubPrivateKey,
 		GitHubClientID: gc.GitHubClientID, GitHubSecret: gc.GitHubClientSecret,
-		BitbucketClientID:                                 gc.BitbucketClientID, BitbucketSecret: gc.BitbucketSecret, PublicAPI: gc.PublicAPIURL}).
-		WithShortLinks(config.Get(s.Config).ShortLinkBase) // PRs can mention tickets by our short links (TL-283)
+		BitbucketClientID:                                  gc.BitbucketClientID, BitbucketSecret: gc.BitbucketSecret, PublicAPI: gc.PublicAPIURL}).
+		WithShortLinks(config.Get(s.Config).ShortLinkBase). // PRs can mention tickets by our short links (TL-283)
+		WithChat(chat)                                      // Google Chat test messages (TL-288)
+	// Google Chat (TL-288): a project's space, or the org's (no project_id); members see it, admins set it
+	mux.Handle("GET /api/google-chat", signedIn(in.GetChat))
+	mux.Handle("PUT /api/google-chat", signedIn(in.SetChat))
+	mux.Handle("DELETE /api/google-chat", signedIn(in.DeleteChat))
+	mux.Handle("POST /api/google-chat/test", signedIn(in.TestChat))
 	mux.Handle("GET /api/integrations/{provider}", signedIn(in.Connection)) // connected or not; never the secret
 	mux.Handle("PUT /api/integrations/{provider}", signedIn(in.Connect))    // org admins
 	mux.Handle("DELETE /api/integrations/{provider}", signedIn(in.Disconnect))
@@ -303,7 +329,7 @@ func (s *Service) Handler() http.Handler {
 	mux.Handle("PUT /api/tickets/{id}/planned-sprint", signedIn(sp.PlanTicket))
 
 	// Request intake: a project's unlisted public form (no account) and the team's triage inbox
-	ik := intake.NewSystem(s.DB)
+	ik := intake.NewSystem(s.DB).WithNotifier(notify) // a promoted request is announced to the project's spaces (TL-288)
 	mux.Handle("GET /api/intake/{token}", public("intake-form", 60, ik.Form))
 	mux.Handle("POST /api/intake/{token}", public("intake-submit", 10, ik.Submit)) // on top of the per-sender hourly cap
 	mux.Handle("GET /api/projects/{id}/intake", signedIn(ik.Settings))
@@ -336,6 +362,8 @@ func (s *Service) Handler() http.Handler {
 	mux.Handle("GET /api/subscription", signedIn(bill.Status))
 	mux.Handle("POST /api/subscription/checkout", signedIn(bill.Checkout))
 	mux.Handle("POST /api/subscription/portal", signedIn(bill.Portal))
+	mux.Handle("POST /api/subscription/plan", signedIn(bill.ChangePlan)) // Pro ↔ Enterprise, prorated (TL-290)
+	mux.Handle("GET /api/plans", public("plans", 60, bill.Plans))        // limits and prices, for the homepage
 	// Stripe authenticates webhooks by signature, not session
 	mux.Handle("POST /api/webhooks/stripe", public("webhook-stripe", 600, s.Billing.Webhook(time.Now)))
 	mux.Handle("POST /webhooks/stripe", public("webhook-stripe", 600, s.Billing.Webhook(time.Now))) // same path as ../bugfixes (stripe listen --forward-to …/webhooks/stripe)

@@ -78,13 +78,18 @@ func (s Service) Webhook(now func() time.Time) http.HandlerFunc {
 // non-live subscription can't overwrite a different live one. Unknown customers
 // (not from our checkout) match no row and are acknowledged so Stripe stops retrying.
 // It returns the updated org for ChewedFeed (keyed by org id), or nil when no row changed.
+// The subscription's price says its plan (TL-290); a price that's neither of ours keeps what was recorded.
 func applySubscription(ctx context.Context, s Service, sub Subscription) (*chewedFeedCustomer, error) {
 	c := chewedFeedCustomer{BillingStatus: sub.Status, Plan: plan(sub.Status)}
-	err := s.DB.QueryRow(ctx, `UPDATE org_billing SET stripe_subscription_id = $2, stripe_status = $3, updated_at = now()
+	var tier *string
+	if t := s.planFor(ctx, sub.PriceID); t != "" {
+		tier = &t
+	}
+	err := s.DB.QueryRow(ctx, `UPDATE org_billing SET stripe_subscription_id = $2, stripe_status = $3, plan = COALESCE($4, plan), updated_at = now()
 		WHERE stripe_customer_id = $1
 		  AND (stripe_subscription_id IS NULL OR stripe_subscription_id = $2 OR $3 IN ('active', 'trialing'))
 		RETURNING org_id, billing_email, created_at`,
-		sub.CustomerID, sub.ID, sub.Status).Scan(&c.ExternalCustomerID, &c.Email, &c.SignedUpAt)
+		sub.CustomerID, sub.ID, sub.Status, tier).Scan(&c.ExternalCustomerID, &c.Email, &c.SignedUpAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}

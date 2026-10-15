@@ -96,6 +96,9 @@ func (s Stripe) call(ctx context.Context, method, path string, form url.Values, 
 		e := failure.Error
 		return stripeError{Status: resp.StatusCode, Type: e.Type, Code: e.Code, Param: e.Param, Message: e.Message}
 	}
+	if out == nil {
+		return nil
+	}
 	return json.Unmarshal(payload, out)
 }
 
@@ -155,6 +158,8 @@ type Subscription struct {
 	ID         string
 	CustomerID string
 	Status     string
+	PriceID    string // its plan's price (TL-290)
+	ItemID     string // the subscription item that holds it, for changing plan
 }
 
 func (s Stripe) Subscription(ctx context.Context, id string) (Subscription, error) {
@@ -162,6 +167,14 @@ func (s Stripe) Subscription(ctx context.Context, id string) (Subscription, erro
 		ID       string `json:"id"`
 		Customer string `json:"customer"`
 		Status   string `json:"status"`
+		Items    struct {
+			Data []struct {
+				ID    string `json:"id"`
+				Price struct {
+					ID string `json:"id"`
+				} `json:"price"`
+			} `json:"data"`
+		} `json:"items"`
 	}
 	if err := s.call(ctx, http.MethodGet, "/v1/subscriptions/"+url.PathEscape(id), nil, "", &sub); err != nil {
 		return Subscription{}, err
@@ -169,7 +182,39 @@ func (s Stripe) Subscription(ctx context.Context, id string) (Subscription, erro
 	if sub.ID == "" || sub.Customer == "" || sub.Status == "" {
 		return Subscription{}, errors.New("subscription is missing id, customer, or status")
 	}
-	return Subscription{ID: sub.ID, CustomerID: sub.Customer, Status: sub.Status}, nil
+	out := Subscription{ID: sub.ID, CustomerID: sub.Customer, Status: sub.Status}
+	if len(sub.Items.Data) > 0 {
+		out.ItemID, out.PriceID = sub.Items.Data[0].ID, sub.Items.Data[0].Price.ID
+	}
+	return out, nil
+}
+
+// ChangePrice moves a subscription's item to another price, prorated: changing plan without a
+// second subscription (TL-290).
+func (s Stripe) ChangePrice(ctx context.Context, subscription, item, price string) error {
+	form := url.Values{"items[0][id]": {item}, "items[0][price]": {price}, "proration_behavior": {"create_prorations"}}
+	return s.call(ctx, http.MethodPost, "/v1/subscriptions/"+url.PathEscape(subscription), form, "", nil)
+}
+
+// Price is what a plan costs: unit amount in the currency's smallest unit, and how often.
+type Price struct {
+	Amount   int64  `json:"amount"`
+	Currency string `json:"currency"`
+	Interval string `json:"interval"` // month | year
+}
+
+func (s Stripe) Price(ctx context.Context, id string) (Price, error) {
+	var p struct {
+		UnitAmount int64  `json:"unit_amount"`
+		Currency   string `json:"currency"`
+		Recurring  struct {
+			Interval string `json:"interval"`
+		} `json:"recurring"`
+	}
+	if err := s.call(ctx, http.MethodGet, "/v1/prices/"+url.PathEscape(id), nil, "", &p); err != nil {
+		return Price{}, err
+	}
+	return Price{Amount: p.UnitAmount, Currency: p.Currency, Interval: p.Recurring.Interval}, nil
 }
 
 const webhookTolerance = 5 * time.Minute

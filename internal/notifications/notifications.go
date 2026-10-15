@@ -37,6 +37,17 @@ func Send(ctx context.Context, n Notifier, org string, to []string, e Event) {
 	}
 }
 
+// Announce is an event for spaces, not people (TL-288: "created TL-12 on Backend" in the team's Google
+// Chat): nobody's inbox or device gets it; channels that post to a space (GoogleChat) do.
+func Announce(ctx context.Context, n Notifier, org string, e Event) {
+	if n == nil {
+		return
+	}
+	if err := n.Notify(ctx, org, nil, e); err != nil {
+		logs.Errorf("notifications: %s: %v", e.Kind, err)
+	}
+}
+
 // Store keeps the inbox in Postgres; it's the internal Notifier.
 type Store struct{ DB *pgxpool.Pool }
 

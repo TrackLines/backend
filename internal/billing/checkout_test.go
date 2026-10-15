@@ -84,7 +84,7 @@ func TestCheckout(t *testing.T) {
 		}
 	}))
 	defer stripeSrv.Close()
-	s := Service{DB: db, Stripe: Stripe{SecretKey: "sk", BaseURL: stripeSrv.URL}, PriceID: "price_1", WebhookSecret: "whsec", ReturnURL: "http://app/settings/",
+	s := Service{DB: db, Stripe: Stripe{SecretKey: "sk", BaseURL: stripeSrv.URL}, ProPriceID: "price_1", WebhookSecret: "whsec", ReturnURL: "http://app/settings/",
 		IsAdmin: adminsExcept("member")}
 
 	// only an org admin buys the org's plan (TL-243)

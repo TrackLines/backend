@@ -33,6 +33,25 @@ func (h System) tell(r *http.Request, to []string, kind, text string, d *Detail)
 	})
 }
 
+// created tells the project's spaces (Google Chat, TL-288) a ticket was made: on a board or in the backlog.
+func (h System) created(r *http.Request, id string) {
+	d := h.detail(r.Context(), auth.OrgID(r.Context()), id)
+	if d == nil {
+		return
+	}
+	text := "added " + ref(d) + " to the backlog"
+	board := ""
+	if d.BoardID != nil {
+		board = *d.BoardID
+		if d.BoardName != nil {
+			text = "created " + ref(d) + " on " + *d.BoardName
+		}
+	}
+	notifications.Announce(r.Context(), h.notify, auth.OrgID(r.Context()), notifications.Event{
+		Kind: "created", Text: text, Actor: auth.ActorID(r.Context()), TicketID: d.ID, BoardID: board,
+	})
+}
+
 // detail is the ticket as it is now, for notifications (nil when it can't be read).
 func (h System) detail(ctx context.Context, org, id string) *Detail {
 	if h.notify == nil {

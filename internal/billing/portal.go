@@ -54,7 +54,8 @@ func (s Service) Portal(w http.ResponseWriter, r *http.Request) {
 func (s Service) Status(w http.ResponseWriter, r *http.Request) {
 	org := auth.OrgID(r.Context())
 	user, _ := auth.UserID(r.Context())
-	limit, err := ProjectLimit(r.Context(), s.DB, org)
+	tier, err := PlanOf(r.Context(), s.DB, org)
+	limit := limits[tier]
 	if err != nil {
 		logs.Errorf("billing: status: %v", err)
 		http.Error(w, "billing unavailable", http.StatusServiceUnavailable)
@@ -70,5 +71,5 @@ func (s Service) Status(w http.ResponseWriter, r *http.Request) {
 	if s.IsAdmin != nil && org != "" && !auth.ViaAPIKey(r.Context()) {
 		manage, _ = s.IsAdmin(r.Context(), org, user) // can't tell = no buttons; the endpoints check again
 	}
-	httpx.JSON(w, http.StatusOK, map[string]any{"paid": limit < 0, "project_limit": limit, "billed": billed, "can_manage": manage})
+	httpx.JSON(w, http.StatusOK, map[string]any{"plan": tier, "paid": tier != Free, "project_limit": limit, "billed": billed, "can_manage": manage})
 }

@@ -1410,6 +1410,65 @@ paths:
         '403': { description: Not a signed-in org admin. }
         '404': { description: That GitHub account isn't connected to this org. }
 
+  /google-chat:
+    parameters:
+      - { name: project_id, in: query, description: 'The project whose space this is; leave out for the whole organization''s space.', schema: { type: string, format: uuid } }
+    get:
+      tags: [Organizations]
+      operationId: getGoogleChat
+      summary: Whether a Google Chat space is set up (any member); never returns its URL
+      responses:
+        '200':
+          description: The space's settings.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  connected: { type: boolean }
+                  kinds: { type: array, items: { type: string, enum: [created, review, approval, over_capacity, finished, wont_do, assigned, sent_back, retention] } }
+                  updated_by: { type: string }
+                  updated_at: { type: string, format: date-time }
+    put:
+      tags: [Organizations]
+      operationId: setGoogleChat
+      summary: Post notifications into a Google Chat space (org admins)
+      description: 'url is the space''s incoming webhook (https://chat.googleapis.com/v1/spaces/…); leave it out to change only the kinds. Defaults: created, review, approval, over_capacity, finished, wont_do. A project''s space gets its events; the org''s gets every project''s.'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                project_id: { type: string, format: uuid }
+                url: { type: string }
+                kinds: { type: array, items: { type: string } }
+      responses:
+        '204': { description: Saved. }
+        '400': { description: Not a Google Chat webhook URL, an unknown kind, or no URL yet. }
+        '403': { description: Not a signed-in org admin. }
+    delete:
+      tags: [Organizations]
+      operationId: deleteGoogleChat
+      summary: Stop posting to a Google Chat space (org admins)
+      responses:
+        '204': { description: Removed. }
+
+  /google-chat/test:
+    post:
+      tags: [Organizations]
+      operationId: testGoogleChat
+      summary: Post a test message to a Google Chat space (org admins)
+      requestBody:
+        content:
+          application/json:
+            schema: { type: object, properties: { project_id: { type: string, format: uuid } } }
+      responses:
+        '204': { description: Sent. }
+        '409': { description: No space set up. }
+        '502': { description: Google Chat refused it (the reason is in the body). }
+
   /ticket-keys/{key}:
     get:
       tags: [Tickets]
@@ -2928,8 +2987,9 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [paid, project_limit]
+                required: [plan, paid, project_limit]
                 properties:
+                  plan: { type: string, enum: [free, pro, enterprise], description: 'Free: 1 project. Pro: 5. Enterprise: unlimited.' }
                   paid: { type: boolean }
                   project_limit: { type: integer, description: '-1 means unlimited.' }
                   billed: { type: boolean, description: "Paid through a Stripe subscription, so the billing portal can manage it. false for free plans and for plans granted by hand; the portal answers 409 for those." }
@@ -2942,6 +3002,11 @@ paths:
       tags: [Billing]
       operationId: createCheckoutSession
       summary: Create a Stripe checkout session for the active organization's plan
+      description: For an organization that isn't paying yet. One already on a paid plan changes plan instead (POST /subscription/plan).
+      requestBody:
+        content:
+          application/json:
+            schema: { type: object, properties: { plan: { type: string, enum: [pro, enterprise], default: pro } } }
       responses:
         '200':
           description: Stripe Checkout URL.
@@ -2953,6 +3018,50 @@ paths:
         '409': { description: The organization is already subscribed. }
         '503': { description: Billing is not configured or unavailable. }
         '502': { description: Stripe is unavailable. }
+
+  /subscription/plan:
+    post:
+      tags: [Billing]
+      operationId: changePlan
+      summary: Change the organization's paid plan (Pro ↔ Enterprise), prorated
+      description: Moves the existing Stripe subscription to the other plan's price; Stripe prorates the difference. Org admins only.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [plan], properties: { plan: { type: string, enum: [pro, enterprise] } } }
+      responses:
+        '204': { description: Changed; the new project limit applies straight away. }
+        '400': { description: Unknown plan. }
+        '403': { description: Not a signed-in admin of the active organization. }
+        '409': { description: No subscription to change (check out instead), or the plan was granted by hand. }
+        '502': { description: Stripe is unavailable. }
+        '503': { description: Billing (or that plan) isn't configured. }
+
+  /plans:
+    get:
+      tags: [Billing]
+      operationId: listPlans
+      summary: The plans, their project limits and prices (public)
+      security: []
+      responses:
+        '200':
+          description: Free, Pro and Enterprise. projects null means unlimited; price is in the currency's smallest unit, from Stripe, and missing when it can't be read.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id: { type: string, enum: [free, pro, enterprise] }
+                    projects: { type: [integer, 'null'] }
+                    price:
+                      type: [object, 'null']
+                      properties:
+                        amount: { type: integer }
+                        currency: { type: string }
+                        interval: { type: string }
 
   /subscription/portal:
     post:

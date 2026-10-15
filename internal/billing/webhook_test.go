@@ -87,7 +87,7 @@ func TestWebhook(t *testing.T) {
 	}))
 	defer chewedSrv.Close()
 	now := time.Now()
-	s := Service{DB: db, Stripe: Stripe{SecretKey: "sk", BaseURL: stripeSrv.URL}, PriceID: "p", WebhookSecret: "whsec", ReturnURL: "r",
+	s := Service{DB: db, Stripe: Stripe{SecretKey: "sk", BaseURL: stripeSrv.URL}, ProPriceID: "p", WebhookSecret: "whsec", ReturnURL: "r",
 		ChewedFeed: ChewedFeed{URL: chewedSrv.URL + "/", Key: "ek"}}
 	h := s.Webhook(func() time.Time { return now })
 	send := func(body, secret string) int {

@@ -186,7 +186,11 @@ type System struct {
 	now     func() time.Time
 	// shortLink finds our short links in PR text (WithShortLinks); nil: only keys and ticket links
 	shortLink *regexp.Regexp
+	chat      *GoogleChat // posts test messages (WithChat); nil: a plain client
 }
+
+// WithChat uses chat (the server's Google Chat notifier) for test messages too.
+func (h System) WithChat(chat *GoogleChat) System { h.chat = chat; return h }
 
 // Connection: GET /api/integrations/{provider}: whether the org is connected (never the secret).
 // Any org member can see it; connecting and disconnecting are for admins.

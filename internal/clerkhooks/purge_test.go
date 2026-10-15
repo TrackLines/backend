@@ -57,6 +57,7 @@ func TestPurgeDeletedOrganizations(t *testing.T) {
 		exec(`INSERT INTO board_templates (org_id, name, style, estimate_scale, columns) VALUES ($1, 'tpl', 'kanban', 'none', '[]')`, org)
 		exec(`INSERT INTO notifications (org_id, user_id, kind, text) VALUES ($1, 'u', 'mention', 'hi')`, org)
 		exec(`INSERT INTO expired_attachments (org_id, ticket_id, ticket_key, ticket_title, name, size_bytes, created_by) VALUES ($1, gen_random_uuid(), 'K-1', 't', 'f', 1, 'u')`, org)
+		exec(`INSERT INTO chat_webhooks (org_id, url, kinds, updated_by) VALUES ($1, 'x', '{created}', 'u')`, org)
 	}
 	exec(`INSERT INTO deleted_orgs (org_id, deleted_at) VALUES ('org_pg_old', now() - interval '31 days'), ('org_pg_new', now() - interval '1 day')`)
 
@@ -67,7 +68,7 @@ func TestPurgeDeletedOrganizations(t *testing.T) {
 	left := func(org string) int {
 		return count(`SELECT (SELECT count(*) FROM projects WHERE owner_clerk_id = $1) + (SELECT count(*) FROM boards WHERE owner_clerk_id = $1)
 			+ (SELECT count(*) FROM roadmaps WHERE owner_clerk_id = $1) + (SELECT count(*) FROM board_templates WHERE org_id = $1)
-			+ (SELECT count(*) FROM notifications WHERE org_id = $1) + (SELECT count(*) FROM expired_attachments WHERE org_id = $1)
+			+ (SELECT count(*) FROM notifications WHERE org_id = $1) + (SELECT count(*) FROM expired_attachments WHERE org_id = $1) + (SELECT count(*) FROM chat_webhooks WHERE org_id = $1)
 			+ (SELECT count(*) FROM ticket_attachments a JOIN tickets t ON t.id = a.ticket_id JOIN projects p ON p.id = t.project_id WHERE p.owner_clerk_id = $1)`, org)
 	}
 	if got := left("org_pg_old"); got != 0 {
@@ -79,10 +80,10 @@ func TestPurgeDeletedOrganizations(t *testing.T) {
 	if count(`SELECT count(*) FROM deleted_orgs WHERE org_id = 'org_pg_old'`) != 0 {
 		t.Fatal("purged org still listed")
 	}
-	if got := left("org_pg_new"); got != 7 {
+	if got := left("org_pg_new"); got != 8 {
 		t.Fatalf("an org deleted yesterday should be kept (recoverable): %d rows", got)
 	}
-	if got := left("org_pg_live"); got != 7 {
+	if got := left("org_pg_live"); got != 8 {
 		t.Fatalf("a live org was touched: %d rows", got)
 	}
 	if count(`SELECT count(*) FROM deleted_files WHERE file_key IN ('org_pg_new-file', 'org_pg_live-file')`) != 0 {

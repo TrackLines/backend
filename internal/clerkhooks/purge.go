@@ -28,6 +28,7 @@ var orgData = []string{
 	`DELETE FROM org_admins WHERE org_id = $1`,
 	`DELETE FROM api_keys WHERE org_id = $1`,
 	`DELETE FROM expired_attachments WHERE org_id = $1`,
+	`DELETE FROM chat_webhooks WHERE org_id = $1`,
 	`DELETE FROM deleted_orgs WHERE org_id = $1`,
 }
 

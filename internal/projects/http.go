@@ -33,7 +33,7 @@ func writeErr(w http.ResponseWriter, err error) {
 	case errors.Is(err, ErrKeyPrefixTaken):
 		http.Error(w, err.Error(), http.StatusConflict)
 	case errors.Is(err, ErrLimit):
-		http.Error(w, "free plan allows 1 project — upgrade for unlimited", http.StatusPaymentRequired)
+		http.Error(w, "your plan's project limit is reached — upgrade for more", http.StatusPaymentRequired)
 	default:
 		logs.Errorf("projects: %v", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)

@@ -46,7 +46,7 @@ func TestPortalAndStatus(t *testing.T) {
 		_, _ = w.Write([]byte(`{"url":"https://billing.stripe.com/p/1"}`))
 	}))
 	defer stripeSrv.Close()
-	s := Service{DB: db, Stripe: Stripe{SecretKey: "sk", BaseURL: stripeSrv.URL}, PriceID: "p", WebhookSecret: "w", ReturnURL: "http://app/settings",
+	s := Service{DB: db, Stripe: Stripe{SecretKey: "sk", BaseURL: stripeSrv.URL}, ProPriceID: "p", WebhookSecret: "w", ReturnURL: "http://app/settings",
 		IsAdmin: adminsExcept("member")}
 
 	rec := httptest.NewRecorder()
@@ -73,10 +73,10 @@ func TestPortalAndStatus(t *testing.T) {
 	}
 	// everyone in the org sees its plan; only admins may manage it
 	for _, c := range []struct{ user, org, want string }{
-		{"admin", "org_p0", `{"billed":false,"can_manage":true,"paid":false,"project_limit":1}`},
-		{"admin", "org_p1", `{"billed":true,"can_manage":true,"paid":true,"project_limit":-1}`},
-		{"member", "org_p1", `{"billed":true,"can_manage":false,"paid":true,"project_limit":-1}`},
-		{"admin", "org_p2", `{"billed":false,"can_manage":true,"paid":true,"project_limit":-1}`},
+		{"admin", "org_p0", `{"billed":false,"can_manage":true,"paid":false,"plan":"free","project_limit":1}`},
+		{"admin", "org_p1", `{"billed":true,"can_manage":true,"paid":true,"plan":"enterprise","project_limit":-1}`},
+		{"member", "org_p1", `{"billed":true,"can_manage":false,"paid":true,"plan":"enterprise","project_limit":-1}`},
+		{"admin", "org_p2", `{"billed":false,"can_manage":true,"paid":true,"plan":"enterprise","project_limit":-1}`},
 	} {
 		rec = httptest.NewRecorder()
 		s.Status(rec, inOrg(httptest.NewRequest("GET", "/", nil), c.user, c.org))

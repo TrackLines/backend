@@ -12,7 +12,9 @@ import (
 type Stripe struct {
 	Key           string `env:"STRIPE_KEY"`
 	WebhookSecret string `env:"STRIPE_WEBHOOK_SECRET"`
-	PriceID       string `env:"STRIPE_PRICE_ID"`
+	PriceID       string `env:"STRIPE_PRICE_ID"`      // the old name for STRIPE_PRO_ID, still read if that isn't set
+	ProID         string `env:"STRIPE_PRO_ID"`        // Pro: 5 projects (TL-290); a price_… or prod_… id
+	EnterpriseID  string `env:"STRIPE_ENTERPRISE_ID"` // Enterprise: unlimited projects
 }
 
 // Git is the GitHub App and Bitbucket OAuth consumer; a provider with missing settings stays off.

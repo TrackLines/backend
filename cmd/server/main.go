@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"os"
@@ -86,12 +87,13 @@ func run() error {
 		logs.Warnf("PORTAL_URL is %q with a live Stripe key: set it to the site's settings page (e.g. https://tracklin.es/settings)", pc.PortalURL)
 	}
 	bill := billing.Service{
-		DB:            db,
-		Stripe:        billing.Stripe{SecretKey: pc.Stripe.Key},
-		PriceID:       pc.Stripe.PriceID,
-		WebhookSecret: pc.Stripe.WebhookSecret,
-		ReturnURL:     pc.PortalURL,
-		ChewedFeed:    billing.ChewedFeed{URL: pc.ChewedFeedURL, Key: pc.ChewedFeedKey},
+		DB:                db,
+		Stripe:            billing.Stripe{SecretKey: pc.Stripe.Key},
+		ProPriceID:        cmp.Or(pc.Stripe.ProID, pc.Stripe.PriceID), // STRIPE_PRICE_ID was Pro's before Enterprise (TL-290)
+		EnterprisePriceID: pc.Stripe.EnterpriseID,
+		WebhookSecret:     pc.Stripe.WebhookSecret,
+		ReturnURL:         pc.PortalURL,
+		ChewedFeed:        billing.ChewedFeed{URL: pc.ChewedFeedURL, Key: pc.ChewedFeedKey},
 	}
 	return service.New(c, db, vk, fl, bill, port).Start()
 }

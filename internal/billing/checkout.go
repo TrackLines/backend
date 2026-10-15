@@ -8,7 +8,8 @@ import (
 	"github.com/tracklines/backend/internal/httpx"
 )
 
-// checkout returns {"url": <Stripe Checkout>} for the paid plan.
+// checkout returns {"url": <Stripe Checkout>} for a paid plan: {"plan": "pro" | "enterprise"}, Pro
+// when left out. An org already paying changes plan instead (ChangePlan), so it never pays twice.
 func (s Service) Checkout(w http.ResponseWriter, r *http.Request) {
 	if !s.configured() {
 		http.Error(w, "billing is not configured", http.StatusServiceUnavailable)
@@ -16,6 +17,20 @@ func (s Service) Checkout(w http.ResponseWriter, r *http.Request) {
 	}
 	org, email, ok := s.admin(w, r)
 	if !ok {
+		return
+	}
+	in := struct {
+		Plan string `json:"plan"`
+	}{Plan: Pro}
+	if r.ContentLength != 0 && !httpx.Decode(w, r, &in) {
+		return
+	}
+	if in.Plan != Pro && in.Plan != Enterprise {
+		http.Error(w, "plan must be pro or enterprise", http.StatusBadRequest)
+		return
+	}
+	if s.configuredPrice(in.Plan) == "" {
+		http.Error(w, in.Plan+" isn't on sale yet", http.StatusServiceUnavailable)
 		return
 	}
 	paid, err := IsPaid(r.Context(), s.DB, org)
@@ -35,7 +50,7 @@ func (s Service) Checkout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ret := strings.TrimRight(s.ReturnURL, "/")
-	price, err := s.Stripe.ResolvePrice(r.Context(), s.PriceID)
+	price, err := s.Stripe.ResolvePrice(r.Context(), s.configuredPrice(in.Plan))
 	if err != nil {
 		logs.Errorf("billing: price: %v", err)
 		http.Error(w, "billing provider unavailable", http.StatusBadGateway)

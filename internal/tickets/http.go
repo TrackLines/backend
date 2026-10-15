@@ -190,6 +190,7 @@ func (h System) Create(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
+	h.created(r, t.ID)
 	if t.ColumnID == nil { // the board's sprint is on its last day: the ticket went to the backlog
 		httpx.JSON(w, http.StatusCreated, struct {
 			*Ticket
@@ -350,6 +351,7 @@ func (h System) CreateBacklog(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
+	h.created(r, t.ID)
 	httpx.JSON(w, http.StatusCreated, t)
 }
 

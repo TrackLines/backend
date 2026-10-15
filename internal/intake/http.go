@@ -7,9 +7,16 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/tracklines/backend/internal/auth"
 	"github.com/tracklines/backend/internal/httpx"
+	"github.com/tracklines/backend/internal/notifications"
 )
 
-type System struct{ store Store }
+type System struct {
+	store  Store
+	notify notifications.Notifier // announces promoted requests to the project's spaces (TL-288); nil: none
+}
+
+// WithNotifier announces a request promoted into the backlog ("added SHOP-12 from the request form").
+func (h System) WithNotifier(n notifications.Notifier) System { h.notify = n; return h }
 
 func NewSystem(db *pgxpool.Pool) System { return System{store: Store{DB: db}} }
 
@@ -125,6 +132,15 @@ func (h System) Promote(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeErr(w, err)
 		return
+	}
+	if out.TicketID != nil {
+		key := out.Title
+		if out.TicketKey != nil {
+			key = *out.TicketKey + ": " + out.Title
+		}
+		notifications.Announce(r.Context(), h.notify, auth.OrgID(r.Context()), notifications.Event{
+			Kind: "created", Text: "added " + key + " to the backlog from the request form", Actor: auth.ActorID(r.Context()), TicketID: *out.TicketID,
+		})
 	}
 	httpx.JSON(w, http.StatusOK, out)
 }
