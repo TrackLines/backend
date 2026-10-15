@@ -54,7 +54,7 @@ func TestPRWebhooks(t *testing.T) {
 		t.Fatal(err)
 	}
 	box, _ := secrets.New(base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{9}, 32)))
-	h := System{store: Store{DB: db, Box: box}, admins: organizations.Admins{DB: db}, tickets: tickets.Store{DB: db}, now: time.Now, flag: allOn} // Bitbucket flag on
+	h := System{store: Store{DB: db, Box: box}, admins: organizations.Admins{DB: db}, tickets: tickets.Store{DB: db}, now: time.Now}
 
 	var pid string
 	_ = db.QueryRow(ctx, `INSERT INTO projects (owner_clerk_id, name, key_prefix) VALUES ('org_pr', 'Shop', 'SHP') RETURNING id`).Scan(&pid)

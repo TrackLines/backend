@@ -64,7 +64,7 @@ func (h System) providerParam(w http.ResponseWriter, r *http.Request) (string, b
 		http.Error(w, "provider must be github or bitbucket", http.StatusNotFound)
 		return "", false
 	}
-	return p, !h.hidden(w, r, p)
+	return p, true
 }
 
 func gitErr(w http.ResponseWriter, err error) {
@@ -164,13 +164,7 @@ func (h System) ProjectRepos(w http.ResponseWriter, r *http.Request) {
 		gitErr(w, err)
 		return
 	}
-	shown := out[:0]
-	for _, repo := range out {
-		if !h.off(repo.Provider) {
-			shown = append(shown, repo)
-		}
-	}
-	httpx.JSON(w, http.StatusOK, shown)
+	httpx.JSON(w, http.StatusOK, out)
 }
 
 // LinkRepo: POST /api/projects/{id}/repos {"provider", "full_name"}. Org admins; only repos the
@@ -192,7 +186,7 @@ func (h System) LinkRepo(w http.ResponseWriter, r *http.Request) {
 	if !httpx.Decode(w, r, &in) {
 		return
 	}
-	if in.Provider != GitHub && in.Provider != Bitbucket || h.off(in.Provider) {
+	if in.Provider != GitHub && in.Provider != Bitbucket {
 		http.Error(w, "provider must be github or bitbucket", http.StatusBadRequest)
 		return
 	}
@@ -359,9 +353,6 @@ func (h System) bitbucketHook(ctx context.Context, org, link, fullName string) e
 // BitbucketWebhook: POST /api/webhooks/bitbucket/{link}. Each linked repo has its own webhook and
 // secret (X-Hub-Signature), so a delivery only ever touches the org and repo that link belongs to.
 func (h System) BitbucketWebhook(w http.ResponseWriter, r *http.Request) {
-	if h.hidden(w, r, Bitbucket) {
-		return
-	}
 	var org, fullName string
 	var sealed []byte
 	err := h.store.DB.QueryRow(r.Context(), `SELECT org_id, full_name, webhook_secret FROM project_repos
