@@ -304,9 +304,10 @@ func chatReply(kind string, addon bool, text, button, buttonURL string) any {
 	if kind == "home" {
 		return map[string]any{"action": map[string]any{"navigations": []any{map[string]any{"pushCard": card}}}}
 	}
-	message := map[string]any{"text": text, "cardsV2": []any{map[string]any{"cardId": "tracklines", "card": card}}}
+	// with a button, the card alone: replies don't format <url|label> links, so text would show it twice
+	message := map[string]any{"text": text}
 	if button != "" {
-		message["text"] = text + "\n<" + buttonURL + "|" + button + ">"
+		message = map[string]any{"cardsV2": []any{map[string]any{"cardId": "tracklines", "card": card}}}
 	}
 	if addon {
 		return map[string]any{"hostAppDataAction": map[string]any{"chatDataAction": map[string]any{"createMessageAction": map[string]any{"message": message}}}}
@@ -401,7 +402,7 @@ func (c *ChatApp) Link(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	c.background(r.Context(), func(ctx context.Context) {
-		if err := c.sendTo(ctx, user, google, space, "You’re linked to Tracklines. I’ll message you here when something needs you."); err != nil {
+		if err := c.sendTo(ctx, user, google, space, "You’re linked to Tracklines. I’ll message you here when something needs you.", ""); err != nil {
 			logs.Warnf("google chat app: linked message: %v", err)
 		}
 	})
@@ -455,11 +456,9 @@ func (c *ChatApp) Notify(ctx context.Context, org string, to []string, e notific
 			return
 		}
 		text := "*" + chatNamer(ctx, c.DB, c.People, org)(e.Actor) + "* " + e.Text
-		if link := eventLink(c.Site, e); link != "" {
-			text += "\n<" + link + "|Open in Tracklines>"
-		}
+		link := eventLink(c.Site, e)
 		for _, d := range dms {
-			if err := c.sendTo(ctx, d.user, d.google, d.space, text); err != nil {
+			if err := c.sendTo(ctx, d.user, d.google, d.space, text, link); err != nil {
 				logs.Warnf("google chat app: %s: %v", e.Kind, err)
 			}
 		}
@@ -480,9 +479,9 @@ func (c *ChatApp) background(ctx context.Context, f func(context.Context)) {
 	}()
 }
 
-// sendTo posts text into the person's chat with the app, finding that chat first if we don't know
-// it. When the app was removed from it (403/404), the link is dropped: nothing more can arrive.
-func (c *ChatApp) sendTo(ctx context.Context, user, google, space, text string) error {
+// sendTo posts text into the person's chat with the app, with an "Open in Tracklines" button for link,
+// finding that chat first if we don't know it. When the app was removed from it (403/404), the link is dropped: nothing more can arrive.
+func (c *ChatApp) sendTo(ctx context.Context, user, google, space, text, link string) error {
 	if space == "" {
 		var found struct {
 			Name string `json:"name"`
@@ -500,8 +499,20 @@ func (c *ChatApp) sendTo(ctx context.Context, user, google, space, text string) 
 	if err != nil {
 		return err
 	}
-	body, _ := json.Marshal(map[string]string{"text": text})
+	body, _ := json.Marshal(chatMessage(text, link))
 	return c.gone(ctx, user, c.call(ctx, http.MethodPost, c.API+"/v1/"+space+"/messages", token, body, nil))
+}
+
+// chatMessage is a Chat message: text, and an "Open in Tracklines" button when there's a link. Chat
+// shows <url|label> links in app and webhook messages as typed, so the link is a button.
+func chatMessage(text, link string) map[string]any {
+	message := map[string]any{"text": text}
+	if link != "" {
+		message["cardsV2"] = []any{map[string]any{"cardId": "open", "card": map[string]any{"sections": []any{map[string]any{"widgets": []any{
+			map[string]any{"buttonList": map[string]any{"buttons": []any{map[string]any{"text": "Open in Tracklines", "onClick": map[string]any{"openLink": map[string]any{"url": link}}}}}},
+		}}}}}}
+	}
+	return message
 }
 
 type chatStatusError struct{ status int }

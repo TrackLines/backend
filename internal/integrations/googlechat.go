@@ -156,7 +156,7 @@ func (g *GoogleChat) Notify(ctx context.Context, org string, to []string, e noti
 	text := g.message(ctx, org, to, e)
 	post := func() {
 		for _, t := range targets {
-			if err := g.post(context.WithoutCancel(ctx), t.url, text); err != nil {
+			if err := g.post(context.WithoutCancel(ctx), t.url, text, g.link(e)); err != nil {
 				logs.Warnf("google chat: %s: %v", e.Kind, err)
 			}
 		}
@@ -209,11 +209,7 @@ func (g *GoogleChat) message(ctx context.Context, org string, to []string, e not
 			text = "assigned " + text + " to " + name(to[0])
 		}
 	}
-	msg := "*" + name(e.Actor) + "* " + text
-	if link := g.link(e); link != "" {
-		msg += "\n<" + link + "|Open in Tracklines>"
-	}
-	return msg
+	return "*" + name(e.Actor) + "* " + text
 }
 
 func (g *GoogleChat) link(e notifications.Event) string { return eventLink(g.Site, e) }
@@ -231,10 +227,10 @@ func eventLink(site string, e notifications.Event) string {
 	return ""
 }
 
-func (g *GoogleChat) post(ctx context.Context, webhook, text string) error {
+func (g *GoogleChat) post(ctx context.Context, webhook, text, link string) error {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	body, _ := json.Marshal(map[string]string{"text": text})
+	body, _ := json.Marshal(chatMessage(text, link))
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, webhook, bytes.NewReader(body))
 	if err != nil {
 		return err
@@ -358,7 +354,7 @@ func (h System) TestChat(w http.ResponseWriter, r *http.Request) {
 	if chat == nil {
 		chat = &GoogleChat{Store: h.store}
 	}
-	if err := chat.post(r.Context(), webhook, "*Tracklines* is connected: notifications for this space will appear here. (Test sent by "+user+".)"); err != nil {
+	if err := chat.post(r.Context(), webhook, "*Tracklines* is connected: notifications for this space will appear here. (Test sent by "+user+".)", ""); err != nil {
 		http.Error(w, "Google Chat refused the test message: "+err.Error(), http.StatusBadGateway)
 		return
 	}

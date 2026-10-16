@@ -64,9 +64,35 @@ func (f *fakeGoogle) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			http.NotFound(w, r)
 			return
 		}
-		var in struct{ Text string }
+		var in struct {
+			Text    string
+			CardsV2 []struct {
+				Card struct {
+					Sections []struct {
+						Widgets []struct {
+							ButtonList struct {
+								Buttons []struct {
+									Text    string
+									OnClick struct{ OpenLink struct{ URL string } }
+								}
+							}
+						}
+					}
+				}
+			}
+		}
 		_ = json.NewDecoder(r.Body).Decode(&in)
-		f.sent[space] = append(f.sent[space], in.Text)
+		got := in.Text
+		for _, c := range in.CardsV2 { // a button reads as "[label](url)" here
+			for _, s := range c.Card.Sections {
+				for _, w := range s.Widgets {
+					for _, b := range w.ButtonList.Buttons {
+						got += " [" + b.Text + "](" + b.OnClick.OpenLink.URL + ")"
+					}
+				}
+			}
+		}
+		f.sent[space] = append(f.sent[space], got)
 		_, _ = w.Write([]byte(`{}`))
 	default:
 		http.NotFound(w, r)
@@ -170,6 +196,11 @@ func TestChatApp(t *testing.T) {
 	if rec.Code != 200 || !strings.Contains(rec.Body.String(), "Link your Tracklines account") || !strings.Contains(rec.Body.String(), "https://tracklin.es/chat/link?code=") {
 		t.Fatalf("added: %d %s", rec.Code, rec.Body)
 	}
+	var top map[string]any
+	_ = json.Unmarshal(rec.Body.Bytes(), &top)
+	if _, twice := top["text"]; twice { // the card only: not the words twice
+		t.Fatalf("reply repeats itself: %s", rec.Body)
+	}
 	code := codeIn(rec)
 	room := event(chatToken, `{"type":"ADDED_TO_SPACE","user":{"name":"users/ava"},"space":{"name":"spaces/ROOM","spaceType":"SPACE"}}`)
 	if !strings.Contains(room.Body.String(), "only send personal messages") || strings.Contains(room.Body.String(), "code=") {
@@ -220,7 +251,7 @@ func TestChatApp(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := google.take("spaces/DMAVA")
-	if len(got) != 1 || got[0] != "*Sam Lee* assigned you TL-12: Fix login\n<https://tracklin.es/tickets/6a3ec0a8-9946-4ae6-85a5-4c34b95cd572|Open in Tracklines>" {
+	if len(got) != 1 || got[0] != "*Sam Lee* assigned you TL-12: Fix login [Open in Tracklines](https://tracklin.es/tickets/6a3ec0a8-9946-4ae6-85a5-4c34b95cd572)" {
 		t.Fatalf("assigned: %q", got)
 	}
 	google.mu.Lock()

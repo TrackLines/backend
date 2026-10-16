@@ -26,10 +26,36 @@ import (
 type chatSpaces struct{ got map[string][]string }
 
 func (c *chatSpaces) RoundTrip(r *http.Request) (*http.Response, error) {
-	var in struct{ Text string }
+	var in struct {
+		Text    string
+		CardsV2 []struct {
+			Card struct {
+				Sections []struct {
+					Widgets []struct {
+						ButtonList struct {
+							Buttons []struct {
+								Text    string
+								OnClick struct{ OpenLink struct{ URL string } }
+							}
+						}
+					}
+				}
+			}
+		}
+	}
 	_ = json.NewDecoder(r.Body).Decode(&in)
+	got := in.Text
+	for _, c := range in.CardsV2 { // a button reads as "[label](url)" here
+		for _, s := range c.Card.Sections {
+			for _, w := range s.Widgets {
+				for _, b := range w.ButtonList.Buttons {
+					got += " [" + b.Text + "](" + b.OnClick.OpenLink.URL + ")"
+				}
+			}
+		}
+	}
 	space := strings.TrimPrefix(r.URL.Path, "/v1/spaces/")
-	c.got[space] = append(c.got[space], in.Text)
+	c.got[space] = append(c.got[space], got)
 	return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader("{}")), Header: http.Header{}}, nil
 }
 
@@ -122,11 +148,11 @@ func TestGoogleChat(t *testing.T) {
 	_ = chat.Notify(ctx, "org_gc", []string{"user_sam"}, notifications.Event{Kind: "assigned", Text: "assigned you SHP-1: Checkout", Actor: "user_ava", TicketID: shopTicket.ID})
 	_ = chat.Notify(ctx, "org_gc", []string{"user_ava"}, notifications.Event{Kind: "mention", Text: "mentioned you in SHP-1", Actor: "user_sam", TicketID: shopTicket.ID})
 	want := map[string][]string{
-		"SHOP": {"*Ava Smith* added SHP-1: Checkout to the backlog\n<https://tracklin.es/tickets/" + shopTicket.ID + "|Open in Tracklines>",
-			"*Sam Lee* finished SHP-1: Checkout, and it needs review\n<https://tracklin.es/tickets/" + shopTicket.ID + "|Open in Tracklines>"},
-		"ORG": {"*Ava Smith* added SHP-1: Checkout to the backlog\n<https://tracklin.es/tickets/" + shopTicket.ID + "|Open in Tracklines>",
-			"*Ava Smith* added DOC-1: Write guide to the backlog\n<https://tracklin.es/tickets/" + docsTicket.ID + "|Open in Tracklines>",
-			"*Ava Smith* assigned SHP-1: Checkout to Sam Lee\n<https://tracklin.es/tickets/" + shopTicket.ID + "|Open in Tracklines>"},
+		"SHOP": {"*Ava Smith* added SHP-1: Checkout to the backlog [Open in Tracklines](https://tracklin.es/tickets/" + shopTicket.ID + ")",
+			"*Sam Lee* finished SHP-1: Checkout, and it needs review [Open in Tracklines](https://tracklin.es/tickets/" + shopTicket.ID + ")"},
+		"ORG": {"*Ava Smith* added SHP-1: Checkout to the backlog [Open in Tracklines](https://tracklin.es/tickets/" + shopTicket.ID + ")",
+			"*Ava Smith* added DOC-1: Write guide to the backlog [Open in Tracklines](https://tracklin.es/tickets/" + docsTicket.ID + ")",
+			"*Ava Smith* assigned SHP-1: Checkout to Sam Lee [Open in Tracklines](https://tracklin.es/tickets/" + shopTicket.ID + ")"},
 	}
 	for space, msgs := range want {
 		if got := strings.Join(spaces.got[space+"/messages"], "\n---\n"); got != strings.Join(msgs, "\n---\n") {
