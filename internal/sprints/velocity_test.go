@@ -74,6 +74,10 @@ func TestVelocity(t *testing.T) {
 	if err != nil || len(v.Sprints) != 1 || v.Sprints[0].Number != 1 || v.Sprints[0].Completed != 5 {
 		t.Fatalf("velocity: %+v %v", v, err)
 	}
+	// planned: what sprint 1 held at close (5 + 3), beside what it finished, for the past sprints list
+	if p := v.Sprints[0].Planned; p == nil || *p != 8 {
+		t.Fatalf("planned: %v", p)
+	}
 	if c := v.Current; c == nil || c.Number != 2 || c.Total != 3 || c.Unestimated != 1 || len(c.Done) != 0 {
 		t.Fatalf("burn: %+v", c)
 	}
@@ -89,6 +93,14 @@ func TestVelocity(t *testing.T) {
 	_ = bs.SetEstimateScale(ctx, b.ID, "v1", "none")
 	if v, _ = s.Velocity(ctx, "v1", b.ID); v.Unit != "tickets" || v.Sprints[0].Completed != 1 || v.Current.Total != 2 {
 		t.Fatalf("tickets unit: %+v %+v", v, v.Current)
+	}
+	if p := v.Sprints[0].Planned; p == nil || *p != 2 { // two tickets
+		t.Fatalf("planned tickets: %v", p)
+	}
+	// closed before scope was recorded: planned unknown, not 0
+	_, _ = db.Exec(ctx, `UPDATE sprints SET scope_tickets = NULL, scope_points = NULL WHERE id = $1`, sp.ID)
+	if v, _ = s.Velocity(ctx, "v1", b.ID); v.Sprints[0].Planned != nil {
+		t.Fatalf("unrecorded planned: %v", *v.Sprints[0].Planned)
 	}
 	if _, err := s.Velocity(ctx, "other", b.ID); !errors.Is(err, ErrNotFound) {
 		t.Fatal("other owner:", err)

@@ -21,6 +21,9 @@ type SprintVelocity struct {
 	StartsAt  string  `json:"starts_at"`
 	ClosedAt  string  `json:"closed_at"`
 	Completed float64 `json:"completed"`
+	// Planned is what the sprint held when it closed, in the same unit: its burn chart's scope.
+	// null for sprints closed before that was recorded.
+	Planned *float64 `json:"planned"`
 }
 
 // Burn is the open sprint's scope and when each piece of it got done. Scope is today's: tickets
@@ -53,16 +56,19 @@ func (s Store) Velocity(ctx context.Context, owner, boardID string) (*Velocity, 
 	value := valueIn(v.Unit)
 
 	rows, err := s.DB.Query(ctx, `SELECT sp.number, to_char(sp.starts_at AT TIME ZONE 'UTC', `+ts+`),
-			to_char(sp.closed_at AT TIME ZONE 'UTC', `+ts+`), t.id, t.estimate
+			to_char(sp.closed_at AT TIME ZONE 'UTC', `+ts+`),
+			CASE WHEN $2 = 'tickets' THEN sp.scope_tickets::float8 ELSE sp.scope_points::float8 END, t.id, t.estimate
 		FROM sprints sp LEFT JOIN tickets t ON t.sprint_id = sp.id AND t.duplicate_of IS NULL AND `+boards.TicketDoneSQL+`
-		WHERE sp.board_id = $1 AND sp.closed_at IS NOT NULL ORDER BY sp.number`, boardID)
+		WHERE sp.board_id = $1 AND sp.closed_at IS NOT NULL ORDER BY sp.number`, boardID, v.Unit)
 	if err != nil {
 		return nil, err
 	}
 	var sv SprintVelocity
 	var ticketID, estimate *string
-	if _, err := pgx.ForEachRow(rows, []any{&sv.Number, &sv.StartsAt, &sv.ClosedAt, &ticketID, &estimate}, func() error {
+	var planned *float64
+	if _, err := pgx.ForEachRow(rows, []any{&sv.Number, &sv.StartsAt, &sv.ClosedAt, &planned, &ticketID, &estimate}, func() error {
 		if n := len(v.Sprints); n == 0 || v.Sprints[n-1].Number != sv.Number {
+			sv.Planned = planned
 			v.Sprints = append(v.Sprints, sv)
 		}
 		if ticketID != nil {

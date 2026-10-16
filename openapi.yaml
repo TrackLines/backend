@@ -3528,6 +3528,7 @@ components:
               starts_at: { type: string, format: date-time }
               closed_at: { type: string, format: date-time }
               completed: { type: number }
+              planned: { type: [number, 'null'], description: "What the sprint held when it closed (its burn chart scope), in the same unit; null for sprints closed before that was recorded." }
         current:
           description: The open sprint, or null. total is the sprint's current scope (scope changes aren't tracked over time).
           type: [object, 'null']
