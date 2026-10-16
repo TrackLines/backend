@@ -111,11 +111,11 @@ func TestChatApp(t *testing.T) {
 	der, _ := x509.MarshalPKCS8PrivateKey(appKey)
 	creds, _ := json.Marshal(map[string]string{"type": "service_account", "client_email": "tracklines-chat@p.iam.gserviceaccount.com", "private_key_id": "k1",
 		"private_key": string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der})), "token_uri": srv.URL + "/token"})
-	app, err := NewChatApp(db, string(creds), "https://tracklin.es/", "42")
+	app, err := NewChatApp(db, string(creds), "https://tracklin.es/", "https://api.tracklin.es/", "42")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if app.Endpoint != "https://tracklin.es/api/webhooks/google-chat" {
+	if app.Endpoint != "https://api.tracklin.es/api/webhooks/google-chat" {
 		t.Fatalf("endpoint: %s", app.Endpoint)
 	}
 	now := time.Now()
@@ -297,10 +297,10 @@ func TestChatApp(t *testing.T) {
 	if err := none.Notify(ctx, "org_x", []string{"user_ava"}, e); err != nil {
 		t.Fatal(err)
 	}
-	if a, err := NewChatApp(db, "", "https://tracklin.es", ""); a != nil || err != nil {
+	if a, err := NewChatApp(db, "", "https://tracklin.es", "https://api.tracklin.es", ""); a != nil || err != nil {
 		t.Fatalf("no credentials: %v %v", a, err)
 	}
-	if _, err := NewChatApp(db, `{"client_email":"x"}`, "https://tracklin.es", ""); err == nil {
+	if _, err := NewChatApp(db, `{"client_email":"x"}`, "https://tracklin.es", "https://api.tracklin.es", ""); err == nil {
 		t.Fatal("bad credentials accepted")
 	}
 }

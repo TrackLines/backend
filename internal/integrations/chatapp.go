@@ -71,7 +71,9 @@ type ChatApp struct {
 }
 
 // NewChatApp reads the app's service account key (the JSON Google downloads). No key: nil, no app.
-func NewChatApp(db *pgxpool.Pool, credentials, site, projectNumber string) (*ChatApp, error) {
+// Google calls the backend directly (api, PUBLIC_API_URL): the web app's Clerk layer would refuse
+// Google's token. site is the web app, for links.
+func NewChatApp(db *pgxpool.Pool, credentials, site, api, projectNumber string) (*ChatApp, error) {
 	if strings.TrimSpace(credentials) == "" {
 		return nil, nil
 	}
@@ -100,7 +102,7 @@ func NewChatApp(db *pgxpool.Pool, credentials, site, projectNumber string) (*Cha
 		sa.TokenURI = "https://oauth2.googleapis.com/token"
 	}
 	site = strings.TrimRight(site, "/")
-	return &ChatApp{DB: db, Site: site, Endpoint: site + "/api/webhooks/google-chat", ProjectNumber: projectNumber,
+	return &ChatApp{DB: db, Site: site, Endpoint: strings.TrimRight(api, "/") + "/api/webhooks/google-chat", ProjectNumber: projectNumber,
 		Client: externalClient(10 * time.Second), API: chatAPIDomain, CertsURL: "https://www.googleapis.com/oauth2/v3/certs",
 		email: sa.Email, keyID: sa.KeyID, tokenURL: sa.TokenURI, key: key}, nil
 }

@@ -82,7 +82,7 @@ func (s *Service) notifiers() (notifications.Store, *notifications.Push, *integr
 		all = append(all, chat)
 	}
 	// personal messages from the Chat app (TL-289): nil, and nothing sent, without its key
-	app, err := integrations.NewChatApp(s.DB, pc.GoogleChatCredentials, siteURL(pc.AuthorizedParties()), pc.GoogleChatProjectNumber)
+	app, err := integrations.NewChatApp(s.DB, pc.GoogleChatCredentials, siteURL(pc.AuthorizedParties()), pc.Git.PublicAPIURL, pc.GoogleChatProjectNumber)
 	if err != nil {
 		logs.Errorf("google chat app is off: %v", err)
 	}
@@ -204,8 +204,7 @@ func (s *Service) Handler() http.Handler {
 	inbox, push, chat, chatApp, notify := s.notifiers()
 	nf := notifications.NewSystem(inbox).WithPush(push)
 	mux.Handle("GET /api/push", signedIn(nf.PushKey))
-	// Google Chat app (TL-289): Chat's requests, and linking your own account
-	mux.Handle("POST /api/webhooks/google-chat", public("webhook-google-chat", 600, chatApp.Events))
+	// Google Chat app (TL-289): linking your own account (Chat's requests: see the end of Handler)
 	mux.Handle("GET /api/me/google-chat", sessionRequired(http.HandlerFunc(chatApp.Status)))
 	mux.Handle("POST /api/me/google-chat/link", sessionRequired(http.HandlerFunc(chatApp.Link)))
 	mux.Handle("DELETE /api/me/google-chat", sessionRequired(http.HandlerFunc(chatApp.Unlink)))
@@ -402,7 +401,12 @@ func (s *Service) Handler() http.Handler {
 	handler = ratelimit.BadKeys(limits, 20, time.Now)(apikeys.Middleware(s.DB, keyMember)(ratelimit.Middleware(s.Valkey, config.Get(s.Config).RateLimit, time.Now)(optional(users.Ensure(s.DB)(
 		bm.Recoverer(bm.RequestID(bm.Logger(cors.CORS(httpx.WithZone(mux))))))))))
 	mcpHandler = mcp.Handler(handler, "1.0.0")
-	return httpx.SecurityHeaders(handler)
+	// Google Chat signs its requests with a Google bearer token (TL-289), which the Clerk middleware
+	// above would refuse as a bad session: that one route goes round it and checks Google's signature itself
+	outer := http.NewServeMux()
+	outer.Handle("POST /api/webhooks/google-chat", bm.Recoverer(public("webhook-google-chat", 600, chatApp.Events)))
+	outer.Handle("/", handler)
+	return httpx.SecurityHeaders(outer)
 }
 
 func (s *Service) health(w http.ResponseWriter, r *http.Request) {
