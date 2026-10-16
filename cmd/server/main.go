@@ -132,7 +132,12 @@ func job(name string) error {
 		if err != nil {
 			return fmt.Errorf("delete expired attachments: %w", err)
 		}
-		logs.Logf("purge: %d ticket(s) from the bin, %d deleted organization(s), %d attachment(s) warned about, %d expired", tk, orgs, warned, expired)
+		// Google Chat link codes nobody used: the privacy policy says they go once expired (TL-289)
+		codes, err := integrations.PurgeLinkCodes(ctx, db, now)
+		if err != nil {
+			return fmt.Errorf("purge expired chat link codes: %w", err)
+		}
+		logs.Logf("purge: %d ticket(s) from the bin, %d deleted organization(s), %d attachment(s) warned about, %d expired, %d chat link code(s)", tk, orgs, warned, expired, codes)
 	case "sweep-files":
 		n, err := attachments.Sweeper{DB: db, Files: attachments.UploadThing{Token: config.Get(c).UploadThingToken}}.SweepAll(ctx)
 		logs.Logf("sweep-files: deleted %d file(s) from UploadThing", n)

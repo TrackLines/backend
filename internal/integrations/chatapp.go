@@ -333,6 +333,12 @@ func (c *ChatApp) newLinkCode(ctx context.Context, google, space string) (string
 	return code, err
 }
 
+// PurgeLinkCodes deletes link codes that expired unused (the nightly purge job).
+func PurgeLinkCodes(ctx context.Context, db *pgxpool.Pool, now time.Time) (int64, error) {
+	tag, err := db.Exec(ctx, `DELETE FROM chat_link_codes WHERE expires_at < $1`, now)
+	return tag.RowsAffected(), err
+}
+
 func hashCode(code string) string {
 	sum := sha256.Sum256([]byte(code))
 	return hex.EncodeToString(sum[:])

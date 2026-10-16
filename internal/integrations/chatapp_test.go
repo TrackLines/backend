@@ -317,6 +317,21 @@ func TestChatApp(t *testing.T) {
 		t.Fatalf("messaged after unlinking: %v", got)
 	}
 
+	// the nightly purge removes link codes that expired unused, and only those
+	_, _ = db.Exec(ctx, `DELETE FROM chat_link_codes`)
+	if _, err := db.Exec(ctx, `INSERT INTO chat_link_codes (code_hash, google_user, expires_at) VALUES ('old', 'users/x', $1), ('fresh', 'users/y', $2)`,
+		now.Add(-time.Minute), now.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := PurgeLinkCodes(ctx, db, now); err != nil || n != 1 {
+		t.Fatalf("purged %d (%v)", n, err)
+	}
+	var left string
+	_ = db.QueryRow(ctx, `SELECT string_agg(code_hash, ',') FROM chat_link_codes`).Scan(&left)
+	if left != "fresh" {
+		t.Fatalf("left %q", left)
+	}
+
 	// a server without the app: says so, sends nothing
 	var none *ChatApp
 	if rec := call(none.Status, session("user_ava"), "GET", ""); rec.Body.String() != `{"available":false,"linked":false}`+"\n" {
