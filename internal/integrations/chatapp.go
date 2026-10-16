@@ -276,8 +276,8 @@ func (c *ChatApp) Events(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if linked {
-			text = "You’re linked. I’ll message you here when you’re assigned a ticket, mentioned, or something needs your review. To stop, unlink it in Tracklines: Settings → Google Chat."
-			button, buttonURL = "Open Tracklines", c.Site+"/settings"
+			text = "You’re linked. I’ll message you here when you’re assigned a ticket, mentioned, or something needs your review. To stop, unlink it in Tracklines: Your settings, in your account menu."
+			button, buttonURL = "Your settings", c.Site+"/account"
 		} else {
 			code, err := c.newLinkCode(ctx, user.Name, space.Name)
 			if err != nil {
