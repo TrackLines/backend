@@ -3,6 +3,7 @@ module github.com/tracklines/backend
 go 1.26.1
 
 require (
+	github.com/SherClockHolmes/webpush-go v1.4.0
 	github.com/bugfixes/go-bugfixes v0.19.4
 	github.com/caarlos0/env/v8 v8.0.0
 	github.com/clerk/clerk-sdk-go/v2 v2.7.0
@@ -19,7 +20,6 @@ require (
 	dario.cat/mergo v1.0.2 // indirect
 	github.com/Azure/go-ansiterm v0.0.0-20250102033503-faa5f7b0171c // indirect
 	github.com/Microsoft/go-winio v0.6.2 // indirect
-	github.com/SherClockHolmes/webpush-go v1.4.0 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/containerd/errdefs v1.0.0 // indirect
 	github.com/containerd/errdefs/pkg v0.3.0 // indirect
@@ -83,7 +83,7 @@ require (
 	github.com/cenkalti/backoff/v4 v4.3.0 // indirect
 	github.com/flags-gg/go-flags v0.5.2
 	github.com/go-jose/go-jose/v3 v3.0.4 // indirect
-	github.com/go-jose/go-jose/v4 v4.1.4 // indirect
+	github.com/go-jose/go-jose/v4 v4.1.4
 	github.com/go-logfmt/logfmt v0.6.1 // indirect
 	github.com/go-resty/resty/v2 v2.16.5 // indirect
 	github.com/golang-jwt/jwt/v5 v5.3.1 // indirect

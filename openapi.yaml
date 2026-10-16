@@ -1059,6 +1059,61 @@ paths:
       summary: A project's archived boards, most recently archived first
       responses:
         '200': { description: Boards., content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Board' } } } } }
+  /me/google-chat:
+    get:
+      tags: [Notifications]
+      operationId: getGoogleChatLink
+      summary: Whether your Google Chat is linked for personal messages
+      description: The Tracklines Google Chat app sends your own notifications (assigned, mentioned, review…) to your chat with it, once you've linked your account from the link it sends you.
+      responses:
+        '200':
+          description: available is false when the server has no Chat app.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  available: { type: boolean }
+                  linked: { type: boolean }
+                  linked_at: { type: string, format: date-time }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    delete:
+      tags: [Notifications]
+      operationId: unlinkGoogleChat
+      summary: Stop personal messages in Google Chat
+      responses:
+        '204': { description: Unlinked. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /me/google-chat/link:
+    post:
+      tags: [Notifications]
+      operationId: linkGoogleChat
+      summary: Link your Google Chat with the one-time code the Chat app sent you
+      description: Signed-in sessions only (not API keys). Linking again replaces the earlier link.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [code], properties: { code: { type: string } } }
+      responses:
+        '200': { description: Linked; the app confirms in Google Chat. }
+        '400': { description: The code expired (30 minutes) or was already used. }
+        '403': { description: Not a signed-in session. }
+        '503': { description: The Chat app isn't set up on this server. }
+
+  /webhooks/google-chat:
+    post:
+      tags: [Notifications]
+      operationId: googleChatEvents
+      summary: Requests from the Tracklines Google Chat app (Google only)
+      description: Signed by Google for this endpoint (Authorization Bearer ID token); anything else is refused.
+      security: []
+      responses:
+        '200': { description: The app's reply. }
+        '401': { description: Not a request from Google Chat for this app. }
+        '503': { description: The Chat app isn't set up on this server. }
+
   /push:
     get:
       tags: [Notifications]

@@ -68,7 +68,7 @@ func New(cfg *ConfigBuilder.Config, db *pgxpool.Pool, vk valkey.Client, fl *goFl
 // notifiers are the in-app inbox, Web Push (to people's devices, when the server has VAPID keys),
 // Google Chat spaces (TL-288, when the server can seal their URLs), and all of them together: what
 // everything that tells people something sends through.
-func (s *Service) notifiers() (notifications.Store, *notifications.Push, *integrations.GoogleChat, notifications.Notifier) {
+func (s *Service) notifiers() (notifications.Store, *notifications.Push, *integrations.GoogleChat, *integrations.ChatApp, notifications.Notifier) {
 	inbox := notifications.Store{DB: s.DB}
 	pc := config.Get(s.Config)
 	push := notifications.NewPush(s.DB, notifications.PushConfig{PublicKey: pc.VAPIDPublicKey, PrivateKey: pc.VAPIDPrivateKey, Subject: pc.VAPIDSubject})
@@ -81,7 +81,15 @@ func (s *Service) notifiers() (notifications.Store, *notifications.Push, *integr
 		chat = &integrations.GoogleChat{Store: integrations.Store{DB: s.DB, Box: box}, Site: siteURL(pc.AuthorizedParties())}
 		all = append(all, chat)
 	}
-	return inbox, push, chat, all
+	// personal messages from the Chat app (TL-289): nil, and nothing sent, without its key
+	app, err := integrations.NewChatApp(s.DB, pc.GoogleChatCredentials, siteURL(pc.AuthorizedParties()), pc.GoogleChatProjectNumber)
+	if err != nil {
+		logs.Errorf("google chat app is off: %v", err)
+	}
+	if app != nil {
+		all = append(all, app)
+	}
+	return inbox, push, chat, app, all
 }
 
 // siteURL is the web app's address (links in Google Chat): the first https origin Clerk allows.
@@ -101,7 +109,7 @@ func (s *Service) Start() error {
 	defer stop()
 	// overdue sprints close themselves (manual close is POST /api/sprints/{id}/close); a next sprint
 	// that starts over capacity tells the board's managers (TL-149)
-	_, _, _, notify := s.notifiers()
+	_, _, _, _, notify := s.notifiers()
 	go sprints.Store{DB: s.DB, Notify: notify}.RunAutoClose(ctx, time.Minute)
 	// the bin and deleted organizations are purged, and deleted files removed, by Railway cron jobs
 	// running this binary as `server purge` (00:00) and `server sweep-files` (00:30): see cmd/server (TL-256)
@@ -193,9 +201,14 @@ func (s *Service) Handler() http.Handler {
 
 	// Tickets
 	// Notifications: an in-app inbox for now (external channels later implement the same Notifier)
-	inbox, push, chat, notify := s.notifiers()
+	inbox, push, chat, chatApp, notify := s.notifiers()
 	nf := notifications.NewSystem(inbox).WithPush(push)
 	mux.Handle("GET /api/push", signedIn(nf.PushKey))
+	// Google Chat app (TL-289): Chat's requests, and linking your own account
+	mux.Handle("POST /api/webhooks/google-chat", public("webhook-google-chat", 600, chatApp.Events))
+	mux.Handle("GET /api/me/google-chat", sessionRequired(http.HandlerFunc(chatApp.Status)))
+	mux.Handle("POST /api/me/google-chat/link", sessionRequired(http.HandlerFunc(chatApp.Link)))
+	mux.Handle("DELETE /api/me/google-chat", sessionRequired(http.HandlerFunc(chatApp.Unlink)))
 	mux.Handle("POST /api/push/subscriptions", signedIn(nf.Subscribe))
 	mux.Handle("DELETE /api/push/subscriptions", signedIn(nf.Unsubscribe))
 	mux.Handle("GET /api/notifications", signedIn(nf.List))
@@ -209,6 +222,9 @@ func (s *Service) Handler() http.Handler {
 	push.People = t.People // pushes name who did it
 	if chat != nil {
 		chat.People = t.People // so do Google Chat posts
+	}
+	if chatApp != nil {
+		chatApp.People = t.People // and the Chat app's personal messages
 	}
 	mux.Handle("POST /api/columns/{id}/tickets", signedIn(t.Create))
 	mux.Handle("GET /api/tickets/{id}", signedIn(t.Get))       // one ticket + where it lives (deep links)

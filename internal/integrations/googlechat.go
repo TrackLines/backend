@@ -14,6 +14,7 @@ import (
 
 	"github.com/bugfixes/go-bugfixes/logs"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/tracklines/backend/internal/apikeys"
 	"github.com/tracklines/backend/internal/auth"
 	"github.com/tracklines/backend/internal/httpx"
@@ -169,18 +170,19 @@ func (g *GoogleChat) Notify(ctx context.Context, org string, to []string, e noti
 }
 
 // message is e worded for a room: who did it (by name), what, and a link to open it.
-func (g *GoogleChat) message(ctx context.Context, org string, to []string, e notifications.Event) string {
+// chatNamer names people and agents in Chat messages: "Ava Smith", "Claude", or "Someone".
+func chatNamer(ctx context.Context, db *pgxpool.Pool, people func(context.Context, string) ([]notifications.Person, error), org string) func(string) string {
 	names := map[string]string{}
-	if g.People != nil {
-		if people, err := g.People(ctx, org); err == nil {
-			for _, p := range people {
+	if people != nil {
+		if list, err := people(ctx, org); err == nil {
+			for _, p := range list {
 				if len(p.Names) > 0 {
 					names[p.ID] = p.Names[0]
 				}
 			}
 		}
 	}
-	name := func(id string) string {
+	return func(id string) string {
 		if n, ok := names[id]; ok {
 			return n
 		}
@@ -188,11 +190,15 @@ func (g *GoogleChat) message(ctx context.Context, org string, to []string, e not
 			return "Someone"
 		}
 		var client, label *string // an agent key: "Claude", not claude-482193
-		if g.Store.DB.QueryRow(ctx, `SELECT client, label FROM api_keys WHERE org_id = $1 AND name = $2 LIMIT 1`, org, id).Scan(&client, &label) == nil && client != nil {
+		if db.QueryRow(ctx, `SELECT client, label FROM api_keys WHERE org_id = $1 AND name = $2 LIMIT 1`, org, id).Scan(&client, &label) == nil && client != nil {
 			return apikeys.DisplayName(*client, deref(label))
 		}
 		return id
 	}
+}
+
+func (g *GoogleChat) message(ctx context.Context, org string, to []string, e notifications.Event) string {
+	name := chatNamer(ctx, g.Store.DB, g.People, org)
 	text := e.Text
 	switch e.Kind {
 	case "review", "approval": // "…, and it needs your review" → "…, and it needs review"
@@ -210,14 +216,17 @@ func (g *GoogleChat) message(ctx context.Context, org string, to []string, e not
 	return msg
 }
 
-func (g *GoogleChat) link(e notifications.Event) string {
+func (g *GoogleChat) link(e notifications.Event) string { return eventLink(g.Site, e) }
+
+// eventLink is where a Chat message's "Open in Tracklines" goes: the ticket (by id, TL-276) or board.
+func eventLink(site string, e notifications.Event) string {
 	switch {
-	case g.Site == "":
+	case site == "":
 		return ""
 	case e.TicketID != "":
-		return strings.TrimRight(g.Site, "/") + "/tickets/" + e.TicketID
+		return strings.TrimRight(site, "/") + "/tickets/" + e.TicketID
 	case e.BoardID != "":
-		return strings.TrimRight(g.Site, "/") + "/boards/" + e.BoardID
+		return strings.TrimRight(site, "/") + "/boards/" + e.BoardID
 	}
 	return ""
 }

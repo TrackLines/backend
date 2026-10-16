@@ -93,6 +93,7 @@ func (s System) apply(ctx context.Context, e event) error {
 			`DELETE FROM org_admins WHERE user_clerk_id = $1`,
 			`DELETE FROM team_members WHERE user_clerk_id = $1`,
 			`UPDATE api_keys SET revoked_at = now() WHERE owner_clerk_id = $1 AND revoked_at IS NULL`,
+			`DELETE FROM chat_dms WHERE user_clerk_id = $1`, // no more Chat messages to them (TL-289)
 		}
 	case "organization.deleted":
 		if e.Data.ID == "" {

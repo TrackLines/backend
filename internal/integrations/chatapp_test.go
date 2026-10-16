@@ -1,0 +1,306 @@
+package integrations
+
+import (
+	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/json"
+	"encoding/pem"
+	"errors"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"regexp"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/clerk/clerk-sdk-go/v2"
+	"github.com/go-jose/go-jose/v4"
+	"github.com/go-jose/go-jose/v4/jwt"
+	"github.com/golang-migrate/migrate/v4"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/tracklines/backend/internal/auth"
+	"github.com/tracklines/backend/internal/notifications"
+)
+
+// fakeGoogle is Google for the Chat app: signing keys, OAuth tokens, and the Chat API (recording
+// what's sent to each space; spaces in gone answer 404).
+type fakeGoogle struct {
+	mu    sync.Mutex
+	sent  map[string][]string
+	gone  map[string]bool
+	dms   map[string]string // users/… → their chat with the app
+	jwks  jose.JSONWebKeySet
+	auths []string
+}
+
+func (f *fakeGoogle) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	switch {
+	case r.URL.Path == "/certs":
+		_ = json.NewEncoder(w).Encode(f.jwks)
+	case r.URL.Path == "/token":
+		_ = r.ParseForm()
+		if r.Form.Get("grant_type") != "urn:ietf:params:oauth:grant-type:jwt-bearer" || r.Form.Get("assertion") == "" {
+			http.Error(w, "bad grant", 400)
+			return
+		}
+		_, _ = w.Write([]byte(`{"access_token":"ya29.app","expires_in":3600}`))
+	case r.URL.Path == "/chat/v1/spaces:findDirectMessage":
+		space, ok := f.dms[r.URL.Query().Get("name")]
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = w.Write([]byte(`{"name":"` + space + `"}`))
+	case strings.HasPrefix(r.URL.Path, "/chat/v1/spaces/") && strings.HasSuffix(r.URL.Path, "/messages"):
+		f.auths = append(f.auths, r.Header.Get("Authorization"))
+		space := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/chat/v1/"), "/messages")
+		if f.gone[space] {
+			http.NotFound(w, r)
+			return
+		}
+		var in struct{ Text string }
+		_ = json.NewDecoder(r.Body).Decode(&in)
+		f.sent[space] = append(f.sent[space], in.Text)
+		_, _ = w.Write([]byte(`{}`))
+	default:
+		http.NotFound(w, r)
+	}
+}
+
+func (f *fakeGoogle) take(space string) []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	got := f.sent[space]
+	delete(f.sent, space)
+	return got
+}
+
+// Google Chat app (TL-289): only Google's signed requests are taken; a person links their account from
+// the one-time link the app sends; then only their own notifications reach their chat with the app.
+func TestChatApp(t *testing.T) {
+	ctx := context.Background()
+	dbURL := os.Getenv("TEST_DATABASE_URL")
+	m, err := migrate.New("file://../migrations", "pgx5"+dbURL[len("postgres"):])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Up(); err != nil && !errors.Is(err, migrate.ErrNoChange) {
+		t.Fatal(err)
+	}
+	db, err := pgxpool.New(ctx, dbURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(ctx, `DELETE FROM chat_dms; DELETE FROM chat_link_codes`); err != nil {
+		t.Fatal(err)
+	}
+
+	googleKey, _ := rsa.GenerateKey(rand.Reader, 2048)
+	appKey, _ := rsa.GenerateKey(rand.Reader, 2048)
+	google := &fakeGoogle{sent: map[string][]string{}, gone: map[string]bool{}, dms: map[string]string{"users/home": "spaces/DMHOME"},
+		jwks: jose.JSONWebKeySet{Keys: []jose.JSONWebKey{{KeyID: "g1", Key: &googleKey.PublicKey, Algorithm: "RS256", Use: "sig"}}}}
+	srv := httptest.NewServer(google)
+	defer srv.Close()
+	der, _ := x509.MarshalPKCS8PrivateKey(appKey)
+	creds, _ := json.Marshal(map[string]string{"type": "service_account", "client_email": "tracklines-chat@p.iam.gserviceaccount.com", "private_key_id": "k1",
+		"private_key": string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der})), "token_uri": srv.URL + "/token"})
+	app, err := NewChatApp(db, string(creds), "https://tracklin.es/", "42")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if app.Endpoint != "https://tracklin.es/api/webhooks/google-chat" {
+		t.Fatalf("endpoint: %s", app.Endpoint)
+	}
+	now := time.Now()
+	app.API, app.CertsURL, app.Client, app.Wait, app.now = srv.URL+"/chat", srv.URL+"/certs", srv.Client(), true, func() time.Time { return now }
+	app.People = func(context.Context, string) ([]notifications.Person, error) {
+		return []notifications.Person{{ID: "user_ava", Names: []string{"Ava Smith"}}, {ID: "user_sam", Names: []string{"Sam Lee"}}}, nil
+	}
+
+	signer, _ := jose.NewSigner(jose.SigningKey{Algorithm: jose.RS256, Key: googleKey}, (&jose.SignerOptions{}).WithType("JWT").WithHeader("kid", "g1"))
+	idToken := func(aud, email string) string {
+		tok, _ := jwt.Signed(signer).Claims(map[string]any{"iss": "https://accounts.google.com", "aud": aud, "email": email, "email_verified": true,
+			"iat": now.Unix(), "exp": now.Add(time.Hour).Unix()}).Serialize()
+		return tok
+	}
+	chatToken := idToken(app.Endpoint, "chat@system.gserviceaccount.com")
+	event := func(token, body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest("POST", "/api/webhooks/google-chat", strings.NewReader(body))
+		if token != "" {
+			req.Header.Set("Authorization", "Bearer "+token)
+		}
+		rec := httptest.NewRecorder()
+		app.Events(rec, req)
+		return rec
+	}
+	dm := func(kind, user, space string) string {
+		return `{"type":"` + kind + `","user":{"name":"` + user + `","displayName":"Ava"},"space":{"name":"` + space + `","spaceType":"DIRECT_MESSAGE"}}`
+	}
+	codeIn := func(rec *httptest.ResponseRecorder) string {
+		m := regexp.MustCompile(`/chat/link\?code=([A-Za-z0-9_-]+)`).FindStringSubmatch(rec.Body.String())
+		if m == nil {
+			t.Fatalf("no link in %s", rec.Body)
+		}
+		return m[1]
+	}
+
+	// only Google Chat's requests for our endpoint: no token, another audience, another signer
+	for name, token := range map[string]string{
+		"no token":       "",
+		"other app":      idToken("https://elsewhere.example/hook", "chat@system.gserviceaccount.com"),
+		"not chat":       idToken(app.Endpoint, "someone@gmail.com"),
+		"other add-on":   idToken(app.Endpoint, "service-99@gcp-sa-gsuiteaddons.iam.gserviceaccount.com"),
+		"forged":         strings.Replace(chatToken, chatToken[len(chatToken)-10:], "AAAAAAAAAA", 1),
+		"not even a jwt": "hello",
+	} {
+		if rec := event(token, dm("MESSAGE", "users/ava", "spaces/DMAVA")); rec.Code != 401 {
+			t.Errorf("%s: %d", name, rec.Code)
+		}
+	}
+
+	// an unlinked person gets a one-time link; a room is told it's personal only
+	rec := event(chatToken, dm("ADDED_TO_SPACE", "users/ava", "spaces/DMAVA"))
+	if rec.Code != 200 || !strings.Contains(rec.Body.String(), "Link your Tracklines account") || !strings.Contains(rec.Body.String(), "https://tracklin.es/chat/link?code=") {
+		t.Fatalf("added: %d %s", rec.Code, rec.Body)
+	}
+	code := codeIn(rec)
+	room := event(chatToken, `{"type":"ADDED_TO_SPACE","user":{"name":"users/ava"},"space":{"name":"spaces/ROOM","spaceType":"SPACE"}}`)
+	if !strings.Contains(room.Body.String(), "only send personal messages") || strings.Contains(room.Body.String(), "code=") {
+		t.Fatalf("room: %s", room.Body)
+	}
+
+	// linking: signed in, once, before it expires; API keys can't
+	session := func(user string) context.Context {
+		return clerk.ContextWithSessionClaims(ctx, &clerk.SessionClaims{RegisteredClaims: clerk.RegisteredClaims{Subject: user}})
+	}
+	call := func(h http.HandlerFunc, c context.Context, method, body string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		h(rec, httptest.NewRequest(method, "/", strings.NewReader(body)).WithContext(c))
+		return rec
+	}
+	if rec := call(app.Link, auth.WithAPIKeyUser(ctx, "user_ava", "claude"), "POST", `{"code":"`+code+`"}`); rec.Code != 403 {
+		t.Fatalf("api key linked: %d", rec.Code)
+	}
+	if rec := call(app.Link, session("user_ava"), "POST", `{"code":"`+code+`"}`); rec.Code != 200 {
+		t.Fatalf("link: %d %s", rec.Code, rec.Body)
+	}
+	if got := google.take("spaces/DMAVA"); len(got) != 1 || !strings.Contains(got[0], "You’re linked") {
+		t.Fatalf("linked message: %v", got)
+	}
+	if rec := call(app.Link, session("user_eve"), "POST", `{"code":"`+code+`"}`); rec.Code != 400 { // used
+		t.Fatalf("code reused: %d", rec.Code)
+	}
+	late := codeIn(event(chatToken, dm("MESSAGE", "users/bob", "spaces/DMBOB")))
+	app.now = func() time.Time { return now.Add(31 * time.Minute) }
+	if rec := call(app.Link, session("user_bob"), "POST", `{"code":"`+late+`"}`); rec.Code != 400 {
+		t.Fatalf("expired code: %d", rec.Code)
+	}
+	app.now = func() time.Time { return now }
+	if rec := call(app.Status, session("user_ava"), "GET", ""); !strings.Contains(rec.Body.String(), `"linked":true`) || !strings.Contains(rec.Body.String(), `"available":true`) {
+		t.Fatalf("status: %s", rec.Body)
+	}
+	if rec := call(app.Status, session("user_bob"), "GET", ""); !strings.Contains(rec.Body.String(), `"linked":false`) {
+		t.Fatalf("bob status: %s", rec.Body)
+	}
+	// a linked person messaging the app is told they're set
+	if rec := event(chatToken, dm("MESSAGE", "users/ava", "spaces/DMAVA")); !strings.Contains(rec.Body.String(), "You’re linked") || strings.Contains(rec.Body.String(), "code=") {
+		t.Fatalf("linked reply: %s", rec.Body)
+	}
+
+	// notifications: only the linked recipient, never the actor, with who did it and a link
+	e := notifications.Event{Kind: "assigned", Text: "assigned you TL-12: Fix login", Actor: "user_sam", TicketID: "6a3ec0a8-9946-4ae6-85a5-4c34b95cd572"}
+	if err := app.Notify(ctx, "org_x", []string{"user_ava", "user_bob", "user_ava", "claude"}, e); err != nil {
+		t.Fatal(err)
+	}
+	got := google.take("spaces/DMAVA")
+	if len(got) != 1 || got[0] != "*Sam Lee* assigned you TL-12: Fix login\n<https://tracklin.es/tickets/6a3ec0a8-9946-4ae6-85a5-4c34b95cd572|Open in Tracklines>" {
+		t.Fatalf("assigned: %q", got)
+	}
+	google.mu.Lock()
+	if a := google.auths[len(google.auths)-1]; a != "Bearer ya29.app" {
+		t.Fatalf("sent with %q", a)
+	}
+	google.mu.Unlock()
+	if err := app.Notify(ctx, "org_x", []string{"user_ava"}, notifications.Event{Kind: "mention", Text: "mentioned you", Actor: "user_ava"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := google.take("spaces/DMAVA"); len(got) != 0 {
+		t.Fatalf("told about their own action: %v", got)
+	}
+	_ = app.Notify(ctx, "org_x", nil, notifications.Event{Kind: "created", Text: "created TL-13", Actor: "user_sam"}) // for spaces only
+	if got := google.take("spaces/DMAVA"); len(got) != 0 {
+		t.Fatalf("announcement in a DM: %v", got)
+	}
+
+	// the app's home tab (add-on format, no space): a card; their chat is found when first needed
+	home := event(idToken(app.Endpoint, "service-42@gcp-sa-gsuiteaddons.iam.gserviceaccount.com"), `{"chat":{"user":{"name":"users/home"}}}`)
+	if !strings.Contains(home.Body.String(), `"pushCard"`) {
+		t.Fatalf("home: %s", home.Body)
+	}
+	if rec := call(app.Link, session("user_home"), "POST", `{"code":"`+codeIn(home)+`"}`); rec.Code != 200 {
+		t.Fatalf("home link: %d", rec.Code)
+	}
+	if got := google.take("spaces/DMHOME"); len(got) != 1 {
+		t.Fatalf("found chat: %v", got)
+	}
+	var space string
+	_ = db.QueryRow(ctx, `SELECT space FROM chat_dms WHERE user_clerk_id = 'user_home'`).Scan(&space)
+	if space != "spaces/DMHOME" {
+		t.Fatalf("remembered %q", space)
+	}
+	// add-on message format replies wrapped
+	if rec := event(idToken(app.Endpoint, "service-42@gcp-sa-gsuiteaddons.iam.gserviceaccount.com"),
+		`{"chat":{"user":{"name":"users/home"},"messagePayload":{"space":{"name":"spaces/DMHOME","spaceType":"DIRECT_MESSAGE"}}}}`); !strings.Contains(rec.Body.String(), `"createMessageAction"`) {
+		t.Fatalf("add-on reply: %s", rec.Body)
+	}
+
+	// the app removed from their chat: unlinked (by the event, or when sending fails)
+	google.mu.Lock()
+	google.gone["spaces/DMHOME"] = true
+	google.mu.Unlock()
+	_ = app.Notify(ctx, "org_x", []string{"user_home"}, e)
+	if rec := call(app.Status, session("user_home"), "GET", ""); !strings.Contains(rec.Body.String(), `"linked":false`) {
+		t.Fatalf("still linked after 404: %s", rec.Body)
+	}
+	if rec := event(chatToken, dm("REMOVED_FROM_SPACE", "users/ava", "spaces/DMAVA")); rec.Code != 200 {
+		t.Fatalf("removed: %d", rec.Code)
+	}
+	if rec := call(app.Status, session("user_ava"), "GET", ""); !strings.Contains(rec.Body.String(), `"linked":false`) {
+		t.Fatalf("still linked after removal: %s", rec.Body)
+	}
+
+	// unlinking yourself
+	_, _ = db.Exec(ctx, `INSERT INTO chat_dms (user_clerk_id, google_user, space) VALUES ('user_sam', 'users/sam', 'spaces/DMSAM')`)
+	if rec := call(app.Unlink, session("user_sam"), "DELETE", ""); rec.Code != 204 {
+		t.Fatalf("unlink: %d", rec.Code)
+	}
+	_ = app.Notify(ctx, "org_x", []string{"user_sam"}, e)
+	if got := google.take("spaces/DMSAM"); len(got) != 0 {
+		t.Fatalf("messaged after unlinking: %v", got)
+	}
+
+	// a server without the app: says so, sends nothing
+	var none *ChatApp
+	if rec := call(none.Status, session("user_ava"), "GET", ""); rec.Body.String() != `{"available":false,"linked":false}`+"\n" {
+		t.Fatalf("no app status: %s", rec.Body)
+	}
+	if rec := call(none.Events, ctx, "POST", "{}"); rec.Code != 503 {
+		t.Fatalf("no app events: %d", rec.Code)
+	}
+	if err := none.Notify(ctx, "org_x", []string{"user_ava"}, e); err != nil {
+		t.Fatal(err)
+	}
+	if a, err := NewChatApp(db, "", "https://tracklin.es", ""); a != nil || err != nil {
+		t.Fatalf("no credentials: %v %v", a, err)
+	}
+	if _, err := NewChatApp(db, `{"client_email":"x"}`, "https://tracklin.es", ""); err == nil {
+		t.Fatal("bad credentials accepted")
+	}
+}

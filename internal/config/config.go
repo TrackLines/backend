@@ -52,6 +52,10 @@ type Project struct {
 	VAPIDPublicKey  string `env:"VAPID_PUBLIC_KEY"`
 	VAPIDPrivateKey string `env:"VAPID_PRIVATE_KEY"`
 	VAPIDSubject    string `env:"VAPID_SUBJECT" envDefault:"mailto:hello@tracklin.es"`
+	// Google Chat app (TL-289): personal messages in Chat. The app's service account key (the JSON file
+	// Google downloads); off without it. Project number: only if the app is built as a Workspace add-on.
+	GoogleChatCredentials   string `env:"GOOGLE_CHAT_CREDENTIALS"`
+	GoogleChatProjectNumber string `env:"GOOGLE_CHAT_PROJECT_NUMBER"`
 }
 
 // AuthorizedParties returns the origins allowed in Clerk session token azp claims.

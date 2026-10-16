@@ -81,7 +81,9 @@ func TestGoogleChat(t *testing.T) {
 		return rec
 	}
 	admin, member := session("user_admin"), session("user_member")
-	hook := func(space string) string { return "https://chat.googleapis.com/v1/spaces/" + space + "/messages?key=k&token=t" }
+	hook := func(space string) string {
+		return "https://chat.googleapis.com/v1/spaces/" + space + "/messages?key=k&token=t"
+	}
 
 	// only Google's webhook URLs; only admins set one
 	for _, bad := range []string{"https://evil.example/v1/spaces/x/messages?key=k&token=t", "http://chat.googleapis.com/v1/spaces/x/messages?key=k&token=t",
