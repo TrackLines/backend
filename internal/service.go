@@ -306,7 +306,7 @@ func (s *Service) Handler() http.Handler {
 	mux.Handle("POST /api/projects/{id}/backlog", signedIn(t.CreateBacklog))
 	mux.Handle("GET /api/projects/{id}/labels", signedIn(t.ProjectLabels)) // labels in use, for suggestions
 
-	// Sprints — per team board; closing opens the next and carries unfinished tickets over
+	// Sprints — per team board; closing by hand just closes (the next waits for start); running out rolls into the next
 	sp := sprints.NewSystem(s.DB, o.AdminModel()).WithLive(s.Valkey).WithNotifier(notify)
 	lv := live.New(s.Valkey, boards.Store{DB: s.DB})
 	lv.IsAdmin = o.AdminModel().IsAdmin

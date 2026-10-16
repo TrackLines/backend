@@ -138,7 +138,8 @@ func (h System) Velocity(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusOK, v)
 }
 
-// Close closes open sprint {id} and returns the next sprint it opened.
+// Close closes open sprint {id}. It starts the next sprint only when asked to (a next_length_days or
+// next_starts_at) and returns it; otherwise 204, and the board waits for Start with the length you pick.
 func (h System) Close(w http.ResponseWriter, r *http.Request) {
 	if !h.admins.RequireResourceBoardManager(w, r, "sprint", r.PathValue("id")) {
 		return
@@ -152,11 +153,16 @@ func (h System) Close(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	next, err := h.store.CloseWithOptions(r.Context(), org, r.PathValue("id"), CloseOptions{
+		StartNext:      in.NextLengthDays != 0 || in.NextStartsAt != nil,
 		NextLengthDays: in.NextLengthDays,
 		NextStartsAt:   in.NextStartsAt,
 	})
 	if err != nil {
 		writeErr(w, err)
+		return
+	}
+	if next == nil {
+		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 	httpx.JSON(w, http.StatusOK, next)

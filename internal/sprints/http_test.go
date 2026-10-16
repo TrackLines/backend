@@ -129,12 +129,13 @@ func TestSprintHandlers(t *testing.T) {
 	expect(403, "update", org, "member-u", first.ID, `{"goal":"x"}`, nil)
 	expect(404, "update", other, "admin-x", first.ID, `{"goal":"x"}`, nil)
 
-	// close: managers only; opens the next sprint and carries unfinished work over, leaving done work behind
+	// close: managers only; asked for a length, it opens the next sprint and carries unfinished work over,
+	// leaving done work behind
 	expect(403, "close", org, "member-u", first.ID, "", nil)
 	expect(404, "close", other, "admin-x", first.ID, "", nil)
 	expect(400, "close", org, "admin-u", first.ID, `{"next_length_days":400}`, nil)
 	var next Sprint
-	expect(200, "close", org, "admin-u", first.ID, "", &next)
+	expect(200, "close", org, "admin-u", first.ID, `{"next_length_days":7}`, &next)
 	if next.Number != 2 || next.LengthDays != 7 {
 		t.Fatalf("next sprint: %+v", next)
 	}

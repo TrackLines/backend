@@ -161,7 +161,7 @@ func TestSprints(t *testing.T) {
 	}
 
 	nextStart := time.Now().Add(48 * time.Hour).Truncate(time.Second)
-	scheduled, err := s.CloseWithOptions(ctx, "s1", current.Sprint.ID, CloseOptions{NextLengthDays: 7, NextStartsAt: &nextStart})
+	scheduled, err := s.CloseWithOptions(ctx, "s1", current.Sprint.ID, CloseOptions{StartNext: true, NextLengthDays: 7, NextStartsAt: &nextStart})
 	if err != nil || scheduled.Number != current.Sprint.Number+1 || scheduled.LengthDays != 7 {
 		t.Fatalf("close into scheduled sprint: %+v %v", scheduled, err)
 	}

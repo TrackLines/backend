@@ -2386,11 +2386,14 @@ paths:
     post:
       tags: [Sprints]
       operationId: closeSprint
-      summary: Close a sprint and start or schedule the next one
+      summary: Close a sprint; optionally start or schedule the next one
       description: >-
-        If the board has a planned sprint (refinement) that's within capacity or approved, it becomes the next sprint: its length
-        (unless next_length_days is given) and its tickets, which join the board's first column with their estimates. A planned
-        sprint over capacity without approval isn't promoted and stays planned. Unfinished tickets carry over as before.
+        With no body, the sprint just closes: unfinished tickets stay on the board, out of any sprint, until the next
+        POST /boards/{id}/sprints, which takes them in along with a waiting planned sprint (and its goal). Give
+        next_length_days and/or next_starts_at to open the next sprint at once instead, as auto-close does when a sprint
+        runs out: unfinished tickets carry over, and a planned sprint (refinement) within capacity or approved becomes the
+        next sprint (its length unless next_length_days is given, and its tickets, which join the first column). A planned
+        sprint over capacity without approval isn't promoted and stays planned.
       parameters:
         - name: sprintId
           in: path
@@ -2405,8 +2408,9 @@ paths:
                 next_length_days: { type: integer, minimum: 1, maximum: 365, description: Defaults to the current sprint's length. }
                 next_starts_at: { type: string, format: date-time, description: Defaults to now; a future value schedules the next sprint. }
       responses:
+        '204': { description: Closed; no next sprint started. }
         '200':
-          description: Newly started or scheduled next sprint.
+          description: The next sprint, started or scheduled (when asked for).
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Sprint' }

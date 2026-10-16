@@ -178,7 +178,7 @@ var tools = []tool{
 	{name: "update_sprint_length", title: "Change sprint length or goal", description: "Change an open or scheduled sprint's length in days (its start date stays fixed) and/or its goal (\"\" clears).",
 		method: "PATCH", path: "/api/sprints/{sprint_id}", body: []string{"length_days", "goal"},
 		props: map[string]any{"sprint_id": id("Sprint"), "length_days": map[string]any{"type": "integer", "minimum": 1, "maximum": 365}, "goal": goal}, required: []string{"sprint_id"}},
-	{name: "close_sprint", title: "Close sprint", description: "Close an open sprint and carry unfinished tickets forward. Optionally set next_length_days and next_starts_at (RFC3339); by default the next sprint starts now with the same length.",
+	{name: "close_sprint", title: "Close sprint", description: "Close an open sprint. Unfinished tickets stay on the board, out of any sprint, until start_sprint. To start the next sprint at once, give next_length_days and/or next_starts_at (RFC3339): unfinished tickets move into it.",
 		method: "POST", path: "/api/sprints/{sprint_id}/close", body: []string{"next_length_days", "next_starts_at"},
 		props: map[string]any{"sprint_id": id("Sprint"), "next_length_days": map[string]any{"type": "integer", "minimum": 1, "maximum": 365}, "next_starts_at": map[string]any{"type": "string", "format": "date-time"}}, required: []string{"sprint_id"}},
 

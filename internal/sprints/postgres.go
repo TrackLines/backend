@@ -27,6 +27,10 @@ var (
 type Sprint = boards.Sprint
 
 type CloseOptions struct {
+	// StartNext opens the next sprint as this one closes (auto-close, or asked for with a length or
+	// start date). Without it, closing by hand only closes: unfinished tickets stay on the board, out
+	// of any sprint, until someone starts the next one and picks its length.
+	StartNext      bool
 	NextLengthDays int
 	NextStartsAt   *time.Time
 }
@@ -52,6 +56,7 @@ func (s Store) Start(ctx context.Context, owner, boardID string, lengthDays int)
 		return nil, ErrInvalidLength
 	}
 	var sp Sprint
+	var over *overCapacity
 	err := pgx.BeginFunc(ctx, s.DB, func(tx pgx.Tx) error {
 		// the board lock pairs with boards.SetStyle: a board can't turn kanban while a sprint starts
 		var style string
@@ -76,12 +81,33 @@ func (s Store) Start(ctx context.Context, owner, boardID string, lengthDays int)
 		if err != nil {
 			return notFound(err)
 		}
-		_, err = tx.Exec(ctx, `UPDATE tickets SET sprint_id = $1 WHERE board_id = $2 AND sprint_id IS NULL`, sp.ID, boardID)
+		if _, err = tx.Exec(ctx, `UPDATE tickets SET sprint_id = $1 WHERE board_id = $2 AND sprint_id IS NULL`, sp.ID, boardID); err != nil {
+			return err
+		}
+		// a sprint closed by hand left its planned successor waiting: it joins now, with its goal
+		plan, err := nextPlan(ctx, tx, boardID)
+		if err != nil {
+			return err
+		}
+		var approved *float64
+		if plan != nil {
+			approved = plan.Capacity.ApprovedTotal
+			if err := movePlanned(ctx, tx, plan, sp); err != nil {
+				return err
+			}
+			if plan.Goal != "" {
+				if sp, err = boards.ScanSprint(tx.QueryRow(ctx, `UPDATE sprints SET goal = $2 WHERE id = $1 RETURNING `+boards.SprintCols, sp.ID, plan.Goal)); err != nil {
+					return err
+				}
+			}
+		}
+		over, err = startedOver(ctx, tx, sp, approved)
 		return err
 	})
 	if err != nil {
 		return nil, err
 	}
+	s.warnOver(ctx, over) // committed: now tell them (TL-149)
 	return &sp, nil
 }
 
@@ -122,11 +148,12 @@ func (s Store) List(ctx context.Context, owner, boardID string) ([]Sprint, error
 
 // Close closes the owner's open sprint and opens the next one (see closeSprint).
 func (s Store) Close(ctx context.Context, owner, sprintID string) (*Sprint, error) {
-	return s.CloseWithOptions(ctx, owner, sprintID, CloseOptions{})
+	return s.CloseWithOptions(ctx, owner, sprintID, CloseOptions{StartNext: true})
 }
 
-// CloseWithOptions closes the current sprint and creates its next sprint, optionally scheduled
-// for a future start date and with a different length. Omitted options preserve today's behavior.
+// CloseWithOptions closes the current sprint and, with StartNext, creates its next sprint, optionally
+// scheduled for a future start date and with a different length. It returns the next sprint, or nil
+// when none was started.
 func (s Store) CloseWithOptions(ctx context.Context, owner, sprintID string, options CloseOptions) (*Sprint, error) {
 	if options.NextLengthDays != 0 && (options.NextLengthDays < 1 || options.NextLengthDays > 365) {
 		return nil, ErrInvalidLength
@@ -151,10 +178,14 @@ func (s Store) CloseWithOptions(ctx context.Context, owner, sprintID string, opt
 		return nil, err
 	}
 	s.warnOver(ctx, over)
+	if next.ID == "" {
+		return nil, nil
+	}
 	return &next, nil
 }
 
-// closeSprint (caller holds the sprint row lock) marks it closed, opens the next sprint
+// closeSprint (caller holds the sprint row lock) marks it closed; without StartNext that is all (unfinished
+// tickets leave the sprint and wait on the board). With it, it opens the next sprint
 // with the same length starting now, and carries over every ticket that isn't in the
 // board's last column ("done"), keeping its column and order. If the board planned its next
 // sprint (refinement) and that plan is within capacity or approved, the plan's tickets join it.
@@ -166,6 +197,10 @@ func closeSprint(ctx context.Context, tx pgx.Tx, id string, options CloseOptions
 	}
 	var boardID string
 	if err := tx.QueryRow(ctx, `UPDATE sprints SET closed_at = now() WHERE id = $1 RETURNING board_id`, id).Scan(&boardID); err != nil {
+		return Sprint{}, nil, err
+	}
+	if !options.StartNext { // closed by hand: unfinished tickets wait on the board for the next Start
+		_, err := tx.Exec(ctx, `UPDATE tickets t SET sprint_id = NULL WHERE t.sprint_id = $1 AND NOT `+boards.TicketDoneSQL, id)
 		return Sprint{}, nil, err
 	}
 	// refinement: planned sprint 1 becomes the next sprint (its length, unless the closer chose one)
@@ -218,7 +253,7 @@ func (s Store) AutoClose(ctx context.Context) (int, error) {
 			if err != nil {
 				return err
 			}
-			_, over, err = closeSprint(ctx, tx, id, CloseOptions{})
+			_, over, err = closeSprint(ctx, tx, id, CloseOptions{StartNext: true}) // ran out: straight into the next
 			return err
 		})
 		if err == nil {
