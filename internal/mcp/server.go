@@ -36,7 +36,7 @@ type caller func(ctx context.Context, method, path string, body any) (int, []byt
 
 // Handler is the /mcp endpoint. api is the whole REST handler chain (auth middleware included).
 // Instructions tell agents how to work: like a member of the team, the whole way through a ticket.
-const Instructions = "TrackLines boards, backlog and tickets. Work is organised as projects → boards (one per team) → columns → tickets; " +
+const Instructions = "TrackLin.es boards, backlog and tickets. Work is organised as projects → boards (one per team) → columns → tickets; " +
 	"the first column is To do and the last column is Done (get_board lists a board's columns in order). " +
 	"Tickets have keys like TL-123 (project prefix + number); any ticket_id argument takes a key or a UUID.\n\n" +
 	"Choosing work: act like a member of the team. While a sprint is open, only pick tickets in it (in_sprint=true in list_open_tickets), " +
@@ -57,7 +57,7 @@ const Instructions = "TrackLines boards, backlog and tickets. Work is organised 
 
 func Handler(api http.Handler, version string) http.Handler {
 	return sdk.NewStreamableHTTPHandler(func(r *http.Request) *sdk.Server {
-		s := sdk.NewServer(&sdk.Implementation{Name: "tracklines", Title: "TrackLines", Version: version}, &sdk.ServerOptions{
+		s := sdk.NewServer(&sdk.Implementation{Name: "tracklines", Title: "TrackLin.es", Version: version}, &sdk.ServerOptions{
 			Instructions: Instructions,
 		})
 		call := requester(api, r.Header)

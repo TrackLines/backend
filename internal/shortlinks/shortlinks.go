@@ -29,7 +29,7 @@ type System struct {
 	Client *http.Client
 }
 
-var ErrNotOurs = errors.New("only Tracklines links can be shortened")
+var ErrNotOurs = errors.New("only TrackLin.es links can be shortened")
 
 // Create: POST /api/short-links {"url": "https://tracklin.es/tickets/<id>", "title": "TL-204 on Tracklines"}
 // → {"url": "https://1tn.pw/abc123"}.
@@ -56,7 +56,7 @@ func (s System) Create(w http.ResponseWriter, r *http.Request) {
 
 // Description is what the shortener says about every link: our pages need a sign-in, so it can't
 // read them, and anyone can look a short link's details up, so nothing private goes in it.
-const Description = "Sign in to Tracklines to see it."
+const Description = "Sign in to TrackLin.es to see it."
 
 // MaxTitle bounds a short link's title.
 const MaxTitle = 120
@@ -77,7 +77,7 @@ func (s System) Shorten(ctx context.Context, long, title string) (string, error)
 		return "", err
 	}
 	if title = strings.TrimSpace(title); title == "" {
-		title = "Tracklines"
+		title = "TrackLin.es"
 	} else if r := []rune(title); len(r) > MaxTitle {
 		title = string(r[:MaxTitle])
 	}

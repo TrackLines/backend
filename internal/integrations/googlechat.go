@@ -354,7 +354,7 @@ func (h System) TestChat(w http.ResponseWriter, r *http.Request) {
 	if chat == nil {
 		chat = &GoogleChat{Store: h.store}
 	}
-	if err := chat.post(r.Context(), webhook, "*Tracklines* is connected: notifications for this space will appear here. (Test sent by "+user+".)", ""); err != nil {
+	if err := chat.post(r.Context(), webhook, "*TrackLin.es* is connected: notifications for this space will appear here. (Test sent by "+user+".)", ""); err != nil {
 		http.Error(w, "Google Chat refused the test message: "+err.Error(), http.StatusBadGateway)
 		return
 	}

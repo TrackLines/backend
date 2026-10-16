@@ -193,7 +193,7 @@ func TestChatApp(t *testing.T) {
 
 	// an unlinked person gets a one-time link; a room is told it's personal only
 	rec := event(chatToken, dm("ADDED_TO_SPACE", "users/ava", "spaces/DMAVA"))
-	if rec.Code != 200 || !strings.Contains(rec.Body.String(), "Link your Tracklines account") || !strings.Contains(rec.Body.String(), "https://tracklin.es/chat/link?code=") {
+	if rec.Code != 200 || !strings.Contains(rec.Body.String(), "Link your TrackLin.es account") || !strings.Contains(rec.Body.String(), "https://tracklin.es/chat/link?code=") {
 		t.Fatalf("added: %d %s", rec.Code, rec.Body)
 	}
 	var top map[string]any
@@ -251,7 +251,7 @@ func TestChatApp(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := google.take("spaces/DMAVA")
-	if len(got) != 1 || got[0] != "*Sam Lee* assigned you TL-12: Fix login [Open in Tracklines](https://tracklin.es/tickets/6a3ec0a8-9946-4ae6-85a5-4c34b95cd572)" {
+	if len(got) != 1 || got[0] != "*Sam Lee* assigned you TL-12: Fix login [Open in TrackLin.es](https://tracklin.es/tickets/6a3ec0a8-9946-4ae6-85a5-4c34b95cd572)" {
 		t.Fatalf("assigned: %q", got)
 	}
 	google.mu.Lock()

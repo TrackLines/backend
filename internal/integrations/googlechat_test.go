@@ -148,11 +148,11 @@ func TestGoogleChat(t *testing.T) {
 	_ = chat.Notify(ctx, "org_gc", []string{"user_sam"}, notifications.Event{Kind: "assigned", Text: "assigned you SHP-1: Checkout", Actor: "user_ava", TicketID: shopTicket.ID})
 	_ = chat.Notify(ctx, "org_gc", []string{"user_ava"}, notifications.Event{Kind: "mention", Text: "mentioned you in SHP-1", Actor: "user_sam", TicketID: shopTicket.ID})
 	want := map[string][]string{
-		"SHOP": {"*Ava Smith* added SHP-1: Checkout to the backlog [Open in Tracklines](https://tracklin.es/tickets/" + shopTicket.ID + ")",
-			"*Sam Lee* finished SHP-1: Checkout, and it needs review [Open in Tracklines](https://tracklin.es/tickets/" + shopTicket.ID + ")"},
-		"ORG": {"*Ava Smith* added SHP-1: Checkout to the backlog [Open in Tracklines](https://tracklin.es/tickets/" + shopTicket.ID + ")",
-			"*Ava Smith* added DOC-1: Write guide to the backlog [Open in Tracklines](https://tracklin.es/tickets/" + docsTicket.ID + ")",
-			"*Ava Smith* assigned SHP-1: Checkout to Sam Lee [Open in Tracklines](https://tracklin.es/tickets/" + shopTicket.ID + ")"},
+		"SHOP": {"*Ava Smith* added SHP-1: Checkout to the backlog [Open in TrackLin.es](https://tracklin.es/tickets/" + shopTicket.ID + ")",
+			"*Sam Lee* finished SHP-1: Checkout, and it needs review [Open in TrackLin.es](https://tracklin.es/tickets/" + shopTicket.ID + ")"},
+		"ORG": {"*Ava Smith* added SHP-1: Checkout to the backlog [Open in TrackLin.es](https://tracklin.es/tickets/" + shopTicket.ID + ")",
+			"*Ava Smith* added DOC-1: Write guide to the backlog [Open in TrackLin.es](https://tracklin.es/tickets/" + docsTicket.ID + ")",
+			"*Ava Smith* assigned SHP-1: Checkout to Sam Lee [Open in TrackLin.es](https://tracklin.es/tickets/" + shopTicket.ID + ")"},
 	}
 	for space, msgs := range want {
 		if got := strings.Join(spaces.got[space+"/messages"], "\n---\n"); got != strings.Join(msgs, "\n---\n") {

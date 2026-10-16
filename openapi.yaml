@@ -1,6 +1,6 @@
 openapi: 3.1.0
 info:
-  title: TrackLines API
+  title: TrackLin.es API
   version: 1.0.0
   description: |
     Complete HTTP API for projects, boards, tickets, roadmaps, billing, and
@@ -13,7 +13,7 @@ info:
     response carries X-RateLimit-Limit / X-RateLimit-Remaining. MCP tool calls
     count like the REST calls they make. Browser sessions aren't limited.
 
-    Most private endpoints accept a Clerk session token or a TrackLines (`tl_ai_…` for AI agents, `tl_s_…` for services; older keys are `tl_…`)
+    Most private endpoints accept a Clerk session token or a TrackLin.es (`tl_ai_…` for AI agents, `tl_s_…` for services; older keys are `tl_…`)
     or BugFixes (`bf_…`) agent API key as a Bearer token. Projects, boards and
     roadmaps belong to a Clerk organization: a session sees its active
     organization's data, and a request without an active organization gets
@@ -40,7 +40,7 @@ security:
   - bearerAuth: []
 tags:
   - name: Contact
-    description: The public contact form; messages go to the Tracklines team.
+    description: The public contact form; messages go to the TrackLin.es team.
   - name: Projects
     description: Create, list, inspect, update, and delete projects.
   - name: Organizations
@@ -180,9 +180,9 @@ paths:
     get:
       tags: [Organizations]
       operationId: listOrganizationAdmins
-      summary: List the organization's TrackLines admins
+      summary: List the organization's TrackLin.es admins
       description: >-
-        Organizations and their members live in Clerk; TrackLines only records which members are admins.
+        Organizations and their members live in Clerk; TrackLin.es only records which members are admins.
         The first time an org's admins are needed, one is chosen from Clerk and stored: the user who created
         the organization if they are still a member, otherwise the longest-standing member with the Clerk
         org:admin role, otherwise the longest-standing member. granted_by records which rule applied
@@ -238,7 +238,7 @@ paths:
       tags: [Organizations]
       operationId: listOrganizationInvitations
       summary: List invitations created for the active organization
-      description: Org admins only. Pending, accepted, and revoked TrackLines invitations are returned newest first; expired pending invitations are reported as expired.
+      description: Org admins only. Pending, accepted, and revoked TrackLin.es invitations are returned newest first; expired pending invitations are reported as expired.
       responses:
         '200':
           description: Organization invitations.
@@ -297,7 +297,7 @@ paths:
       operationId: revokeOrganizationInvitation
       summary: Revoke a pending invitation
       responses:
-        '204': { description: Invitation revoked in Clerk and TrackLines. }
+        '204': { description: Invitation revoked in Clerk and TrackLin.es. }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { description: Requires a signed-in organization admin. }
         '404': { $ref: '#/components/responses/NotFound' }
@@ -307,7 +307,7 @@ paths:
     post:
       tags: [Organizations]
       operationId: acceptOrganizationInvitation
-      summary: Complete an accepted Clerk invitation in TrackLines
+      summary: Complete an accepted Clerk invitation in TrackLin.es
       description: >-
         The invitee must first accept the Clerk invitation. This endpoint then verifies the Clerk invitation,
         active organization membership, and a verified matching email. Team and project invitations create the
@@ -1064,7 +1064,7 @@ paths:
       tags: [Notifications]
       operationId: getGoogleChatLink
       summary: Whether your Google Chat is linked for personal messages
-      description: The Tracklines Google Chat app sends your own notifications (assigned, mentioned, review…) to your chat with it, once you've linked your account from the link it sends you.
+      description: The TrackLin.es Google Chat app sends your own notifications (assigned, mentioned, review…) to your chat with it, once you've linked your account from the link it sends you.
       responses:
         '200':
           description: available is false when the server has no Chat app.
@@ -1106,7 +1106,7 @@ paths:
     post:
       tags: [Notifications]
       operationId: googleChatEvents
-      summary: Requests from the Tracklines Google Chat app (Google only)
+      summary: Requests from the TrackLin.es Google Chat app (Google only)
       description: Signed by Google for this endpoint (Authorization Bearer ID token); anything else is refused.
       security: []
       responses:
@@ -1129,7 +1129,7 @@ paths:
       description: >-
         The browser's PushSubscription. The endpoint must be https on a known push service (Google, Mozilla,
         Apple, Microsoft): the server sends to it. The same browser subscribing again takes the row over.
-        The device then gets every notification from the inbox, even with Tracklines closed.
+        The device then gets every notification from the inbox, even with TrackLin.es closed.
       requestBody:
         required: true
         content:
@@ -1391,7 +1391,7 @@ paths:
       operationId: bitbucketWebhook
       summary: Bitbucket repository webhook, one per linked repo
       description: >-
-        Tracklines creates this webhook itself when an org admin links a Bitbucket repo (POST /projects/{id}/repos),
+        TrackLin.es creates this webhook itself when an org admin links a Bitbucket repo (POST /projects/{id}/repos),
         with its own random secret (sealed, never shown) and this URL naming the link; unlinking removes it.
         Deliveries are verified with that link's secret (X-Hub-Signature) and only affect that link's org and repo:
         pullrequest:* events (X-Event-Key) link PRs to the tickets they mention; MERGED closes them, once.
@@ -1936,7 +1936,7 @@ paths:
     post:
       tags: [Contact]
       operationId: sendEnquiry
-      summary: Send a contact-form message to the Tracklines team
+      summary: Send a contact-form message to the TrackLin.es team
       description: Public, no account needed, and rate limited per address. Filed in the ChewedFeed HQ enquiry inbox.
       security: []
       requestBody:
@@ -1963,7 +1963,7 @@ paths:
     post:
       tags: [Tickets]
       operationId: createShortLink
-      summary: A short link for a Tracklines link
+      summary: A short link for a TrackLin.es link
       description: 'For "Copy link": shortens a link to this site (tickets, boards…) through 1tn. The same link always gives the same short link. Links to any other site are refused.'
       security:
         - clerkSession: []
@@ -1976,7 +1976,7 @@ paths:
               required: [url]
               properties:
                 url: { type: string, example: 'https://tracklin.es/tickets/9205518f-7140-44cf-b155-4e9b8d6a2d48' }
-                title: { type: string, maxLength: 120, example: 'TL-204 on Tracklines', description: 'Shown for the short link (the shortener can''t read pages behind our sign-in). Anyone can look a short link''s title up, so keep it free of anything private. Default: Tracklines.' }
+                title: { type: string, maxLength: 120, example: 'TL-204 on TrackLin.es', description: 'Shown for the short link (the shortener can''t read pages behind our sign-in). Anyone can look a short link''s title up, so keep it free of anything private. Default: TrackLin.es.' }
       responses:
         '200':
           description: The short link.
@@ -2993,7 +2993,7 @@ paths:
     post:
       tags: [API keys]
       operationId: createApiKey
-      summary: Create a TrackLines API key
+      summary: Create a TrackLin.es API key
       description: The plaintext key is returned only once. This route requires a Clerk session.
       security:
         - clerkSession: []
@@ -3209,13 +3209,13 @@ components:
     bearerAuth:
       type: http
       scheme: bearer
-      bearerFormat: JWT or TrackLines API key
-      description: Clerk session token, TrackLines key (`tl_ai_…`, `tl_s_…`, or an older `tl_…`), or BugFixes `bf_` key, depending on the route.
+      bearerFormat: JWT or TrackLin.es API key
+      description: Clerk session token, TrackLin.es key (`tl_ai_…`, `tl_s_…`, or an older `tl_…`), or BugFixes `bf_` key, depending on the route.
     bugfixesBearer:
       type: http
       scheme: bearer
       bearerFormat: API key
-      description: TrackLines API key created for a BugFixes agent; key starts with `bf_`.
+      description: TrackLin.es API key created for a BugFixes agent; key starts with `bf_`.
     clerkSession:
       type: http
       scheme: bearer
@@ -3280,7 +3280,7 @@ components:
       type: object
       required: [id, org_id, email_address, scope, invited_by, status, expires_at, created_at]
       properties:
-        id: { type: string, format: uuid, description: "TrackLines invitation id used by inspect, revoke, and accept routes." }
+        id: { type: string, format: uuid, description: "TrackLin.es invitation id used by inspect, revoke, and accept routes." }
         org_id: { type: string }
         email_address: { type: string, format: email }
         scope: { type: string, enum: [organization, team, project] }
@@ -3427,7 +3427,7 @@ components:
         id: { type: string, format: uuid }
         name: { type: string }
         description: { type: string }
-        key_prefix: { type: string, example: TL, description: "Ticket keys are <key_prefix>-<number>. Worked out from the name on create (its capitals, e.g. TrackLines → TL), unique in the org." }
+        key_prefix: { type: string, example: TL, description: "Ticket keys are <key_prefix>-<number>. Worked out from the name on create (its capitals, e.g. TrackLin.es → TL), unique in the org." }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
         boards:

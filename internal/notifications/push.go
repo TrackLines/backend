@@ -123,7 +123,7 @@ func (p *Push) message(ctx context.Context, org string, e Event) Message {
 			}
 		}
 	}
-	m := Message{Title: "Tracklines", Body: actor + " " + e.Text, URL: "/", Tag: e.Kind}
+	m := Message{Title: "TrackLin.es", Body: actor + " " + e.Text, URL: "/", Tag: e.Kind}
 	if e.TicketID != "" {
 		var key string
 		_ = p.DB.QueryRow(ctx, `SELECT coalesce(pr.key_prefix || '-' || t.number, t.id::text) FROM tickets t JOIN projects pr ON pr.id = t.project_id WHERE t.id::text = $1`, e.TicketID).Scan(&key)

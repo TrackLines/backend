@@ -43,7 +43,7 @@ const (
 	chatAPIDomain = "https://chat.googleapis.com"
 )
 
-var ErrLinkCode = errors.New("this link has expired or was already used: message the Tracklines app in Google Chat for a new one")
+var ErrLinkCode = errors.New("this link has expired or was already used: message the TrackLin.es app in Google Chat for a new one")
 
 // ChatApp sends personal notifications through the Chat app and answers Chat's requests. A nil
 // *ChatApp is a server without the app set up: it notifies nobody and its endpoints say so.
@@ -267,7 +267,7 @@ func (c *ChatApp) Events(w http.ResponseWriter, r *http.Request) {
 	var text, button, buttonURL string
 	switch {
 	case space.Name != "" && !space.direct():
-		text = "I only send personal messages. Open a direct message with me to get yours. For a team space, add a webhook in Tracklines: Settings → Integrations → Google Chat."
+		text = "I only send personal messages. Open a direct message with me to get yours. For a team space, add a webhook in TrackLin.es: Settings → Integrations → Google Chat."
 	default:
 		linked, err := c.linked(ctx, user.Name, space)
 		if err != nil {
@@ -276,7 +276,7 @@ func (c *ChatApp) Events(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if linked {
-			text = "You’re linked. I’ll message you here when you’re assigned a ticket, mentioned, or something needs your review. To stop, unlink it in Tracklines: Your settings, in your account menu."
+			text = "You’re linked. I’ll message you here when you’re assigned a ticket, mentioned, or something needs your review. To stop, unlink it in TrackLin.es: Your settings, in your account menu."
 			button, buttonURL = "Your settings", c.Site+"/account"
 		} else {
 			code, err := c.newLinkCode(ctx, user.Name, space.Name)
@@ -285,8 +285,8 @@ func (c *ChatApp) Events(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, "unavailable", http.StatusServiceUnavailable)
 				return
 			}
-			text = "Hi! Link your Tracklines account and I’ll message you here when you’re assigned a ticket, mentioned, or something needs your review. The link works once, for 30 minutes."
-			button, buttonURL = "Link your Tracklines account", c.Site+"/chat/link?code="+url.QueryEscape(code)
+			text = "Hi! Link your TrackLin.es account and I’ll message you here when you’re assigned a ticket, mentioned, or something needs your review. The link works once, for 30 minutes."
+			button, buttonURL = "Link your TrackLin.es account", c.Site+"/chat/link?code="+url.QueryEscape(code)
 		}
 	}
 	httpx.JSON(w, http.StatusOK, chatReply(kind, addon, text, button, buttonURL))
@@ -402,7 +402,7 @@ func (c *ChatApp) Link(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	c.background(r.Context(), func(ctx context.Context) {
-		if err := c.sendTo(ctx, user, google, space, "You’re linked to Tracklines. I’ll message you here when something needs you.", ""); err != nil {
+		if err := c.sendTo(ctx, user, google, space, "You’re linked to TrackLin.es. I’ll message you here when something needs you.", ""); err != nil {
 			logs.Warnf("google chat app: linked message: %v", err)
 		}
 	})
@@ -509,7 +509,7 @@ func chatMessage(text, link string) map[string]any {
 	message := map[string]any{"text": text}
 	if link != "" {
 		message["cardsV2"] = []any{map[string]any{"cardId": "open", "card": map[string]any{"sections": []any{map[string]any{"widgets": []any{
-			map[string]any{"buttonList": map[string]any{"buttons": []any{map[string]any{"text": "Open in Tracklines", "onClick": map[string]any{"openLink": map[string]any{"url": link}}}}}},
+			map[string]any{"buttonList": map[string]any{"buttons": []any{map[string]any{"text": "Open in TrackLin.es", "onClick": map[string]any{"openLink": map[string]any{"url": link}}}}}},
 		}}}}}}
 	}
 	return message

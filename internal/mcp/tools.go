@@ -74,7 +74,7 @@ var tools = []tool{
 		"404 for tickets that didn't come from Bugfixes; available=false when the org hasn't connected Bugfixes or it's unreachable.",
 		method: "GET", path: "/api/tickets/{ticket_id}/bugfixes", props: map[string]any{"ticket_id": id("Ticket")}, required: []string{"ticket_id"}, readOnly: true},
 	{name: "get_ticket_prs", title: "Get ticket's pull requests", description: "Pull requests (GitHub/Bitbucket, in repos linked to the project) " +
-		"that mention the ticket in their branch, title or description (its key, its link, or a Tracklines short link to it), with their state (open, draft, merged, closed). Merging one closes the ticket.",
+		"that mention the ticket in their branch, title or description (its key, its link, or a TrackLin.es short link to it), with their state (open, draft, merged, closed). Merging one closes the ticket.",
 		method: "GET", path: "/api/tickets/{ticket_id}/prs", props: map[string]any{"ticket_id": id("Ticket")}, required: []string{"ticket_id"}, readOnly: true},
 	{name: "get_ticket", title: "Get ticket", description: "A ticket with where it lives (project, board, column, sprint), its blockers, sub-tickets and parent, and attachment_count: when it's above 0, call list_attachments and look at the files before starting.",
 		method: "GET", path: "/api/tickets/{ticket_id}", props: map[string]any{"ticket_id": id("Ticket")}, required: []string{"ticket_id"}, readOnly: true},

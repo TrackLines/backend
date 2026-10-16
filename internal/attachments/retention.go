@@ -26,7 +26,7 @@ const clockSQL = `GREATEST(a.created_at, COALESCE(a.kept_at, a.created_at))`
 const deleteOnSQL = `GREATEST(` + clockSQL + ` + interval '` + DeleteAt + `', a.warned_at + interval '28 days')`
 
 // Actor is who retention notifications come from: "Tracklines will delete …".
-const Actor = "Tracklines"
+const Actor = "TrackLin.es"
 
 // WarnOld marks files whose year is up and tells the org's admins and each file's uploader, one
 // notification per ticket. Returns how many files were newly warned about.

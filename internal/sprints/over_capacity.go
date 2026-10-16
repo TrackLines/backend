@@ -61,7 +61,7 @@ func (s Store) warnOver(ctx context.Context, o *overCapacity) {
 		return
 	}
 	notifications.Send(ctx, s.Notify, o.org, to, notifications.Event{
-		Kind: "over_capacity", Actor: "Tracklines", BoardID: o.board,
+		Kind: "over_capacity", Actor: "TrackLin.es", BoardID: o.board,
 		Text: fmt.Sprintf("started sprint %d on %s over capacity: %s %s against a limit of %s (velocity + 10%%), from unfinished work carried over",
 			o.number, o.boardName, num(o.used), o.unit, num(o.cap)),
 	})

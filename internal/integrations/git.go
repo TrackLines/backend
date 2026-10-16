@@ -355,7 +355,7 @@ func bitbucketRepoPath(fullName string) string {
 // bitbucketCreateHook adds a pull-request webhook to a repo, signed with secret; returns its uuid.
 func (g Git) bitbucketCreateHook(ctx context.Context, token, fullName, target, secret string) (string, error) {
 	body, _ := json.Marshal(map[string]any{
-		"description": "Tracklines", "url": target, "active": true, "secret": secret,
+		"description": "TrackLin.es", "url": target, "active": true, "secret": secret,
 		"events": []string{"pullrequest:created", "pullrequest:updated", "pullrequest:fulfilled", "pullrequest:rejected"},
 	})
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, orDefault(g.BitbucketAPI, "https://api.bitbucket.org/2.0")+bitbucketRepoPath(fullName)+"/hooks", bytes.NewReader(body))
