@@ -68,6 +68,9 @@ func (s Service) ChangePlan(w http.ResponseWriter, r *http.Request) {
 	if _, err := s.DB.Exec(r.Context(), `UPDATE org_billing SET plan = $2, updated_at = now() WHERE org_id = $1`, org, in.Plan); err != nil {
 		logs.Errorf("billing: change plan: %v", err)
 	}
+	if err := SyncMemberCap(r.Context(), s.DB, s.ClerkOrgs, org); err != nil { // Enterprise: unlimited members; Pro: 20 (TL-418)
+		logs.Warnf("billing: member cap %s: %v", org, err)
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -76,6 +79,7 @@ func (s Service) ChangePlan(w http.ResponseWriter, r *http.Request) {
 type PlanInfo struct {
 	ID       string `json:"id"`
 	Projects *int   `json:"projects"`
+	Members  *int   `json:"members"` // nil: unlimited (TL-418)
 	Price    *Price `json:"price"`
 }
 
@@ -91,8 +95,8 @@ func (s Service) Plans(w http.ResponseWriter, r *http.Request) {
 	plansCache.Lock()
 	defer plansCache.Unlock()
 	if plansCache.list == nil || time.Since(plansCache.at) > time.Hour {
-		free, pro := FreeProjectLimit, ProProjectLimit
-		list := []PlanInfo{{ID: Free, Projects: &free, Price: &Price{Amount: 0}}, {ID: Pro, Projects: &pro}, {ID: Enterprise}}
+		free, pro, members := FreeProjectLimit, ProProjectLimit, MemberLimit
+		list := []PlanInfo{{ID: Free, Projects: &free, Members: &members, Price: &Price{Amount: 0}}, {ID: Pro, Projects: &pro, Members: &members}, {ID: Enterprise}}
 		for i := range list[1:] {
 			p := &list[i+1]
 			id := s.configuredPrice(p.ID)

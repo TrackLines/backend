@@ -16,7 +16,23 @@ const (
 
 	FreeProjectLimit = 1
 	ProProjectLimit  = 5
+
+	// MemberLimit is Free's and Pro's cap on people in the organization (TL-418): Enterprise's
+	// difference is unlimited members. AI agents (API keys) aren't members and don't count.
+	MemberLimit = 20
 )
+
+// memberLimits is each plan's member cap; -1 is unlimited.
+var memberLimits = map[string]int{Free: MemberLimit, Pro: MemberLimit, Enterprise: -1}
+
+// MemberLimitOf returns the organization's member cap: -1 is unlimited.
+func MemberLimitOf(ctx context.Context, db *pgxpool.Pool, org string) (int, error) {
+	plan, err := PlanOf(ctx, db, org)
+	if err != nil {
+		return MemberLimit, err
+	}
+	return memberLimits[plan], nil
+}
 
 // limits is each plan's project cap; -1 is unlimited.
 var limits = map[string]int{Free: FreeProjectLimit, Pro: ProProjectLimit, Enterprise: -1}

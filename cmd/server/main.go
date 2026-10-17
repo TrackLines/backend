@@ -4,6 +4,8 @@ import (
 	"cmp"
 	"context"
 	"fmt"
+	"github.com/clerk/clerk-sdk-go/v2"
+	"github.com/clerk/clerk-sdk-go/v2/organization"
 	"os"
 	"strconv"
 	"strings"
@@ -94,6 +96,7 @@ func run() error {
 		WebhookSecret:     pc.Stripe.WebhookSecret,
 		ReturnURL:         pc.PortalURL,
 		ChewedFeed:        billing.ChewedFeed{URL: pc.ChewedFeedURL, Key: pc.ChewedFeedKey},
+		ClerkOrgs:         organization.NewClient(&clerk.ClientConfig{}), // member caps follow the plan (TL-418)
 	}
 	return service.New(c, db, vk, fl, bill, port).Start()
 }

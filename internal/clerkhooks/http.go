@@ -13,11 +13,14 @@ import (
 	"github.com/bugfixes/go-bugfixes/logs"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/tracklines/backend/internal/billing"
 )
 
 type System struct {
 	DB     *pgxpool.Pool
 	Secret string // CLERK_WEBHOOK_SECRET (whsec_…); empty = endpoint answers 503
+	// ClerkOrgs sets a new organization's member cap (TL-418); nil: left to the startup sync
+	ClerkOrgs billing.OrgUpdater
 }
 
 func NewSystem(db *pgxpool.Pool, secret string) System { return System{DB: db, Secret: secret} }
@@ -70,6 +73,9 @@ func (s System) Webhook(now func() time.Time) http.HandlerFunc {
 // are kept 30 days (recoverable; nobody can reach them without the org), then Purge removes them for
 // good. Ticket assignments are kept too.
 func (s System) apply(ctx context.Context, e event) error {
+	if e.Type == "organization.created" { // a new organization starts on Free: up to 20 members (TL-418)
+		return billing.SyncMemberCap(ctx, s.DB, s.ClerkOrgs, e.Data.ID)
+	}
 	var stmts []string
 	var args []any
 	switch e.Type {

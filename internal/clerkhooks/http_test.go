@@ -7,6 +7,8 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"github.com/clerk/clerk-sdk-go/v2"
+	"github.com/clerk/clerk-sdk-go/v2/organization"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -196,5 +198,37 @@ func TestWebhook(t *testing.T) {
 	// other event types are acknowledged and ignored
 	if code := send(`{"type":"user.created","data":{"id":"dave"}}`); code != http.StatusNoContent {
 		t.Fatalf("ignored type: %d", code)
+	}
+}
+
+// fakeOrgs records the member cap Clerk is told for each organization.
+type fakeOrgs map[string]int64
+
+func (f fakeOrgs) Update(_ context.Context, id string, p *organization.UpdateParams) (*clerk.Organization, error) {
+	f[id] = *p.MaxAllowedMemberships
+	return &clerk.Organization{ID: id}, nil
+}
+
+// TL-418: a new organization starts on Free, so Clerk is told it holds up to 20 members.
+func TestNewOrganizationGetsTheMemberCap(t *testing.T) {
+	db, err := pgxpool.New(context.Background(), os.Getenv("TEST_DATABASE_URL"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	db.Exec(context.Background(), `DELETE FROM org_billing WHERE org_id = 'org_new'`)
+	orgs := fakeOrgs{}
+	s := NewSystem(db, secret)
+	s.ClerkOrgs = orgs
+	now := time.Now()
+	body := `{"type":"organization.created","data":{"id":"org_new"}}`
+	req := httptest.NewRequest("POST", "/api/webhooks/clerk", strings.NewReader(body))
+	req.Header.Set("svix-id", "msg_new_org")
+	req.Header.Set("svix-timestamp", fmt.Sprint(now.Unix()))
+	req.Header.Set("svix-signature", sign(key, "msg_new_org", now, body))
+	rec := httptest.NewRecorder()
+	s.Webhook(func() time.Time { return now })(rec, req)
+	if rec.Code != 204 || orgs["org_new"] != 20 {
+		t.Errorf("new organization: %d, cap %d", rec.Code, orgs["org_new"])
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/mail"
 	"strings"
@@ -17,6 +18,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/tracklines/backend/internal/auth"
+	"github.com/tracklines/backend/internal/billing"
 	"github.com/tracklines/backend/internal/httpx"
 	"github.com/tracklines/backend/internal/organizations"
 )
@@ -125,6 +127,13 @@ func (h System) Create(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "user is already an organization member; add them to the team directly", http.StatusConflict)
 		return
 	}
+	if full, err := h.full(r, org); err != nil {
+		writeClerkErr(w, "check the plan's member limit", err)
+		return
+	} else if full != "" {
+		http.Error(w, full, http.StatusPaymentRequired)
+		return
+	}
 
 	metadata, _ := json.Marshal(map[string]string{"tracklines_scope": in.Scope})
 	if in.TargetID != nil {
@@ -164,6 +173,28 @@ func (h System) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.JSON(w, http.StatusCreated, out)
+}
+
+// full says why the organization can't invite anyone else, or "" if it can (TL-418): Free and Pro
+// allow up to 20 members, counting invitations still waiting to be accepted. AI agents don't count.
+func (h System) full(r *http.Request, org string) (string, error) {
+	limit, err := billing.MemberLimitOf(r.Context(), h.db, org)
+	if err != nil || limit < 0 {
+		return "", err
+	}
+	one := int64(1)
+	members, err := h.memberships.List(r.Context(), &organizationmembership.ListParams{OrganizationID: org, ListParams: clerk.ListParams{Limit: &one}})
+	if err != nil {
+		return "", err
+	}
+	var pending int64
+	if err := h.db.QueryRow(r.Context(), `SELECT count(*) FROM invitations WHERE org_id = $1 AND status = 'pending' AND expires_at > now()`, org).Scan(&pending); err != nil {
+		return "", err
+	}
+	if members.TotalCount+pending < int64(limit) {
+		return "", nil
+	}
+	return fmt.Sprintf("your plan includes up to %d members, counting invitations not yet accepted; upgrade to Enterprise for unlimited members", limit), nil
 }
 
 func (h System) List(w http.ResponseWriter, r *http.Request) {

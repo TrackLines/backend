@@ -48,8 +48,8 @@ func (s Service) Portal(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusOK, map[string]string{"url": url})
 }
 
-// status reports the active organization's plan for the frontend: {"paid": bool, "project_limit": n
-// (-1 = unlimited), "billed": bool, "can_manage": bool}. billed = paid through a Stripe subscription,
+// status reports the active organization's plan for the frontend: {"paid": bool, "project_limit": n,
+// "member_limit": n (-1 = unlimited, TL-418), "billed": bool, "can_manage": bool}. billed = paid through a Stripe subscription,
 // so there's billing to manage; can_manage = the caller is an org admin, who buys and manages it.
 func (s Service) Status(w http.ResponseWriter, r *http.Request) {
 	org := auth.OrgID(r.Context())
@@ -71,5 +71,5 @@ func (s Service) Status(w http.ResponseWriter, r *http.Request) {
 	if s.IsAdmin != nil && org != "" && !auth.ViaAPIKey(r.Context()) {
 		manage, _ = s.IsAdmin(r.Context(), org, user) // can't tell = no buttons; the endpoints check again
 	}
-	httpx.JSON(w, http.StatusOK, map[string]any{"plan": tier, "paid": tier != Free, "project_limit": limit, "billed": billed, "can_manage": manage})
+	httpx.JSON(w, http.StatusOK, map[string]any{"plan": tier, "paid": tier != Free, "project_limit": limit, "member_limit": memberLimits[tier], "billed": billed, "can_manage": manage})
 }

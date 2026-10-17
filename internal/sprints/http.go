@@ -17,11 +17,10 @@ import (
 )
 
 type System struct {
-	store   Store
-	admins  organizations.Admins
-	live    live.System
-	notify  notifications.Notifier // nil: nobody is told
-	reports func() bool            // sprint reports' flag (TL-396); nil: off
+	store  Store
+	admins organizations.Admins
+	live   live.System
+	notify notifications.Notifier // nil: nobody is told
 }
 
 // NewSystem exposes the sprint handlers; routes are declared in internal/service.go.

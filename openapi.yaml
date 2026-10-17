@@ -262,6 +262,7 @@ paths:
           application/json:
             schema: { $ref: '#/components/schemas/InvitationInput' }
       responses:
+        '402': { description: "The plan's member limit is reached (Free and Pro: 20, counting invitations not yet accepted); upgrade to Enterprise." }
         '201':
           description: Invitation created. accept_url is the Clerk-hosted invitation link.
           content:
@@ -2427,7 +2428,7 @@ paths:
     get:
       tags: [Sprints]
       operationId: boardSprintReport
-      summary: "How a board's sprints went over a period (TL-397): sprints that closed in it plus the open one, totals, the period before for trends, and a one-line summary. Never per person. 404 while the sprint-reports flag is off."
+      summary: "How a board's sprints went over a period (TL-397): sprints that closed in it plus the open one, totals, the period before for trends, and a one-line summary. Never per person."
       responses:
         '200':
           description: The report. Sprints from before reports were recorded have estimated (planned = what they held at close) and no added/removed.
@@ -2466,7 +2467,7 @@ paths:
                   totals: { $ref: '#/components/schemas/ReportTotals' }
                   previous: { $ref: '#/components/schemas/ReportTotals' }
         '400': { description: Bad dates. }
-        '404': { description: Not your organization's board, or reports are off. }
+        '404': { description: Not your organization's board. }
   /projects/{projectId}/reports/sprints:
     parameters:
       - { name: projectId, in: path, required: true, schema: { type: string, format: uuid } }
@@ -2476,11 +2477,11 @@ paths:
     get:
       tags: [Sprints]
       operationId: projectSprintReport
-      summary: "A project's sprint boards together (TL-398): each board's report, points and tickets totalled apart, predictability across both, and calendar months. Anyone in the organization; 404 while sprint-reports is off."
+      summary: "A project's sprint boards together (TL-398): each board's report, points and tickets totalled apart, predictability across both, and calendar months. Anyone in the organization."
       responses:
         '200': { description: The roll-up., content: { application/json: { schema: { $ref: '#/components/schemas/ReportRollup' } } } }
         '400': { description: Bad dates. }
-        '404': { description: Not your organization's project, or reports are off. }
+        '404': { description: Not your organization's project. }
   /org/reports/sprints:
     parameters:
       - { name: from, in: query, schema: { type: string, format: date }, description: "First day (in the caller's Tracklines-Timezone); default 90 days ago." }
@@ -2493,7 +2494,6 @@ paths:
       responses:
         '200': { description: The roll-up., content: { application/json: { schema: { $ref: '#/components/schemas/ReportRollup' } } } }
         '403': { description: Not an organization admin. }
-        '404': { description: Reports are off. }
   /boards/{boardId}/velocity:
     parameters:
       - $ref: '#/components/parameters/BoardId'
@@ -3312,6 +3312,7 @@ paths:
                   plan: { type: string, enum: [free, pro, enterprise], description: 'Free: 1 project. Pro: 5. Enterprise: unlimited.' }
                   paid: { type: boolean }
                   project_limit: { type: integer, description: '-1 means unlimited.' }
+                  member_limit: { type: integer, description: 'People allowed in the organization (TL-418): 20 on Free and Pro, -1 (unlimited) on Enterprise. AI agents do not count.' }
                   billed: { type: boolean, description: "Paid through a Stripe subscription, so the billing portal can manage it. false for free plans and for plans granted by hand; the portal answers 409 for those." }
                   can_manage: { type: boolean, description: The caller is an org admin, so may upgrade or manage the plan. }
         '401': { $ref: '#/components/responses/Unauthorized' }
@@ -3376,6 +3377,7 @@ paths:
                   properties:
                     id: { type: string, enum: [free, pro, enterprise] }
                     projects: { type: [integer, 'null'] }
+                    members: { type: [integer, 'null'], description: 'Member limit; null is unlimited (TL-418).' }
                     price:
                       type: [object, 'null']
                       properties:

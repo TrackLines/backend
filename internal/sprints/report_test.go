@@ -119,9 +119,8 @@ func TestBoardReport(t *testing.T) {
 		t.Errorf("summary: %q", rep.Summary)
 	}
 
-	// over HTTP: behind the flag; another org can't read it; nothing about people
-	on := true
-	h := System{store: s}.WithReports(func() bool { return on })
+	// over HTTP: another org can't read it; nothing about people
+	h := System{store: s}
 	get := func(org, query string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest("GET", "/api/boards/"+b.ID+"/reports/sprints"+query, nil)
 		req = req.WithContext(auth.WithAPIKey(req.Context(), "user_1", org, "k", "ai"))
@@ -151,10 +150,6 @@ func TestBoardReport(t *testing.T) {
 	}
 	if get("rp1", "?from=2026-10-10&to=2026-10-01").Code != 400 || get("rp1", "?from=yesterday").Code != 400 || get("rp1", "?from=2020-01-01&to=2026-01-01").Code != 400 {
 		t.Error("bad ranges accepted")
-	}
-	on = false
-	if get("rp1", "").Code != 404 {
-		t.Error("reports shown with the flag off")
 	}
 }
 

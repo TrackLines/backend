@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"github.com/clerk/clerk-sdk-go/v2"
+	"github.com/clerk/clerk-sdk-go/v2/organization"
 	"github.com/clerk/clerk-sdk-go/v2/organizationmembership"
 	"github.com/clerk/clerk-sdk-go/v2/user"
 	"net/http"
@@ -33,6 +34,7 @@ import (
 	"github.com/tracklines/backend/internal/intake"
 	"github.com/tracklines/backend/internal/integrations"
 	"github.com/tracklines/backend/internal/invitations"
+	"github.com/tracklines/backend/internal/legal"
 	"github.com/tracklines/backend/internal/live"
 	"github.com/tracklines/backend/internal/mcp"
 	"github.com/tracklines/backend/internal/notifications"
@@ -109,6 +111,13 @@ func (s *Service) calendarSync(members clerkcache.Memberships) integrations.Cale
 	return integrations.CalendarSync{DB: s.DB, Google: s.gcal, Members: members, Users: users}
 }
 
+// clerkHooks: Clerk's webhooks, which also give a new organization its member cap (TL-418).
+func clerkHooks(db *pgxpool.Pool, secret string) clerkhooks.System {
+	h := clerkhooks.NewSystem(db, secret)
+	h.ClerkOrgs = organization.NewClient(&clerk.ClientConfig{})
+	return h
+}
+
 // flag is a flags.gg feature flag (cached by the client), off without flags.gg.
 func (s *Service) flag(name string) func() bool {
 	return func() bool { return s.Flags != nil && s.Flags.Is(name).Enabled() }
@@ -133,6 +142,10 @@ func (s *Service) Start() error {
 	// that starts over capacity tells the board's managers (TL-149)
 	_, _, _, _, notify := s.notifiers()
 	go sprints.Store{DB: s.DB, Notify: notify}.RunAutoClose(ctx, time.Minute)
+	// every organization's Clerk member cap matches its plan: 20 on Free and Pro, unlimited on Enterprise (TL-418)
+	go billing.SyncAllMemberCaps(ctx, s.DB, organization.NewClient(&clerk.ClientConfig{}))
+	// a new version of the Terms or Privacy policy on the web app: everyone's told once, in-app (TL-424)
+	go legal.Announcer{DB: s.DB, Site: siteURL(config.Get(s.Config).AuthorizedParties())}.Run(ctx, time.Hour)
 	// who's on holiday, from Google Calendar (TL-406): every connected org, hourly, while the flag is on
 	go s.calendarSync(clerkcache.Memberships{Next: organizationmembership.NewClient(&clerk.ClientConfig{}), VK: s.Valkey, TTL: time.Minute}).Run(ctx, time.Hour)
 	// the bin and deleted organizations are purged, and deleted files removed, by Railway cron jobs
@@ -343,7 +356,7 @@ func (s *Service) Handler() http.Handler {
 	mux.Handle("GET /api/projects/{id}/labels", signedIn(t.ProjectLabels)) // labels in use, for suggestions
 
 	// Sprints — per team board; closing by hand just closes (the next waits for start); running out rolls into the next
-	sp := sprints.NewSystem(s.DB, o.AdminModel()).WithLive(s.Valkey).WithNotifier(notify).WithReports(s.flag("sprint-reports"))
+	sp := sprints.NewSystem(s.DB, o.AdminModel()).WithLive(s.Valkey).WithNotifier(notify)
 	lv := live.New(s.Valkey, boards.Store{DB: s.DB})
 	lv.IsAdmin = o.AdminModel().IsAdmin
 	mux.Handle("POST /api/boards/{id}/live/standup", signedIn(lv.Start))
@@ -368,7 +381,7 @@ func (s *Service) Handler() http.Handler {
 	mux.Handle("GET /api/boards/{id}/sprints", signedIn(sp.List))
 	mux.Handle("POST /api/boards/{id}/sprints", signedIn(sp.Start))
 	mux.Handle("GET /api/boards/{id}/velocity", signedIn(sp.Velocity))               // per closed sprint + open sprint burn
-	mux.Handle("GET /api/boards/{id}/reports/sprints", signedIn(sp.BoardReport))     // sprint reports (TL-397); ?from=&to=, flag sprint-reports
+	mux.Handle("GET /api/boards/{id}/reports/sprints", signedIn(sp.BoardReport))     // sprint reports (TL-397); ?from=&to=, ?format=md
 	mux.Handle("GET /api/projects/{id}/reports/sprints", signedIn(sp.ProjectReport)) // a project's sprint boards together (TL-398)
 	mux.Handle("GET /api/org/reports/sprints", signedIn(sp.OrgReport))               // every project; org admins only
 	mux.Handle("GET /api/sprints/{id}", signedIn(sp.Get))                            // read-only: burn data and tickets
@@ -425,7 +438,7 @@ func (s *Service) Handler() http.Handler {
 	// Clerk (via Svix) authenticates by signature: org/user removals clean up admins, team members and API keys
 	// Contact form: files enquiries in ChewedFeed HQ's inbox; a few per address per minute, and 20 a minute in all
 	mux.Handle("POST /api/enquiries", ratelimit.Total(limits, "enquiry-all", 20, time.Now)(public("enquiry", 3, enquiries.NewSystem(config.Get(s.Config).ChewedFeedURL, config.Get(s.Config).ChewedFeedKey).Create)))
-	mux.Handle("POST /api/webhooks/clerk", public("webhook-clerk", 600, clerkhooks.NewSystem(s.DB, config.Get(s.Config).ClerkWebhookSecret).Webhook(time.Now)))
+	mux.Handle("POST /api/webhooks/clerk", public("webhook-clerk", 600, clerkHooks(s.DB, config.Get(s.Config).ClerkWebhookSecret).Webhook(time.Now)))
 
 	// Every request: API key (tl_…) or optional Clerk auth + users row for signed-in callers, then
 	// recovery/request id/logging (bugfixes) and CORS.

@@ -96,5 +96,8 @@ func applySubscription(ctx context.Context, s Service, sub Subscription) (*chewe
 	if err != nil {
 		return nil, err
 	}
+	if err := SyncMemberCap(ctx, s.DB, s.ClerkOrgs, c.ExternalCustomerID); err != nil { // the plan's member cap (TL-418)
+		logs.Warnf("billing: member cap %s: %v", c.ExternalCustomerID, err)
+	}
 	return &c, nil
 }

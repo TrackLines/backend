@@ -138,9 +138,8 @@ func TestRollups(t *testing.T) {
 		t.Error("another organization's sprints counted")
 	}
 
-	// over HTTP: the org report is for admins; a project of another org isn't found; the flag gates both
-	on := true
-	h := NewSystem(db, organizations.Admins{DB: db}).WithReports(func() bool { return on })
+	// over HTTP: the org report is for admins; a project of another org isn't found
+	h := NewSystem(db, organizations.Admins{DB: db})
 	session := func(user string) context.Context {
 		return clerk.ContextWithSessionClaims(ctx, func() *clerk.SessionClaims {
 			c := &clerk.SessionClaims{RegisteredClaims: clerk.RegisteredClaims{Subject: user}}
@@ -176,9 +175,5 @@ func TestRollups(t *testing.T) {
 	}
 	if projGet(p1, "ru_org") != 200 || projGet(pOther, "ru_org") != 404 {
 		t.Error("project report access")
-	}
-	on = false
-	if projGet(p1, "ru_org") != 404 || orgGet(session("ru_admin")).Code != 404 {
-		t.Error("roll-ups shown with the flag off")
 	}
 }

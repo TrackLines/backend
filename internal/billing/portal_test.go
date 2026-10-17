@@ -73,10 +73,10 @@ func TestPortalAndStatus(t *testing.T) {
 	}
 	// everyone in the org sees its plan; only admins may manage it
 	for _, c := range []struct{ user, org, want string }{
-		{"admin", "org_p0", `{"billed":false,"can_manage":true,"paid":false,"plan":"free","project_limit":1}`},
-		{"admin", "org_p1", `{"billed":true,"can_manage":true,"paid":true,"plan":"enterprise","project_limit":-1}`},
-		{"member", "org_p1", `{"billed":true,"can_manage":false,"paid":true,"plan":"enterprise","project_limit":-1}`},
-		{"admin", "org_p2", `{"billed":false,"can_manage":true,"paid":true,"plan":"enterprise","project_limit":-1}`},
+		{"admin", "org_p0", `{"billed":false,"can_manage":true,"member_limit":20,"paid":false,"plan":"free","project_limit":1}`},
+		{"admin", "org_p1", `{"billed":true,"can_manage":true,"member_limit":-1,"paid":true,"plan":"enterprise","project_limit":-1}`},
+		{"member", "org_p1", `{"billed":true,"can_manage":false,"member_limit":-1,"paid":true,"plan":"enterprise","project_limit":-1}`},
+		{"admin", "org_p2", `{"billed":false,"can_manage":true,"member_limit":-1,"paid":true,"plan":"enterprise","project_limit":-1}`},
 	} {
 		rec = httptest.NewRecorder()
 		s.Status(rec, inOrg(httptest.NewRequest("GET", "/", nil), c.user, c.org))

@@ -20,6 +20,7 @@ type Notification struct {
 	TicketID  *string `json:"ticket_id"`
 	TicketKey *string `json:"ticket_key"`
 	BoardID   *string `json:"board_id"`
+	Link      *string `json:"link,omitempty"` // where a notice that isn't about a ticket or board opens (TL-424)
 	CreatedAt string  `json:"created_at"`
 	ReadAt    *string `json:"read_at"`
 }
@@ -54,11 +55,11 @@ func (h System) List(w http.ResponseWriter, r *http.Request) {
 	if v, err := strconv.Atoi(r.URL.Query().Get("per_page")); err == nil && v > 0 && v <= 100 {
 		per = v
 	}
-	rows, err := h.store.DB.Query(r.Context(), `SELECT n.id, n.kind, n.text, n.actor, n.ticket_id,
+	rows, err := h.store.DB.Query(r.Context(), `SELECT n.id, n.kind, n.text, n.actor, n.ticket_id, n.link,
 			(SELECT p.key_prefix || '-' || t.number FROM tickets t JOIN projects p ON p.id = t.project_id WHERE t.id = n.ticket_id),
 			n.board_id, to_char(n.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
 			to_char(n.read_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')
-		FROM notifications n WHERE n.user_id = $1 AND n.org_id = $2
+		FROM notifications n WHERE n.user_id = $1 AND n.org_id IN ($2, '')
 		ORDER BY n.read_at IS NULL DESC, n.created_at DESC, n.id DESC LIMIT $3 OFFSET $4`, user, org, per, (page-1)*per)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -66,7 +67,7 @@ func (h System) List(w http.ResponseWriter, r *http.Request) {
 	}
 	out, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (Notification, error) {
 		var n Notification
-		return n, row.Scan(&n.ID, &n.Kind, &n.Text, &n.Actor, &n.TicketID, &n.TicketKey, &n.BoardID, &n.CreatedAt, &n.ReadAt)
+		return n, row.Scan(&n.ID, &n.Kind, &n.Text, &n.Actor, &n.TicketID, &n.Link, &n.TicketKey, &n.BoardID, &n.CreatedAt, &n.ReadAt)
 	})
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -85,7 +86,7 @@ func (h System) UnreadCount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var n int
-	if err := h.store.DB.QueryRow(r.Context(), `SELECT count(*) FROM notifications WHERE user_id = $1 AND org_id = $2 AND read_at IS NULL`, user, org).Scan(&n); err != nil {
+	if err := h.store.DB.QueryRow(r.Context(), `SELECT count(*) FROM notifications WHERE user_id = $1 AND org_id IN ($2, '') AND read_at IS NULL`, user, org).Scan(&n); err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
@@ -99,7 +100,7 @@ func (h System) Read(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	tag, err := h.store.DB.Exec(r.Context(), `UPDATE notifications SET read_at = COALESCE(read_at, now())
-		WHERE id::text = $1 AND user_id = $2 AND org_id = $3`, r.PathValue("id"), user, org)
+		WHERE id::text = $1 AND user_id = $2 AND org_id IN ($3, '')`, r.PathValue("id"), user, org)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
@@ -117,7 +118,7 @@ func (h System) ReadAll(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if _, err := h.store.DB.Exec(r.Context(), `UPDATE notifications SET read_at = now() WHERE user_id = $1 AND org_id = $2 AND read_at IS NULL`, user, org); err != nil {
+	if _, err := h.store.DB.Exec(r.Context(), `UPDATE notifications SET read_at = now() WHERE user_id = $1 AND org_id IN ($2, '') AND read_at IS NULL`, user, org); err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
@@ -130,7 +131,7 @@ func (h System) Dismiss(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	tag, err := h.store.DB.Exec(r.Context(), `DELETE FROM notifications WHERE id::text = $1 AND user_id = $2 AND org_id = $3`, r.PathValue("id"), user, org)
+	tag, err := h.store.DB.Exec(r.Context(), `DELETE FROM notifications WHERE id::text = $1 AND user_id = $2 AND org_id IN ($3, '')`, r.PathValue("id"), user, org)
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
@@ -148,7 +149,7 @@ func (h System) ClearRead(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if _, err := h.store.DB.Exec(r.Context(), `DELETE FROM notifications WHERE user_id = $1 AND org_id = $2 AND read_at IS NOT NULL`, user, org); err != nil {
+	if _, err := h.store.DB.Exec(r.Context(), `DELETE FROM notifications WHERE user_id = $1 AND org_id IN ($2, '') AND read_at IS NOT NULL`, user, org); err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}

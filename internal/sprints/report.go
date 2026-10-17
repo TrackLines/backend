@@ -393,9 +393,6 @@ func trim(f float64) string { return strconv.FormatFloat(math.Round(f*10)/10, 'f
 
 // --- HTTP ---
 
-// WithReports turns sprint reports on while enabled says so (flags.gg sprint-reports, TL-396).
-func (h System) WithReports(enabled func() bool) System { h.reports = enabled; return h }
-
 var errRange = errors.New("from and to are dates (YYYY-MM-DD), from before to, at most two years apart")
 
 // ReportRange reads ?from=&to= (whole days in the caller's time zone, to inclusive). Default: the last
@@ -427,10 +424,6 @@ func ReportRange(r *http.Request) (time.Time, time.Time, error) {
 
 // BoardReport: GET /api/boards/{id}/reports/sprints?from=&to=. Anyone in the board's organization.
 func (h System) BoardReport(w http.ResponseWriter, r *http.Request) {
-	if h.reports == nil || !h.reports() {
-		http.NotFound(w, r)
-		return
-	}
 	from, to, err := ReportRange(r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)

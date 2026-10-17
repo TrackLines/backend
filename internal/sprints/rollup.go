@@ -246,10 +246,6 @@ func rollupSummary(now, before OverallTotals, boards int) string {
 
 // ProjectReport: GET /api/projects/{id}/reports/sprints?from=&to=. Anyone in the project's organization.
 func (h System) ProjectReport(w http.ResponseWriter, r *http.Request) {
-	if h.reports == nil || !h.reports() {
-		http.NotFound(w, r)
-		return
-	}
 	from, to, err := ReportRange(r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -270,10 +266,6 @@ func (h System) ProjectReport(w http.ResponseWriter, r *http.Request) {
 
 // OrgReport: GET /api/org/reports/sprints?from=&to=. Organization admins only.
 func (h System) OrgReport(w http.ResponseWriter, r *http.Request) {
-	if h.reports == nil || !h.reports() {
-		http.NotFound(w, r)
-		return
-	}
 	org, _, ok := h.admins.RequireAdmin(w, r)
 	if !ok {
 		return

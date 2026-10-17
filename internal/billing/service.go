@@ -20,6 +20,8 @@ type Service struct {
 	ChewedFeed        ChewedFeed
 	// IsAdmin: is user an admin of org (organizations.Admins.IsAdmin). Only admins pay for the org's plan.
 	IsAdmin func(ctx context.Context, org, user string) (bool, error)
+	// ClerkOrgs keeps Clerk's member cap in step with the plan (TL-418); nil: not synced
+	ClerkOrgs OrgUpdater
 }
 
 func (s Service) configured() bool {
