@@ -140,6 +140,9 @@ func (h System) applyLabels(r *http.Request, user, id string, in ticketInput, t 
 }
 
 func writeErr(w http.ResponseWriter, err error) {
+	if httpx.Canceled(err) {
+		return // the client left: nobody to answer, nothing to report
+	}
 	var locked SprintLockedError
 	var unestimated EstimateRequiredError
 	switch {

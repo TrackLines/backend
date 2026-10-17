@@ -286,6 +286,9 @@ func (a Admins) session(w http.ResponseWriter, r *http.Request) (string, string,
 
 // WriteErr maps the admin model's errors to responses.
 func WriteErr(w http.ResponseWriter, err error) {
+	if httpx.Canceled(err) {
+		return // the client left: nobody to answer, nothing to report
+	}
 	switch {
 	case errors.Is(err, ErrNotMember):
 		http.Error(w, err.Error(), http.StatusUnprocessableEntity)

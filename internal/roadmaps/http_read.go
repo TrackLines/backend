@@ -37,6 +37,9 @@ func (h System) WithPeople(p func(ctx context.Context, org string) ([]notificati
 }
 
 func writeErr(w http.ResponseWriter, err error) {
+	if httpx.Canceled(err) {
+		return // the client left: nobody to answer, nothing to report
+	}
 	switch {
 	case errors.Is(err, ErrNotFound):
 		http.Error(w, "not found", http.StatusNotFound)

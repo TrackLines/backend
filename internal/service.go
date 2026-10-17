@@ -344,7 +344,7 @@ func (s *Service) Handler() http.Handler {
 	mux.Handle("GET /api/projects/{id}/labels", signedIn(t.ProjectLabels)) // labels in use, for suggestions
 
 	// Sprints — per team board; closing by hand just closes (the next waits for start); running out rolls into the next
-	sp := sprints.NewSystem(s.DB, o.AdminModel()).WithLive(s.Valkey).WithNotifier(notify)
+	sp := sprints.NewSystem(s.DB, o.AdminModel()).WithLive(s.Valkey).WithNotifier(notify).WithReports(s.flag("sprint-reports"))
 	lv := live.New(s.Valkey, boards.Store{DB: s.DB})
 	lv.IsAdmin = o.AdminModel().IsAdmin
 	mux.Handle("POST /api/boards/{id}/live/standup", signedIn(lv.Start))
@@ -368,9 +368,10 @@ func (s *Service) Handler() http.Handler {
 	mux.Handle("PUT /api/projects/{id}/live/refinement/host", signedIn(lv.RefinementHost))   // hand over / take over
 	mux.Handle("GET /api/boards/{id}/sprints", signedIn(sp.List))
 	mux.Handle("POST /api/boards/{id}/sprints", signedIn(sp.Start))
-	mux.Handle("GET /api/boards/{id}/velocity", signedIn(sp.Velocity)) // per closed sprint + open sprint burn
-	mux.Handle("GET /api/sprints/{id}", signedIn(sp.Get))              // read-only: burn data and tickets
-	mux.Handle("PATCH /api/sprints/{id}", signedIn(sp.Update))         // change an open sprint's length and/or goal
+	mux.Handle("GET /api/boards/{id}/velocity", signedIn(sp.Velocity))           // per closed sprint + open sprint burn
+	mux.Handle("GET /api/boards/{id}/reports/sprints", signedIn(sp.BoardReport)) // sprint reports (TL-397); ?from=&to=, flag sprint-reports
+	mux.Handle("GET /api/sprints/{id}", signedIn(sp.Get))                        // read-only: burn data and tickets
+	mux.Handle("PATCH /api/sprints/{id}", signedIn(sp.Update))                   // change an open sprint's length and/or goal
 	mux.Handle("POST /api/sprints/{id}/close", signedIn(sp.Close))
 	// Refinement: up to 2 planned sprints per board; backlog tickets are planned and sized into them
 	mux.Handle("GET /api/boards/{id}/planned-sprints", signedIn(sp.ListPlanned)) // with tickets and capacity (velocity + 10%)

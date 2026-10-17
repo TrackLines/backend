@@ -2418,6 +2418,54 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { description: Not an org admin, or an API key. }
 
+  /boards/{boardId}/reports/sprints:
+    parameters:
+      - { name: boardId, in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: from, in: query, schema: { type: string, format: date }, description: "First day (in the caller's Tracklines-Timezone); default 90 days ago." }
+      - { name: to, in: query, schema: { type: string, format: date }, description: Last day, inclusive; default today. At most two years after from. }
+    get:
+      tags: [Sprints]
+      operationId: boardSprintReport
+      summary: "How a board's sprints went over a period (TL-397): sprints that closed in it plus the open one, totals, the period before for trends, and a one-line summary. Never per person. 404 while the sprint-reports flag is off."
+      responses:
+        '200':
+          description: The report. Sprints from before reports were recorded have estimated (planned = what they held at close) and no added/removed.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  board_id: { type: string }
+                  board_name: { type: string }
+                  unit: { type: string, enum: [points, tickets] }
+                  from: { type: string, format: date-time }
+                  to: { type: string, format: date-time }
+                  summary: { type: string, example: Delivered 84% of planned work across 6 sprints, up from 71%. }
+                  sprints:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        number: { type: integer }
+                        starts_at: { type: string, format: date-time }
+                        ends_at: { type: string, format: date-time }
+                        closed_at: { type: [string, 'null'] }
+                        goal: { type: string }
+                        goal_met: { type: [boolean, 'null'] }
+                        planned: { type: number }
+                        estimated: { type: boolean }
+                        done: { type: number }
+                        predictability: { type: [number, 'null'] }
+                        added: { type: [number, 'null'] }
+                        removed: { type: [number, 'null'] }
+                        carried: { type: [number, 'null'] }
+                        velocity: { type: [number, 'null'] }
+                        approved_over: { type: [number, 'null'] }
+                        mix: { type: array, items: { $ref: '#/components/schemas/ReportMix' } }
+                  totals: { $ref: '#/components/schemas/ReportTotals' }
+                  previous: { $ref: '#/components/schemas/ReportTotals' }
+        '400': { description: Bad dates. }
+        '404': { description: Not your organization's board, or reports are off. }
   /boards/{boardId}/velocity:
     parameters:
       - $ref: '#/components/parameters/BoardId'
@@ -4037,6 +4085,23 @@ components:
       properties:
         health: { type: string, enum: [on_track, at_risk, off_track] }
         note: { type: string, minLength: 1, maxLength: 2000, description: Plain text or Markdown; rendered as safe text by clients. }
+    ReportMix:
+      type: object
+      properties:
+        type: { type: string, enum: [bug, feature, task, epic] }
+        count: { type: integer }
+        value: { type: number }
+    ReportTotals:
+      type: object
+      properties:
+        sprints: { type: integer, description: Closed sprints counted. }
+        planned: { type: number }
+        done: { type: number }
+        predictability: { type: [number, 'null'] }
+        added: { type: [number, 'null'] }
+        carried: { type: [number, 'null'] }
+        velocity: { type: [number, 'null'] }
+        mix: { type: array, items: { $ref: '#/components/schemas/ReportMix' } }
     RoadmapUpdate:
       type: object
       required: [id, health, note, published_at]

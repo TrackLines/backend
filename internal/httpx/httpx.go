@@ -2,7 +2,9 @@
 package httpx
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 )
 
@@ -20,3 +22,7 @@ func Decode(w http.ResponseWriter, r *http.Request, v any) bool {
 	}
 	return true
 }
+
+// Canceled: the request was given up on (the person left the page, or the client timed out), so
+// there's nobody to answer and nothing worth reporting to Bugfixes.
+func Canceled(err error) bool { return errors.Is(err, context.Canceled) }

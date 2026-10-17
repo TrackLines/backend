@@ -132,7 +132,9 @@ func (h System) Assignees(w http.ResponseWriter, r *http.Request) {
 	org := auth.OrgID(r.Context())
 	members, err := h.organizationAssignees(r.Context(), org, user)
 	if err != nil {
-		logs.Errorf("tickets: list assignable organization members: %v", err)
+		if !httpx.Canceled(err) {
+			logs.Errorf("tickets: list assignable organization members: %v", err)
+		}
 		http.Error(w, "could not load organization members", http.StatusBadGateway)
 		return
 	}
@@ -256,7 +258,9 @@ func (h System) addUsernames(ctx context.Context, people []Assignee) {
 		}
 		list, err := h.users.List(ctx, &user.ListParams{UserIDs: ids, ListParams: clerk.ListParams{Limit: ptr(int64(batch))}})
 		if err != nil || list == nil {
-			logs.Errorf("tickets: look up usernames: %v", err)
+			if !httpx.Canceled(err) {
+				logs.Errorf("tickets: look up usernames: %v", err)
+			}
 			return
 		}
 		names := make(map[string]string, len(list.Users))

@@ -17,10 +17,11 @@ import (
 )
 
 type System struct {
-	store  Store
-	admins organizations.Admins
-	live   live.System
-	notify notifications.Notifier // nil: nobody is told
+	store   Store
+	admins  organizations.Admins
+	live    live.System
+	notify  notifications.Notifier // nil: nobody is told
+	reports func() bool            // sprint reports' flag (TL-396); nil: off
 }
 
 // NewSystem exposes the sprint handlers; routes are declared in internal/service.go.
@@ -34,6 +35,9 @@ func (h System) WithLive(vk valkey.Client) System {
 }
 
 func writeErr(w http.ResponseWriter, err error) {
+	if httpx.Canceled(err) {
+		return // the client left: nobody to answer, nothing to report
+	}
 	switch {
 	case errors.Is(err, ErrNotFound):
 		http.Error(w, "not found", http.StatusNotFound)

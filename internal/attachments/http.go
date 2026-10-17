@@ -23,6 +23,9 @@ func NewSystem(db *pgxpool.Pool) System {
 }
 
 func writeErr(w http.ResponseWriter, err error) {
+	if httpx.Canceled(err) {
+		return // the client left: nobody to answer, nothing to report
+	}
 	switch {
 	case errors.Is(err, ErrNotFound):
 		http.Error(w, "not found", http.StatusNotFound)
