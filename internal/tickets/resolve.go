@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/tracklines/backend/internal/auth"
 	"github.com/tracklines/backend/internal/boards"
 	"github.com/tracklines/backend/internal/httpx"
@@ -41,10 +42,18 @@ func (s Store) ResolveAsAgent(ctx context.Context, owner, actor, id, resolution,
 	if resolution != ResolutionDone && resolution != ResolutionWontDo {
 		return ErrBadResolution
 	}
-	tag, err := s.DB.Exec(ctx, `UPDATE tickets t SET resolved_at = COALESCE(t.resolved_at, now()),
-			done_at = COALESCE(t.done_at, now()), resolution = $3, updated_at = now()
-		FROM projects p WHERE t.id = $1 AND p.id = t.project_id AND p.owner_clerk_id = $2 AND t.board_id IS NULL AND t.duplicate_of IS NULL
-			AND (NOT $4 OR t.agent_review_at IS NULL)`, id, owner, resolution, agent)
+	var tag pgconn.CommandTag
+	err := pgx.BeginFunc(ctx, s.DB, func(tx pgx.Tx) error {
+		if err := boards.SetActor(ctx, tx, actor); err != nil { // for the ticket's history
+			return err
+		}
+		var err error
+		tag, err = tx.Exec(ctx, `UPDATE tickets t SET resolved_at = COALESCE(t.resolved_at, now()),
+				done_at = COALESCE(t.done_at, now()), resolution = $3, updated_at = now()
+			FROM projects p WHERE t.id = $1 AND p.id = t.project_id AND p.owner_clerk_id = $2 AND t.board_id IS NULL AND t.duplicate_of IS NULL
+				AND (NOT $4 OR t.agent_review_at IS NULL)`, id, owner, resolution, agent)
+		return err
+	})
 	if err != nil {
 		return notFound(err)
 	}
@@ -96,8 +105,13 @@ func (s Store) closeOnBoard(ctx context.Context, owner, id, resolution string) e
 			return err
 		}
 	}
-	_, err := s.DB.Exec(ctx, `UPDATE tickets SET resolution = $2, resolved_at = COALESCE(resolved_at, now()), updated_at = now() WHERE id = $1`, id, resolution)
-	return err
+	return pgx.BeginFunc(ctx, s.DB, func(tx pgx.Tx) error {
+		if err := boards.SetActor(ctx, tx, ""); err != nil { // for the ticket's history
+			return err
+		}
+		_, err := tx.Exec(ctx, `UPDATE tickets SET resolution = $2, resolved_at = COALESCE(resolved_at, now()), updated_at = now() WHERE id = $1`, id, resolution)
+		return err
+	})
 }
 
 // afterResolve adds the reason as actor's comment and completes a finished parent.

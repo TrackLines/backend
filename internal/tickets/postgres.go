@@ -390,6 +390,9 @@ type moveOpts struct {
 
 func (s Store) move(ctx context.Context, owner, id, toColumn string, pos int, o *moveOpts) error {
 	return pgx.BeginFunc(ctx, s.DB, func(tx pgx.Tx) error {
+		if err := boards.SetActor(ctx, tx, ""); err != nil { // for the ticket's history
+			return err
+		}
 		var boardID, scale string
 		var archived, duplicate bool
 		var from, fromSprint, sprint, fromBoard, fromScale, estimate *string
@@ -488,6 +491,9 @@ func (s Store) ToBacklog(ctx context.Context, owner, id string) error {
 // ToBacklogAs moves a ticket to the backlog, refusing to let an agent bypass requested review.
 func (s Store) ToBacklogAs(ctx context.Context, owner, id string, agent bool) error {
 	return pgx.BeginFunc(ctx, s.DB, func(tx pgx.Tx) error {
+		if err := boards.SetActor(ctx, tx, ""); err != nil { // for the ticket's history
+			return err
+		}
 		var from, fromSprint *string
 		var duplicate bool
 		var reviewPending, reviewBoard bool

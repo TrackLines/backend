@@ -58,6 +58,9 @@ func (s Store) Start(ctx context.Context, owner, boardID string, lengthDays int)
 	var sp Sprint
 	var over *overCapacity
 	err := pgx.BeginFunc(ctx, s.DB, func(tx pgx.Tx) error {
+		if err := boards.SetActor(ctx, tx, ""); err != nil { // planned tickets joining: their history
+			return err
+		}
 		// the board lock pairs with boards.SetStyle: a board can't turn kanban while a sprint starts
 		var style string
 		if err := tx.QueryRow(ctx, `SELECT b.style FROM boards b JOIN projects p ON p.id = b.project_id
@@ -164,6 +167,9 @@ func (s Store) CloseWithOptions(ctx context.Context, owner, sprintID string, opt
 	var next Sprint
 	var over *overCapacity
 	err := pgx.BeginFunc(ctx, s.DB, func(tx pgx.Tx) error {
+		if err := boards.SetActor(ctx, tx, ""); err != nil { // planned tickets joining: their history
+			return err
+		}
 		var id string
 		err := tx.QueryRow(ctx, `SELECT s.id FROM sprints s JOIN boards b ON b.id = s.board_id
 			JOIN projects p ON p.id = b.project_id

@@ -422,6 +422,17 @@ func (h System) Get(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusOK, d)
 }
 
+// History: GET /api/tickets/{id}/history, ticket {id}'s lifecycle oldest first (TL-76): each stage it
+// entered or skipped, when, and who did it. Same access as reading the ticket; resolved tickets keep it.
+func (h System) History(w http.ResponseWriter, r *http.Request) {
+	out, err := h.store.History(r.Context(), auth.OrgID(r.Context()), r.PathValue("id"))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, out)
+}
+
 // SetBlockedBy replaces the tickets that ticket {id} waits on: {"ticket_ids": [...]} ([] clears).
 func (h System) SetBlockedBy(w http.ResponseWriter, r *http.Request) {
 	var in struct {

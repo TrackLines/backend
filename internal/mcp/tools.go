@@ -78,6 +78,9 @@ var tools = []tool{
 		method: "GET", path: "/api/tickets/{ticket_id}/prs", props: map[string]any{"ticket_id": id("Ticket")}, required: []string{"ticket_id"}, readOnly: true},
 	{name: "get_ticket", title: "Get ticket", description: "A ticket with where it lives (project, board, column, sprint), its blockers, sub-tickets and parent, and attachment_count: when it's above 0, call list_attachments and look at the files before starting.",
 		method: "GET", path: "/api/tickets/{ticket_id}", props: map[string]any{"ticket_id": id("Ticket")}, required: []string{"ticket_id"}, readOnly: true},
+	{name: "get_ticket_history", title: "Get ticket history", description: "A ticket's lifecycle, oldest first: each stage it entered or skipped " +
+		"(backlog, a board column with its name at the time, resolved as done/wont_do/duplicate), when, and who did it (a person's id or an agent's name; none for the system).",
+		method: "GET", path: "/api/tickets/{ticket_id}/history", props: map[string]any{"ticket_id": id("Ticket")}, required: []string{"ticket_id"}, readOnly: true},
 	{name: "list_comments", title: "List comments", description: "A ticket's comments, oldest first.",
 		method: "GET", path: "/api/tickets/{ticket_id}/comments", props: map[string]any{"ticket_id": id("Ticket")}, required: []string{"ticket_id"}, readOnly: true},
 	{name: "list_attachments", title: "List attachments", description: "A ticket's attached files (name, type, size, url): often a design, screenshot or log that explains the ticket better than its text. Open the url to see it. Check before starting a ticket with attachment_count > 0.",

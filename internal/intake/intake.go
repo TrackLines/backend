@@ -190,11 +190,9 @@ func (s Store) Promote(ctx context.Context, owner, actor, id string) (Submission
 		}
 		// ponytail: the ticket is made outside this tx (tickets.Store has no tx variant); the row lock still
 		// stops a double promote, and a failure after it leaves a normal backlog ticket, not a lost request
-		t, err := tickets.Store{DB: s.DB}.CreateBacklog(ctx, owner, x.ProjectID, x.Type, x.Title, desc+note)
+		// made as the promoter, so its history starts with them (TL-75), not the organization
+		t, err := tickets.Store{DB: s.DB}.CreateBacklogAs(ctx, owner, actor, x.ProjectID, x.Type, x.Title, desc+note)
 		if err != nil {
-			return err
-		}
-		if _, err := tx.Exec(ctx, `UPDATE tickets SET created_by = $2 WHERE id = $1`, t.ID, actor); err != nil {
 			return err
 		}
 		if _, err := tx.Exec(ctx, `UPDATE intake_submissions SET status = 'promoted', ticket_id = $2, decided_by = $3, decided_at = now() WHERE id = $1`, x.ID, t.ID, actor); err != nil {

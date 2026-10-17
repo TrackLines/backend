@@ -1338,6 +1338,46 @@ paths:
         '204': { description: Unlinked. }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /tickets/{ticketId}/history:
+    get:
+      tags: [Tickets]
+      operationId: getTicketHistory
+      summary: A ticket's lifecycle history, oldest first
+      description: >-
+        Each stage the ticket entered, or skipped on the way to a later one: the backlog, a board column (named as it was then),
+        and resolved (done, wont_do or duplicate). Created straight on a board, its backlog and any earlier columns are skipped;
+        moving forward skips the columns jumped over. Append-only and recorded with each change. Same access as reading the
+        ticket; resolved tickets keep their history. History starts from when it was introduced (October 2026).
+      parameters:
+        - name: ticketId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Entries, oldest first.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  required: [at, stage, outcome, stage_order, done]
+                  properties:
+                    at: { type: string, format: date-time }
+                    stage: { type: string, enum: [backlog, column, resolved] }
+                    outcome: { type: string, enum: [entered, skipped] }
+                    stage_order: { type: integer, description: 'backlog 0, a column its position + 1, resolved last' }
+                    board_id: { type: string, format: uuid }
+                    board_name: { type: string }
+                    column_id: { type: string, format: uuid }
+                    column_name: { type: string }
+                    done: { type: boolean, description: "The board's last column." }
+                    resolution: { type: string, enum: [done, wont_do, duplicate] }
+                    actor: { type: string, description: "A user id or agent name; absent when the system did it." }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /tickets/{ticketId}/prs:
     parameters:
       - $ref: '#/components/parameters/TicketId'

@@ -102,6 +102,11 @@ func TestManualCloseWaitsForStart(t *testing.T) {
 	if sp := sprintOf(backlogged.ID); sp == nil || *sp != sp2.ID {
 		t.Fatal("planned ticket didn't join the new sprint")
 	}
+	// joining from the plan is in its history too (TL-75): from the backlog into the first column
+	h, err := ts.History(ctx, "mc1", backlogged.ID)
+	if err != nil || len(h) != 2 || h[0].Stage != "backlog" || h[1].Stage != "column" || h[1].Outcome != "entered" || *h[1].ColumnID != todo {
+		t.Fatalf("planned ticket's history: %+v %v", h, err)
+	}
 	if ps, _ := s.Planned(ctx, "mc1", b.ID); len(ps) != 0 {
 		t.Fatalf("plan still there: %d", len(ps))
 	}

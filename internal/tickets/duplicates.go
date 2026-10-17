@@ -30,6 +30,9 @@ func (s Store) MarkDuplicate(ctx context.Context, owner, actor, id, canonical st
 	}
 	var projectID string
 	err := pgx.BeginFunc(ctx, s.DB, func(tx pgx.Tx) error {
+		if err := boards.SetActor(ctx, tx, actor); err != nil { // for the ticket's history
+			return err
+		}
 		if err := tx.QueryRow(ctx, `SELECT t.project_id FROM tickets t
 			JOIN projects p ON p.id = t.project_id AND p.owner_clerk_id = $2 WHERE t.id = $1`, id, owner).
 			Scan(&projectID); err != nil {
