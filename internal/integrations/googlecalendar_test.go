@@ -166,7 +166,7 @@ func TestGoogleCalendarConnection(t *testing.T) {
 		}
 	}
 	rec := call(h.Connect, admin, "PUT", body)
-	if rec.Code != 400 || !strings.Contains(rec.Body.String(), "Domain-wide delegation") {
+	if rec.Code != 400 || !strings.Contains(rec.Body.String(), "Manage Domain Wide Delegation") {
 		t.Errorf("not delegated yet: %d %s", rec.Code, rec.Body)
 	}
 	if get(admin)["connected"] != false {

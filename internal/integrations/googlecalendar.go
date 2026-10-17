@@ -134,7 +134,7 @@ func calendarRefusal(status int, payload []byte) error {
 	if json.Unmarshal(payload, &token) == nil && token.Error != "" {
 		switch token.Error {
 		case "unauthorized_client", "access_denied":
-			return CalendarError{"Google hasn't allowed TrackLin.es to read calendars yet. In admin.google.com → Security → API controls → Domain-wide delegation, add our client ID with the calendar scope (it can take a few minutes to apply).", token.Error}
+			return CalendarError{"Google hasn't allowed TrackLin.es to read calendars yet. As a super admin, in admin.google.com → Security → Access and data control → API controls → Manage Domain Wide Delegation, add our client ID with the calendar scope (it can take a few minutes to apply).", token.Error}
 		case "invalid_grant":
 			return CalendarError{"Google doesn't know that user. Check the admin email is a user in this Google Workspace.", token.Error}
 		}

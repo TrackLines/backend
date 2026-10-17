@@ -11,6 +11,7 @@ import (
 
 	"github.com/clerk/clerk-sdk-go/v2"
 	"github.com/clerk/clerk-sdk-go/v2/organizationmembership"
+	"github.com/clerk/clerk-sdk-go/v2/user"
 	"github.com/golang-migrate/migrate/v4"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -25,6 +26,30 @@ func (f fakeMembers) List(_ context.Context, _ *organizationmembership.ListParam
 			PublicUserData: &clerk.OrganizationMembershipPublicUserData{UserID: id, Identifier: identifier}})
 	}
 	out.TotalCount = int64(len(out.OrganizationMemberships))
+	return out, nil
+}
+
+// fakeUsers is Clerk's user list: user id → their email addresses, true when verified.
+type fakeUsers map[string]map[string]bool
+
+func (f fakeUsers) List(_ context.Context, params *user.ListParams) (*clerk.UserList, error) {
+	out := &clerk.UserList{}
+	for _, id := range params.UserIDs {
+		emails, ok := f[id]
+		if !ok {
+			continue
+		}
+		u := &clerk.User{ID: id}
+		for e, verified := range emails {
+			status := "unverified"
+			if verified {
+				status = "verified"
+			}
+			u.EmailAddresses = append(u.EmailAddresses, &clerk.EmailAddress{EmailAddress: e, Verification: &clerk.Verification{Status: status}})
+		}
+		out.Users = append(out.Users, u)
+	}
+	out.TotalCount = int64(len(out.Users))
 	return out, nil
 }
 
@@ -60,7 +85,7 @@ func TestGoogleCalendarSync(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	fake := &fakeCalendar{delegated: true, users: map[string]bool{"boss@acme.test": true, "ava@acme.test": true, "ben@acme.test": true},
+	fake := &fakeCalendar{delegated: true, users: map[string]bool{"boss@acme.test": true, "ava@acme.test": true, "ben@acme.test": true, "eve@acme.test": true, "fay@acme.test": true},
 		zones: map[string]string{"primary:ava@acme.test": "Europe/London"},
 		events: map[string][]map[string]any{
 			// Ava: a week off (all-day, London), a timed afternoon off, and a cancelled day
@@ -70,11 +95,16 @@ func TestGoogleCalendarSync(t *testing.T) {
 				{"id": "ava-gone", "status": "cancelled", "start": map[string]any{"date": "2026-10-28"}, "end": map[string]any{"date": "2026-10-29"}},
 			},
 			"primary:ben@acme.test":                {allDay("ben-day", "2026-10-30", "2026-10-31")},
+			"primary:eve@acme.test":                {allDay("eve-day", "2026-10-18", "2026-10-19")},
+			"primary:fay@acme.test":                {allDay("fay-day", "2026-10-18", "2026-10-19")},
 			"holidays@group.v.calendar.google.com": {allDay("xmas", "2026-12-25", "2026-12-27")},
 		}}
 	g := newTestCalendar(t, db, fake)
-	members := fakeMembers{"u_ava": "ava@acme.test", "u_ben": "ben@gmail.test", "u_cara": "cara@elsewhere.test", "u_dan": "dan@acme.test"}
-	sync := CalendarSync{DB: db, Google: g, Members: members, now: func() time.Time { return time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC) }}
+	members := fakeMembers{"u_ava": "ava@acme.test", "u_ben": "ben@gmail.test", "u_cara": "cara@elsewhere.test", "u_dan": "dan@acme.test",
+		"u_eve": "eve@github.test", "u_fay": "fay@github.test"}
+	// Eve signs in with GitHub; her Workspace address is a second, verified email on her account. Fay's isn't verified.
+	users := fakeUsers{"u_eve": {"eve@github.test": true, "Eve@Acme.test": true}, "u_fay": {"fay@github.test": true, "fay@acme.test": false}}
+	sync := CalendarSync{DB: db, Google: g, Members: members, Users: users, now: func() time.Time { return time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC) }}
 
 	away := func(org string) []string {
 		rows, _ := db.Query(ctx, `SELECT COALESCE(user_id, 'company'), to_char(starts_at AT TIME ZONE 'UTC', 'MM-DD HH24:MI'), to_char(ends_at AT TIME ZONE 'UTC', 'MM-DD HH24:MI'), all_day FROM time_away WHERE org_id = $1`, org)
@@ -104,6 +134,7 @@ func TestGoogleCalendarSync(t *testing.T) {
 		"u_ava 10-18 23:00→10-23 23:00 day",   // whole days in London (BST): 19th to 23rd inclusive
 		"u_ava 10-27 13:00→10-27 17:00 timed", // the cancelled day isn't there
 		"u_ben 10-30 00:00→10-31 00:00 day",   // matched by the email we have for him, not his Gmail sign-in
+		"u_eve 10-18 00:00→10-19 00:00 day",   // a verified second email (she signs in with GitHub); Fay's unverified one isn't used
 	}
 	if got := away("org_away"); strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Errorf("time away:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
@@ -134,7 +165,7 @@ func TestGoogleCalendarSync(t *testing.T) {
 	if err := sync.Org(ctx, "org_away"); err != nil {
 		t.Fatal(err)
 	}
-	if got := away("org_away"); strings.Join(got, "\n") != "u_ava 11-02 00:00→11-07 00:00 day" { // GMT again in November
+	if got := away("org_away"); strings.Join(got, "\n") != "u_ava 11-02 00:00→11-07 00:00 day\nu_eve 10-18 00:00→10-19 00:00 day" { // GMT again in November; Eve unchanged
 		t.Errorf("after changes: %v", got)
 	}
 
@@ -145,7 +176,7 @@ func TestGoogleCalendarSync(t *testing.T) {
 		t.Error("withdrawn access synced")
 	}
 	db.QueryRow(ctx, `SELECT last_sync_error FROM calendar_connections WHERE org_id = 'org_away'`).Scan(&lastErr)
-	if !strings.Contains(lastErr, "Domain-wide delegation") || len(away("org_away")) != 1 {
+	if !strings.Contains(lastErr, "Manage Domain Wide Delegation") || len(away("org_away")) != 2 {
 		t.Errorf("after access withdrawn: %q %v", lastErr, away("org_away"))
 	}
 

@@ -105,7 +105,8 @@ func (s *Service) calendarSync(members clerkcache.Memberships) integrations.Cale
 		}
 		s.gcal = g
 	})
-	return integrations.CalendarSync{DB: s.DB, Google: s.gcal, Members: members, Enabled: s.flag("google-calendar")}
+	users := clerkcache.Users{Next: user.NewClient(&clerk.ClientConfig{}), VK: s.Valkey, TTL: time.Minute} // every verified email, not just the sign-in one
+	return integrations.CalendarSync{DB: s.DB, Google: s.gcal, Members: members, Users: users, Enabled: s.flag("google-calendar")}
 }
 
 // flag is a flags.gg feature flag (cached by the client), off without flags.gg.

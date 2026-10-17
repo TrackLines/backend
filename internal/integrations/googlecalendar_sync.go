@@ -10,6 +10,7 @@ import (
 	"github.com/bugfixes/go-bugfixes/logs"
 	"github.com/clerk/clerk-sdk-go/v2"
 	"github.com/clerk/clerk-sdk-go/v2/organizationmembership"
+	"github.com/clerk/clerk-sdk-go/v2/user"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -24,6 +25,10 @@ type memberLister interface {
 	List(ctx context.Context, params *organizationmembership.ListParams) (*clerk.OrganizationMembershipList, error)
 }
 
+type userLister interface {
+	List(ctx context.Context, params *user.ListParams) (*clerk.UserList, error)
+}
+
 // CalendarSync copies when people are away from Google Calendar into time_away, for every org that
 // connected it: each member's Out of office events (matched by their email in the Workspace domain)
 // and the shared holidays calendar's days off. Each run replaces the window, so moved or cancelled
@@ -32,6 +37,7 @@ type CalendarSync struct {
 	DB      *pgxpool.Pool
 	Google  *GoogleCalendar
 	Members memberLister
+	Users   userLister // every verified email of each member (one may be GitHub's, another Google's); nil: sign-in and on-file only
 	Enabled func() bool
 	now     func() time.Time
 }
@@ -230,8 +236,9 @@ func (s CalendarSync) replace(ctx context.Context, org string, user *string, fro
 	return tx.Commit(ctx)
 }
 
-// memberEmails: each org member's email addresses (their Clerk sign-in identifier, and the one we
-// have on file), lower case.
+// memberEmails: each org member's email addresses, lower case: their Clerk sign-in identifier, every
+// verified address on their Clerk account (someone signed in with GitHub may have their Workspace
+// address as a second one), and the one we have on file.
 func (s CalendarSync) memberEmails(ctx context.Context, org string) (map[string][]string, error) {
 	limit := int64(500)
 	out := map[string][]string{}
@@ -257,6 +264,23 @@ func (s CalendarSync) memberEmails(ctx context.Context, org string) (map[string]
 	ids := make([]string, 0, len(out))
 	for id := range out {
 		ids = append(ids, id)
+	}
+	if s.Users != nil {
+		for start := 0; start < len(ids); start += 100 { // Clerk takes up to 100 user ids a request
+			batch := ids[start:min(start+100, len(ids))]
+			limit := int64(len(batch))
+			list, err := s.Users.List(ctx, &user.ListParams{UserIDs: batch, ListParams: clerk.ListParams{Limit: &limit}})
+			if err != nil {
+				return nil, fmt.Errorf("user emails: %w", err)
+			}
+			for _, u := range list.Users {
+				for _, e := range u.EmailAddresses {
+					if e != nil && e.Verification != nil && e.Verification.Status == "verified" {
+						out[u.ID] = append(out[u.ID], strings.ToLower(e.EmailAddress))
+					}
+				}
+			}
+		}
 	}
 	rows, err := s.DB.Query(ctx, `SELECT clerk_id, lower(email) FROM users WHERE clerk_id = ANY($1) AND email <> ''`, ids)
 	if err != nil {
