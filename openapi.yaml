@@ -3961,6 +3961,9 @@ components:
         health: { type: string, enum: [on_track, at_risk, off_track] }
         note: { type: string, maxLength: 2000 }
         published_at: { type: string, format: date-time }
+        author:
+          type: string
+          description: Who posted it, by name (an email-only name without its domain; an agent by its own name). Missing on updates from before TL-413.
     Roadmap:
       type: object
       properties:
@@ -3972,6 +3975,9 @@ components:
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
         progress: { $ref: '#/components/schemas/Progress' }
+        can_manage:
+          type: boolean
+          description: The caller can change this roadmap (an org admin, or a leader of a team with a board in its project). Always false for readers outside its organization.
         items:
           type: array
           items: { $ref: '#/components/schemas/RoadmapItem' }

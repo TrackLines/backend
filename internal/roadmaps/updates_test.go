@@ -94,14 +94,14 @@ func TestRoadmapUpdatesPermissionsHistoryAndPrivacy(t *testing.T) {
 	if _, err := db.Exec(ctx, `INSERT INTO roadmap_item_tickets (item_id, ticket_id) VALUES ($1, $2)`, itemID, ticketID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.CreateUpdate(ctx, public.ID, "ru2", HealthOnTrack, "not yours"); !errors.Is(err, ErrNotFound) {
+	if _, err := store.CreateUpdate(ctx, public.ID, "ru2", HealthOnTrack, "not yours", "", ""); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("non-owner create: %v", err)
 	}
-	first, err := store.CreateUpdate(ctx, public.ID, "ru1", HealthAtRisk, "Waiting on a design review")
+	first, err := store.CreateUpdate(ctx, public.ID, "ru1", HealthAtRisk, "Waiting on a design review", "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := store.CreateUpdate(ctx, public.ID, "ru1", HealthOnTrack, "Review is complete")
+	second, err := store.CreateUpdate(ctx, public.ID, "ru1", HealthOnTrack, "Review is complete", "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,7 +116,7 @@ func TestRoadmapUpdatesPermissionsHistoryAndPrivacy(t *testing.T) {
 		t.Fatalf("chronological update history: %+v, %v", ordered, err)
 	}
 
-	h := NewSystem(db)
+	h := NewSystem(db).WithManagers(everyone{})
 	request := func(method, roadmapID, body, org string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(method, "/api/roadmaps/"+roadmapID+"/updates", strings.NewReader(body))
 		if org != "" {

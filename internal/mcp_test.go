@@ -46,6 +46,10 @@ func TestMCP(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
+	// the key's owner is the org's admin: roadmaps (TL-413) and other management need an admin or leader
+	if _, err := db.Exec(ctx, `INSERT INTO org_admins (org_id, user_clerk_id, granted_by) VALUES ('mcp-org', 'mcp-user', 'test') ON CONFLICT DO NOTHING`); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := db.Exec(ctx, `INSERT INTO users (clerk_id, email) VALUES ('mcp-user', 'm@c.p') ON CONFLICT DO NOTHING`); err != nil {
 		t.Fatal(err)
 	}

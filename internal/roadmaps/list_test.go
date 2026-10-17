@@ -48,7 +48,7 @@ func TestListIsOrgScoped(t *testing.T) {
 	roadmap("org_rl1", "Ours B")
 	roadmap("org_rl2", "Theirs")
 
-	h := NewSystem(db)
+	h := NewSystem(db).WithManagers(everyone{})
 	list := func(org string) []string {
 		t.Helper()
 		req := httptest.NewRequest("GET", "/api/roadmaps", nil).WithContext(auth.WithAPIKey(ctx, "user_rl", org, "ui", ""))
@@ -104,7 +104,7 @@ func TestUpdateDeleteAreOrgScoped(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := NewSystem(db)
+	h := NewSystem(db).WithManagers(everyone{})
 	run := func(action, org, body string) int {
 		req := httptest.NewRequest("PUT", "/", strings.NewReader(body)).WithContext(auth.WithAPIKey(ctx, "user_ru", org, "ui", ""))
 		req.SetPathValue("id", rm.ID)

@@ -127,7 +127,7 @@ func TestItemTickets(t *testing.T) {
 	}
 
 	// privacy through the real handler: anon sees counts only, owner sees tickets
-	h := NewSystem(db)
+	h := NewSystem(db).WithManagers(everyone{})
 	var body string
 	get := func(ctx context.Context) Roadmap {
 		req := httptest.NewRequest("GET", "/api/roadmaps/"+r.ID, nil).WithContext(ctx)

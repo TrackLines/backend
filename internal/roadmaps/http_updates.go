@@ -1,6 +1,7 @@
 package roadmaps
 
 import (
+	"context"
 	"net/http"
 	"strings"
 
@@ -43,10 +44,36 @@ func (h System) PublishUpdate(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, ErrInvalidUpdate.Error(), http.StatusBadRequest)
 		return
 	}
-	update, err := h.store.CreateUpdate(r.Context(), r.PathValue("id"), auth.OrgID(r.Context()), in.Health, in.Note)
+	if !h.manager(w, r, r.PathValue("id"), "") {
+		return
+	}
+	org := auth.OrgID(r.Context())
+	author := auth.ActorID(r.Context())
+	owner, _ := auth.UserID(r.Context())
+	update, err := h.store.CreateUpdate(r.Context(), r.PathValue("id"), org, in.Health, in.Note, author, h.authorName(r.Context(), org, author, owner))
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
 	httpx.JSON(w, http.StatusCreated, update)
+}
+
+// authorName: the poster's name from the org's people (members and agents), or "" if not found. ids:
+// the actor first (an agent key is named for itself, e.g. "Claude"), then the person behind it.
+func (h System) authorName(ctx context.Context, org string, ids ...string) string {
+	if h.people == nil {
+		return ""
+	}
+	people, err := h.people(ctx, org)
+	if err != nil {
+		return ""
+	}
+	for _, id := range ids {
+		for _, p := range people {
+			if id != "" && p.ID == id && len(p.Names) > 0 {
+				return p.Names[0]
+			}
+		}
+	}
+	return ""
 }

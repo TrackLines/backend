@@ -357,7 +357,8 @@ func (s *Service) Handler() http.Handler {
 	mux.Handle("POST /api/intake-submissions/{id}/dismiss", signedIn(ik.Dismiss))
 
 	// Roadmaps — GET by id is open: public ones are readable by anyone with the link
-	r := roadmaps.NewSystem(s.DB)
+	// writes: org admins and the project's team leaders (TL-413); updates name who posted them
+	r := roadmaps.NewSystem(s.DB).WithManagers(o.AdminModel()).WithPeople(t.People)
 	mux.Handle("GET /api/roadmaps/{id}", public("roadmap", 120, r.Get))
 	mux.Handle("GET /api/roadmaps", signedIn(r.List))
 	mux.Handle("POST /api/projects/{id}/roadmaps", signedIn(r.Create))

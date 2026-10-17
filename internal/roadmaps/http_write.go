@@ -32,6 +32,9 @@ func (h System) Create(w http.ResponseWriter, r *http.Request) {
 	if !httpx.Decode(w, r, &in) || !in.valid(w) {
 		return
 	}
+	if !h.manager(w, r, "", r.PathValue("id")) {
+		return
+	}
 	org := auth.OrgID(r.Context())
 	rm, err := h.store.Create(r.Context(), org, r.PathValue("id"), in.Title, in.Description, in.Visibility)
 	if err != nil {
@@ -46,6 +49,9 @@ func (h System) Update(w http.ResponseWriter, r *http.Request) {
 	if !httpx.Decode(w, r, &in) || !in.valid(w) {
 		return
 	}
+	if !h.manager(w, r, r.PathValue("id"), "") {
+		return
+	}
 	org := auth.OrgID(r.Context())
 	if err := h.store.Update(r.Context(), r.PathValue("id"), org, in.Title, in.Description, in.Visibility); err != nil {
 		writeErr(w, err)
@@ -55,6 +61,9 @@ func (h System) Update(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h System) Delete(w http.ResponseWriter, r *http.Request) {
+	if !h.manager(w, r, r.PathValue("id"), "") {
+		return
+	}
 	org := auth.OrgID(r.Context())
 	if err := h.store.Delete(r.Context(), r.PathValue("id"), org); err != nil {
 		writeErr(w, err)
@@ -82,6 +91,9 @@ func (h System) ReplaceItems(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if !h.manager(w, r, r.PathValue("id"), "") {
+		return
+	}
 	org := auth.OrgID(r.Context())
 	if err := h.store.ReplaceItems(r.Context(), r.PathValue("id"), org, items); err != nil {
 		writeErr(w, err)
@@ -96,6 +108,9 @@ func (h System) SetItemTickets(w http.ResponseWriter, r *http.Request) {
 		TicketIDs []string `json:"ticket_ids"`
 	}
 	if !httpx.Decode(w, r, &in) {
+		return
+	}
+	if !h.manager(w, r, r.PathValue("id"), "") {
 		return
 	}
 	org := auth.OrgID(r.Context())

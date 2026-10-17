@@ -198,6 +198,19 @@ func (a Admins) IsBoardManager(ctx context.Context, org, user, board string) (bo
 	return leader, err
 }
 
+// IsProjectManager: is user an admin of org, or a leader of a team with a board in project? Roadmaps
+// belong to a project, so these are the people who can change its roadmaps (TL-413).
+func (a Admins) IsProjectManager(ctx context.Context, org, user, project string) (bool, error) {
+	admin, err := a.IsAdmin(ctx, org, user)
+	if err != nil || admin {
+		return admin, err
+	}
+	var leader bool
+	err = a.DB.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM boards b JOIN team_members tm ON tm.team_id = b.team_id
+		WHERE b.project_id::text = $1 AND b.owner_clerk_id = $2 AND tm.user_clerk_id = $3 AND tm.leader)`, project, org, user).Scan(&leader)
+	return leader, err
+}
+
 // RequireBoardManager allows an org admin or a leader of the team assigned to a board.
 // It scopes leaders to one board and requires a signed-in session for either role.
 func (a Admins) RequireBoardManager(w http.ResponseWriter, r *http.Request, boardID string) bool {

@@ -1,6 +1,7 @@
 package roadmaps
 
 import (
+	"context"
 	"errors"
 	"net/http"
 
@@ -8,14 +9,32 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/tracklines/backend/internal/auth"
 	"github.com/tracklines/backend/internal/httpx"
+	"github.com/tracklines/backend/internal/notifications"
 )
 
-// NewSystem exposes the roadmap handlers; routes are declared in internal/service.go.
+// NewSystem exposes the roadmap handlers; routes are declared in internal/service.go. Without
+// WithManagers nobody can change a roadmap.
 func NewSystem(db *pgxpool.Pool) System {
-	return System{Store{DB: db}}
+	return System{store: Store{DB: db}}
 }
 
-type System struct{ store Store }
+// Managers says who may change a project's roadmaps: org admins and its teams' leaders (TL-413).
+type Managers interface {
+	IsProjectManager(ctx context.Context, org, user, project string) (bool, error)
+}
+
+type System struct {
+	store    Store
+	managers Managers
+	people   func(ctx context.Context, org string) ([]notifications.Person, error) // names updates' authors
+}
+
+func (h System) WithManagers(m Managers) System { h.managers = m; return h }
+
+func (h System) WithPeople(p func(ctx context.Context, org string) ([]notifications.Person, error)) System {
+	h.people = p
+	return h
+}
 
 func writeErr(w http.ResponseWriter, err error) {
 	switch {
@@ -27,6 +46,49 @@ func writeErr(w http.ResponseWriter, err error) {
 		logs.Errorf("roadmaps: %v", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 	}
+}
+
+// manager lets only org admins and the project's team leaders change its roadmaps (TL-413), and
+// reports whether they can. project: known for Create; otherwise roadmap's project is looked up (in
+// the caller's organization, so another org's roadmap is not found). An API key counts as its owner,
+// so a leader's agent can keep its roadmaps up to date.
+func (h System) manager(w http.ResponseWriter, r *http.Request, roadmap, project string) bool {
+	ctx := r.Context()
+	org := auth.OrgID(ctx)
+	user, ok := auth.UserID(ctx)
+	if !ok || org == "" {
+		http.Error(w, "sign in to do this", http.StatusForbidden)
+		return false
+	}
+	if project == "" {
+		rm, err := h.store.Get(ctx, roadmap)
+		if err != nil {
+			writeErr(w, err)
+			return false
+		}
+		if rm.OwnerClerkID != org {
+			http.Error(w, "not found", http.StatusNotFound)
+			return false
+		}
+		project = rm.ProjectID
+	}
+	can, err := h.canManage(ctx, org, user, project)
+	if err != nil {
+		writeErr(w, err)
+		return false
+	}
+	if !can {
+		http.Error(w, "only organization admins and this project's team leaders can change its roadmaps", http.StatusForbidden)
+		return false
+	}
+	return true
+}
+
+func (h System) canManage(ctx context.Context, org, user, project string) (bool, error) {
+	if h.managers == nil {
+		return false, nil
+	}
+	return h.managers.IsProjectManager(ctx, org, user, project)
 }
 
 // canRead: public → anyone, login_only → any signed-in user, team → members of the owning org (org).
@@ -58,6 +120,11 @@ func (h System) Get(w http.ResponseWriter, r *http.Request) {
 	}
 	if !ok || rm.OwnerClerkID != org {
 		redactTickets(rm) // public/login-only readers see progress counts, never ticket titles or ids
+	} else if user, _ := auth.UserID(r.Context()); user != "" {
+		if rm.CanManage, err = h.canManage(r.Context(), org, user, rm.ProjectID); err != nil {
+			writeErr(w, err)
+			return
+		}
 	}
 	httpx.JSON(w, http.StatusOK, rm)
 }

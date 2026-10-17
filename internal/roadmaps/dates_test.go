@@ -71,7 +71,7 @@ func TestStartDates(t *testing.T) {
 		WithContext(auth.WithAPIKeyUser(ctx, "rl1", "test-agent"))
 	req.SetPathValue("id", r.ID)
 	rec := httptest.NewRecorder()
-	NewSystem(db).ReplaceItems(rec, req)
+	NewSystem(db).WithManagers(everyone{}).ReplaceItems(rec, req)
 	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "start date") {
 		t.Fatalf("handler: %d %s", rec.Code, rec.Body)
 	}

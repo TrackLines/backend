@@ -63,6 +63,7 @@ type Roadmap struct {
 	UpdatedAt    string   `json:"updated_at"`
 	Progress     Progress `json:"progress"`
 	Items        []Item   `json:"items,omitempty"`
+	CanManage    bool     `json:"can_manage"` // the caller can change it: an org admin or one of its project's team leaders (TL-413)
 }
 
 type Store struct{ DB *pgxpool.Pool }
