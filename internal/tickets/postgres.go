@@ -173,6 +173,29 @@ func (s Store) PageBacklogSorted(ctx context.Context, owner, projectID, typ stri
 
 // PageBacklogIn is PageBacklogSorted narrowed to epic's sub-tickets at any depth ("" for all, TL-215).
 func (s Store) PageBacklogIn(ctx context.Context, owner, projectID, epic, typ string, labels []string, page, perPage int, sortBy string, priorities ...string) (*BacklogPage, error) {
+	return s.PageBacklogStatus(ctx, owner, projectID, epic, typ, "", labels, page, perPage, sortBy, priorities...)
+}
+
+// backlogStatus: which backlog tickets a status shows. Closed ones stay in the backlog, readable, so
+// they can be found again (owner, 2026-10-17).
+var backlogStatus = map[string]string{
+	"":          `t.resolved_at IS NULL`,
+	"open":      `t.resolved_at IS NULL`,
+	"done":      `t.resolution = 'done'`,
+	"wont_do":   `t.resolution = 'wont_do'`,
+	"duplicate": `t.resolution = 'duplicate'`,
+	"closed":    `t.resolved_at IS NOT NULL`,
+}
+
+var ErrBadBacklogStatus = errors.New("status must be open, done, wont_do, duplicate or closed")
+
+// PageBacklogStatus is PageBacklogIn for status: open (the default), done, wont_do, duplicate or
+// closed (any of those). Closed tickets list most recently closed first unless a date sort is asked for.
+func (s Store) PageBacklogStatus(ctx context.Context, owner, projectID, epic, typ, status string, labels []string, page, perPage int, sortBy string, priorities ...string) (*BacklogPage, error) {
+	statusSQL, known := backlogStatus[status]
+	if !known {
+		return nil, ErrBadBacklogStatus
+	}
 	if typ != "" && !ValidType(typ) {
 		return nil, ErrInvalidType
 	}
@@ -194,7 +217,7 @@ func (s Store) PageBacklogIn(ctx context.Context, owner, projectID, epic, typ st
 	for i, l := range labels {
 		lower[i] = strings.ToLower(l)
 	}
-	where := `t.project_id = $1 AND t.board_id IS NULL AND t.resolved_at IS NULL AND (cardinality($2::text[]) = 0 OR EXISTS (
+	where := `t.project_id = $1 AND t.board_id IS NULL AND ` + statusSQL + ` AND (cardinality($2::text[]) = 0 OR EXISTS (
 		SELECT 1 FROM ticket_labels l WHERE l.ticket_id = t.id AND lower(l.label) = ANY($2)))
 		AND (cardinality($3::text[]) = 0 OR t.priority::text = ANY($3)) AND ` + inEpic("$4::text")
 
@@ -214,7 +237,7 @@ func (s Store) PageBacklogIn(ctx context.Context, owner, projectID, epic, typ st
 	}
 
 	rows, err = s.DB.Query(ctx, `SELECT min(l.label), count(*) FROM ticket_labels l JOIN tickets t ON t.id = l.ticket_id
-		WHERE t.project_id = $1 AND t.board_id IS NULL AND t.resolved_at IS NULL GROUP BY lower(l.label) ORDER BY count(*) DESC, lower(min(l.label))`, projectID)
+		WHERE t.project_id = $1 AND t.board_id IS NULL AND `+statusSQL+` GROUP BY lower(l.label) ORDER BY count(*) DESC, lower(min(l.label))`, projectID)
 	if err != nil {
 		return nil, err
 	}
@@ -229,6 +252,9 @@ func (s Store) PageBacklogIn(ctx context.Context, owner, projectID, epic, typ st
 	}
 
 	order := boards.TicketBlockedSQL + `, t.position, t.created_at, t.id`
+	if status != "" && status != "open" { // closed: no backlog order to keep, so most recently closed first
+		order = `t.resolved_at DESC, t.id`
+	}
 	switch sortBy {
 	case "newest":
 		order = `t.created_at DESC, t.position, t.id`

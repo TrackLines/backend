@@ -40,9 +40,10 @@ var tools = []tool{
 		"open ones first, each with progress (done/total sub-tickets) and size (points from their estimates, and how many are unestimated). " +
 		"To add work to an epic, set_parent on the ticket.",
 		method: "GET", path: "/api/projects/{project_id}/epics", props: map[string]any{"project_id": id("Project")}, required: []string{"project_id"}, readOnly: true},
-	{name: "list_backlog", title: "List backlog", description: "A page of a project's backlog (tickets not on a board), optionally filtered by type, label, and priority. Defaults to ready-first manual order; sort=newest or sort=oldest orders all tickets by creation date before pagination. Per-type counts respect label and priority filters, while label counts cover the whole backlog.",
-		method: "GET", path: "/api/projects/{project_id}/backlog/page", query: []string{"type", "label", "priority", "sort", "page", "per_page", "epic"},
+	{name: "list_backlog", title: "List backlog", description: "A page of a project's backlog (tickets not on a board), optionally filtered by type, label, and priority. status shows closed tickets instead of open ones: done, wont_do, duplicate, or closed for all of them (most recently closed first). Defaults to ready-first manual order; sort=newest or sort=oldest orders all tickets by creation date before pagination. Per-type counts respect label and priority filters, while label counts cover the whole backlog.",
+		method: "GET", path: "/api/projects/{project_id}/backlog/page", query: []string{"type", "label", "priority", "sort", "page", "per_page", "epic", "status"},
 		props: map[string]any{"project_id": id("Project"), "type": ticketType, "epic": str("Epic id: only its sub-tickets, at any depth"),
+			"status":   map[string]any{"type": "string", "enum": []string{"open", "done", "wont_do", "duplicate", "closed"}, "description": "Defaults to open"},
 			"sort":     map[string]any{"type": "string", "enum": []string{"manual", "newest", "oldest"}},
 			"priority": map[string]any{"type": "array", "items": priority, "description": "Only tickets with any of these priorities"},
 			"label":    map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Only tickets with any of these labels"},
