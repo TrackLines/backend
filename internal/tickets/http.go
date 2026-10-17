@@ -41,7 +41,11 @@ type System struct {
 	// standup (they're running it); nil: no auto-assign
 	boardManager   func(ctx context.Context, org, user, board string) (bool, error)
 	standupRunning func(ctx context.Context, board string) bool
+	timeAway       func() bool // Google Calendar's flag (TL-407): mark who's on holiday; nil: never
 }
+
+// WithTimeAway marks people on holiday in the assignee list while enabled says so (TL-407).
+func (h System) WithTimeAway(enabled func() bool) System { h.timeAway = enabled; return h }
 
 // AssigningOnMove turns on assign-on-move (TL-266): manager says who runs a board, standup whether one is on.
 func (h System) AssigningOnMove(manager func(ctx context.Context, org, user, board string) (bool, error), standup func(ctx context.Context, board string) bool) System {

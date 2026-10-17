@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -59,6 +60,9 @@ type Service struct {
 	Port    string
 	// KeyMember overrides how API keys check their owner is still in the org (tests); nil asks Clerk
 	KeyMember apikeys.Member
+
+	calendarOnce sync.Once
+	gcal         *integrations.GoogleCalendar // Google Calendar (TL-404); nil without a service account
 }
 
 func New(cfg *ConfigBuilder.Config, db *pgxpool.Pool, vk valkey.Client, fl *goFlags.Client, bill billing.Service, port string) *Service {
@@ -92,6 +96,23 @@ func (s *Service) notifiers() (notifications.Store, *notifications.Push, *integr
 	return inbox, push, chat, app, all
 }
 
+// calendarSync: Google Calendar's sync, with the one client the server has (nil without a service account).
+func (s *Service) calendarSync(members clerkcache.Memberships) integrations.CalendarSync {
+	s.calendarOnce.Do(func() {
+		g, err := integrations.NewGoogleCalendar(s.DB, config.Get(s.Config).GoogleChatCredentials)
+		if err != nil {
+			logs.Errorf("google calendar is off: %v", err)
+		}
+		s.gcal = g
+	})
+	return integrations.CalendarSync{DB: s.DB, Google: s.gcal, Members: members, Enabled: s.flag("google-calendar")}
+}
+
+// flag is a flags.gg feature flag (cached by the client), off without flags.gg.
+func (s *Service) flag(name string) func() bool {
+	return func() bool { return s.Flags != nil && s.Flags.Is(name).Enabled() }
+}
+
 // siteURL is the web app's address (links in Google Chat): the first https origin Clerk allows.
 func siteURL(parties []string) string {
 	for _, p := range parties {
@@ -111,6 +132,8 @@ func (s *Service) Start() error {
 	// that starts over capacity tells the board's managers (TL-149)
 	_, _, _, _, notify := s.notifiers()
 	go sprints.Store{DB: s.DB, Notify: notify}.RunAutoClose(ctx, time.Minute)
+	// who's on holiday, from Google Calendar (TL-406): every connected org, hourly, while the flag is on
+	go s.calendarSync(clerkcache.Memberships{Next: organizationmembership.NewClient(&clerk.ClientConfig{}), VK: s.Valkey, TTL: time.Minute}).Run(ctx, time.Hour)
 	// the bin and deleted organizations are purged, and deleted files removed, by Railway cron jobs
 	// running this binary as `server purge` (00:00) and `server sweep-files` (00:30): see cmd/server (TL-256)
 	if config.Get(s.Config).ClerkWebhookSecret == "" {
@@ -216,7 +239,8 @@ func (s *Service) Handler() http.Handler {
 	mux.Handle("POST /api/notifications/{id}/read", signedIn(nf.Read))
 	mux.Handle("DELETE /api/notifications/read", signedIn(nf.ClearRead)) // clear everything already read
 	mux.Handle("DELETE /api/notifications/{id}", signedIn(nf.Dismiss))
-	t := tickets.NewSystem(s.DB).CachingMembers(members).WithNotifier(notify).
+	// the assignee list says who's on holiday while Google Calendar's flag is on (TL-407)
+	t := tickets.NewSystem(s.DB).CachingMembers(members).WithNotifier(notify).WithTimeAway(s.flag("google-calendar")).
 		CachingUsers(clerkcache.Users{Next: user.NewClient(&clerk.ClientConfig{}), VK: s.Valkey, TTL: time.Minute})
 	push.People = t.People // pushes name who did it
 	if chat != nil {
@@ -251,6 +275,15 @@ func (s *Service) Handler() http.Handler {
 	mux.Handle("PUT /api/google-chat", signedIn(in.SetChat))
 	mux.Handle("DELETE /api/google-chat", signedIn(in.DeleteChat))
 	mux.Handle("POST /api/google-chat/test", signedIn(in.TestChat))
+	// Google Calendar (TL-404): who's on holiday, read with the Chat app's service account once a
+	// Workspace admin delegates to it; behind the google-calendar flag. Before {provider}: more specific.
+	calSync := s.calendarSync(members)
+	cal := integrations.CalendarSystem{DB: s.DB, Admins: o.AdminModel(), Google: calSync.Google, Enabled: calSync.Enabled, Sync: &calSync}
+	mux.Handle("GET /api/integrations/google-calendar", signedIn(cal.Get))
+	mux.Handle("PUT /api/integrations/google-calendar", signedIn(cal.Connect)) // org admins; checks Google first
+	mux.Handle("POST /api/integrations/google-calendar/test", signedIn(cal.Test))
+	mux.Handle("POST /api/integrations/google-calendar/sync", signedIn(cal.SyncNow)) // admins; otherwise hourly
+	mux.Handle("DELETE /api/integrations/google-calendar", signedIn(cal.Disconnect))
 	mux.Handle("GET /api/integrations/{provider}", signedIn(in.Connection)) // connected or not; never the secret
 	mux.Handle("PUT /api/integrations/{provider}", signedIn(in.Connect))    // org admins
 	mux.Handle("DELETE /api/integrations/{provider}", signedIn(in.Disconnect))

@@ -92,7 +92,7 @@ var tools = []tool{
 	{name: "list_notifications", title: "List notifications", description: "The key owner's inbox: assigned, mentioned, finished, won't do, needs review, approval needed. Unread first, then newest.",
 		method: "GET", path: "/api/notifications", query: []string{"page", "per_page"},
 		props: map[string]any{"page": map[string]any{"type": "integer", "minimum": 1}, "per_page": map[string]any{"type": "integer", "minimum": 1, "maximum": 100}}, readOnly: true},
-	{name: "list_assignees", title: "List assignees", description: "Who tickets can be assigned to.",
+	{name: "list_assignees", title: "List assignees", description: "Who tickets can be assigned to. With Google Calendar connected, people on holiday have away {until, company} (back at until, UTC; company: a company day off) and people about to go have away_next {from, until}.",
 		method: "GET", path: "/api/assignees", readOnly: true},
 	{name: "list_project_labels", title: "List project labels", description: "Labels used in a project, with counts.",
 		method: "GET", path: "/api/projects/{project_id}/labels", props: map[string]any{"project_id": id("Project")}, required: []string{"project_id"}, readOnly: true},
@@ -142,7 +142,7 @@ var tools = []tool{
 		method: "POST", path: "/api/tickets/{ticket_id}/claim", props: map[string]any{"ticket_id": id("Ticket")}, required: []string{"ticket_id"}},
 	{name: "release_ticket", title: "Release ticket", description: "Unassign a ticket the caller holds.",
 		method: "POST", path: "/api/tickets/{ticket_id}/release", props: map[string]any{"ticket_id": id("Ticket")}, required: []string{"ticket_id"}},
-	{name: "assign_ticket", title: "Assign ticket", description: "Assign a ticket to someone from list_assignees, or null to unassign.",
+	{name: "assign_ticket", title: "Assign ticket", description: "Assign a ticket to someone from list_assignees, or null to unassign. Don't assign someone who is away (or away_next before the work is due) unless asked to.",
 		method: "PUT", path: "/api/tickets/{ticket_id}/assignee", body: []string{"assignee"},
 		props: map[string]any{"ticket_id": id("Ticket"), "assignee": map[string]any{"type": []string{"string", "null"}}}, required: []string{"ticket_id"}},
 	{name: "move_ticket", title: "Move ticket", description: "Move a ticket to a column (any board in the same project, which also takes it out of the backlog). Moved to another board, its open sub-tickets on the old board come too, to the new board's first column (also_moved lists them; if one can't, nothing moves). Moving to the board's last column marks it done, except on a board with agent review (get_board: agent_review): there an agent's move into Done stops in the column before Done as needs review (review_requested_at set) until a person approves it. " +

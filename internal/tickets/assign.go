@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/bugfixes/go-bugfixes/logs"
 	"github.com/clerk/clerk-sdk-go/v2"
@@ -37,7 +38,10 @@ type Assignee struct {
 	Name     string `json:"name,omitempty"`
 	Username string `json:"username,omitempty"`
 	ImageURL string `json:"image_url,omitempty"` // people only: their Clerk avatar, for who's-here lists
-	owner    string // agents: whose key it is, so others see "Claude (keloran)" (TL-269)
+	// people only, with Google Calendar connected (TL-407): on holiday now, or leave coming up this week
+	Away     *Away     `json:"away,omitempty"`
+	AwayNext *AwayNext `json:"away_next,omitempty"`
+	owner    string    // agents: whose key it is, so others see "Claude (keloran)" (TL-269)
 }
 
 // Assign lets a caller assign a ticket to themself, an active organization member, or an active AI key,
@@ -163,6 +167,11 @@ func (h System) Assignees(w http.ResponseWriter, r *http.Request) {
 		}
 		seen[agent.ID] = true
 		merged = append(merged, agent)
+	}
+	if h.timeAway != nil && h.timeAway() {
+		if err := h.store.markAway(r.Context(), org, merged, time.Now()); err != nil {
+			logs.Warnf("tickets: time away: %v", err) // only costs the holiday marks
+		}
 	}
 	httpx.JSON(w, http.StatusOK, merged)
 }

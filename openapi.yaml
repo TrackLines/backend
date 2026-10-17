@@ -1563,6 +1563,78 @@ paths:
         '403': { description: Not a signed-in org admin. }
         '404': { description: That GitHub account isn't connected to this org. }
 
+  /integrations/google-calendar:
+    get:
+      tags: [Organizations]
+      operationId: getGoogleCalendar
+      summary: Google Calendar (TL-404) for the org; any member. The admin email is for org admins only. 404 while the google-calendar flag is off.
+      responses:
+        '200':
+          description: Whether the server offers it and the org is connected, plus what a Workspace admin authorizes for domain-wide delegation.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  provider: { type: string, enum: [google-calendar] }
+                  available: { type: boolean, description: The server has a Google service account. }
+                  connected: { type: boolean }
+                  client_id: { type: string, description: The service account's client ID, for admin.google.com → Security → API controls → Domain-wide delegation. }
+                  scope: { type: string, description: The one scope to authorize (read-only calendars). }
+                  connection:
+                    type: object
+                    properties:
+                      domain: { type: string }
+                      admin_email: { type: string, description: Org admins only. }
+                      holidays_calendar: { type: string }
+                      connected_at: { type: string, format: date-time }
+                      last_sync_at: { type: string, format: date-time, nullable: true }
+                      last_sync_error: { type: string }
+    put:
+      tags: [Organizations]
+      operationId: connectGoogleCalendar
+      summary: Connect Google Calendar (org admins). Google is asked first, so only a working connection is saved.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [domain, admin_email]
+              properties:
+                domain: { type: string, example: example.com }
+                admin_email: { type: string, description: A user in the domain. }
+                holidays_calendar: { type: string, description: Optional shared calendar of company days off, e.g. en.uk#holiday@group.v.calendar.google.com }
+      responses:
+        '204': { description: Connected. }
+        '400': { description: Bad input, or Google refused (the message says what to fix, e.g. delegation not granted). }
+        '403': { description: Not an org admin. }
+        '502': { description: Google couldn't be reached. }
+        '503': { description: The server has no Google service account. }
+    delete:
+      tags: [Organizations]
+      operationId: disconnectGoogleCalendar
+      summary: Disconnect Google Calendar (org admins); the time away it found is deleted with it.
+      responses:
+        '204': { description: Disconnected. }
+  /integrations/google-calendar/sync:
+    post:
+      tags: [Organizations]
+      operationId: syncGoogleCalendar
+      summary: Sync time away from Google Calendar now (org admins); it also runs hourly and right after connecting.
+      responses:
+        '200': { description: The connection, with last_sync_at and last_sync_error (empty when it worked). }
+        '404': { description: Not connected. }
+        '503': { description: The server has no Google service account. }
+  /integrations/google-calendar/test:
+    post:
+      tags: [Organizations]
+      operationId: testGoogleCalendar
+      summary: Check Google still lets us read the org's calendars (org admins).
+      responses:
+        '204': { description: Access works. }
+        '400': { description: Google refused; the message says why. }
+        '404': { description: Not connected. }
   /google-chat:
     parameters:
       - { name: project_id, in: query, description: 'The project whose space this is; leave out for the whole organization''s space.', schema: { type: string, format: uuid } }
@@ -1916,6 +1988,18 @@ paths:
                     name: { type: string, description: 'People only: real name (also when label is "You"), for @ mentions.' }
                     username: { type: string, description: 'People only: Clerk username, when set. @username mentions them.' }
                     image_url: { type: string, description: 'People only: their Clerk avatar image, when they have one.' }
+                    away:
+                      type: object
+                      description: 'People only, with Google Calendar connected (TL-407): on holiday now.'
+                      properties:
+                        until: { type: string, format: date-time, description: When they're back (UTC); back-to-back leave is joined up. }
+                        company: { type: boolean, description: A company day off rather than their own leave. }
+                    away_next:
+                      type: object
+                      description: 'People only: leave starting within the next 7 days.'
+                      properties:
+                        from: { type: string, format: date-time }
+                        until: { type: string, format: date-time }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '502': { description: Could not load organization members from Clerk. }
 

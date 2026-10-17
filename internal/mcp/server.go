@@ -41,7 +41,8 @@ const Instructions = "TrackLin.es boards, backlog and tickets. Work is organised
 	"Tickets have keys like TL-123 (project prefix + number); any ticket_id argument takes a key or a UUID.\n\n" +
 	"Choosing work: act like a member of the team. While a sprint is open, only pick tickets in it (in_sprint=true in list_open_tickets), " +
 	"bugs before features and tasks, highest priority first. Don't start backlog or out-of-sprint tickets unless no sprint ticket is " +
-	"claimable or the user asks for that ticket; a backlog ticket goes onto its board first (move_ticket, with an estimate if the board uses them).\n\n" +
+	"claimable or the user asks for that ticket; a backlog ticket goes onto its board first (move_ticket, with an estimate if the board uses them). " +
+	"People on holiday show as away in list_assignees: don't assign them work, or ask them to review it, unless you're asked to.\n\n" +
 	"Working a ticket: always do the whole chain, in this order, and don't skip steps:\n" +
 	"1. Read all of it: get_ticket, list_comments, and when attachment_count > 0, list_attachments and open the files " +
 	"(often a design, screenshot or log that explains the ticket better than its text; build what they show, and if they and the " +

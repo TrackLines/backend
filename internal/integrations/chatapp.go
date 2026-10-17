@@ -6,11 +6,9 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
-	"crypto/x509"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
-	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
@@ -77,34 +75,14 @@ func NewChatApp(db *pgxpool.Pool, credentials, site, api, projectNumber string) 
 	if strings.TrimSpace(credentials) == "" {
 		return nil, nil
 	}
-	var sa struct {
-		Email    string `json:"client_email"`
-		KeyID    string `json:"private_key_id"`
-		Key      string `json:"private_key"`
-		TokenURI string `json:"token_uri"`
-	}
-	if err := json.Unmarshal([]byte(credentials), &sa); err != nil {
-		return nil, fmt.Errorf("google chat credentials aren't a service account key (JSON): %w", err)
-	}
-	block, _ := pem.Decode([]byte(sa.Key))
-	if block == nil || sa.Email == "" {
-		return nil, errors.New("google chat credentials have no client_email or private_key")
-	}
-	parsed, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+	sa, err := parseServiceAccount(credentials)
 	if err != nil {
-		return nil, fmt.Errorf("google chat private key: %w", err)
-	}
-	key, ok := parsed.(*rsa.PrivateKey)
-	if !ok {
-		return nil, errors.New("google chat private key isn't RSA")
-	}
-	if sa.TokenURI == "" {
-		sa.TokenURI = "https://oauth2.googleapis.com/token"
+		return nil, fmt.Errorf("google chat: %w", err)
 	}
 	site = strings.TrimRight(site, "/")
 	return &ChatApp{DB: db, Site: site, Endpoint: strings.TrimRight(api, "/") + "/api/webhooks/google-chat", ProjectNumber: projectNumber,
 		Client: externalClient(10 * time.Second), API: chatAPIDomain, CertsURL: "https://www.googleapis.com/oauth2/v3/certs",
-		email: sa.Email, keyID: sa.KeyID, tokenURL: sa.TokenURI, key: key}, nil
+		email: sa.email, keyID: sa.keyID, tokenURL: sa.tokenURL, key: sa.key}, nil
 }
 
 func (c *ChatApp) clock() time.Time {
