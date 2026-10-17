@@ -168,7 +168,7 @@ func TestSearch(t *testing.T) {
 	if rec := call("q=crash&priority=urgent&priority=high"); rec.Code != 200 || !strings.Contains(rec.Body.String(), `"key":"`) {
 		t.Fatalf("http: %d %s", rec.Code, rec.Body)
 	}
-	for _, bad := range []string{"type=epic", "priority=asap", "status=maybe", "limit=500"} {
+	for _, bad := range []string{"type=saga", "priority=asap", "status=maybe", "limit=500"} {
 		if rec := call(bad); rec.Code != 400 {
 			t.Errorf("%s: %d", bad, rec.Code)
 		}

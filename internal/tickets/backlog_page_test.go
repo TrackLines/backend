@@ -94,7 +94,7 @@ func TestPageBacklog(t *testing.T) {
 	if _, err := s.PageBacklog(ctx, "bp2", pid, "", nil, 1, 25); !errors.Is(err, ErrNotFound) {
 		t.Fatal("other owner should 404:", err)
 	}
-	if _, err := s.PageBacklog(ctx, "bp1", pid, "epic", nil, 1, 25); !errors.Is(err, ErrInvalidType) {
+	if _, err := s.PageBacklog(ctx, "bp1", pid, "saga", nil, 1, 25); !errors.Is(err, ErrInvalidType) {
 		t.Fatal("bad type:", err)
 	}
 	for i, id := range ids {

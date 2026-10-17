@@ -226,10 +226,12 @@ func (s *Service) Handler() http.Handler {
 		chatApp.People = t.People // and the Chat app's personal messages
 	}
 	mux.Handle("POST /api/columns/{id}/tickets", signedIn(t.Create))
-	mux.Handle("GET /api/tickets/{id}", signedIn(t.Get))             // one ticket + where it lives (deep links)
-	mux.Handle("GET /api/tickets/{id}/org", signedIn(t.Where))       // which of my orgs it's in, when it isn't in the active one
-	mux.Handle("GET /api/tickets/{id}/history", signedIn(t.History)) // lifecycle: stages entered or skipped, when, by whom (TL-76)
-	mux.Handle("GET /api/search", signedIn(t.Search))                // full-text over titles, descriptions, comments; exact keys first
+	mux.Handle("GET /api/tickets/{id}", signedIn(t.Get))                // one ticket + where it lives (deep links)
+	mux.Handle("GET /api/tickets/{id}/org", signedIn(t.Where))          // which of my orgs it's in, when it isn't in the active one
+	mux.Handle("GET /api/tickets/{id}/history", signedIn(t.History))    // lifecycle: stages entered or skipped, when, by whom (TL-76)
+	mux.Handle("GET /api/projects/{id}/epics", signedIn(t.Epics))       // epics with progress and size (TL-213)
+	mux.Handle("GET /api/tickets/{id}/group", signedIn(t.GroupPreview)) // open sub-tickets that would move with it (TL-218)
+	mux.Handle("GET /api/search", signedIn(t.Search))                   // full-text over titles, descriptions, comments; exact keys first
 	mux.Handle("GET /api/ticket-keys/{key}", signedIn(t.GetByKey))
 	mux.Handle("PUT /api/tickets/{id}/external", signedIn(t.SetExternal)) // integrations link what they made (API keys only)
 	// Integrations: an org connects other tools (Bugfixes now); tickets they made show live details

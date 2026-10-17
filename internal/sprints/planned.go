@@ -25,6 +25,7 @@ const velocityWindow = 3
 var (
 	ErrTooManyPlanned = errors.New("a board plans at most 2 sprints ahead")
 	ErrNotBacklog     = errors.New("only backlog tickets can be planned into a sprint")
+	ErrEpicNotPlanned = errors.New("epics stay in the backlog: plan their sub-tickets instead")
 )
 
 type PlannedSprint struct {
@@ -243,6 +244,13 @@ func (s Store) PlanTicket(ctx context.Context, owner, ticketID string, plannedID
 		}
 		if board != nil {
 			return ErrNotBacklog
+		}
+		var epic bool
+		if err := tx.QueryRow(ctx, `SELECT type = 'epic' FROM tickets WHERE id = $1`, ticketID).Scan(&epic); err != nil {
+			return err
+		}
+		if epic && plannedID != nil {
+			return ErrEpicNotPlanned // epics stay in the backlog; their sub-tickets are planned (TL-213)
 		}
 		if plannedID == nil {
 			_, err := tx.Exec(ctx, `UPDATE tickets SET planned_sprint_id = NULL, estimate = NULL, updated_at = now() WHERE id = $1`, ticketID)

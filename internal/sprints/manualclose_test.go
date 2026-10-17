@@ -55,6 +55,12 @@ func TestManualCloseWaitsForStart(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// epics stay in the backlog: they aren't planned into sprints, their sub-tickets are (TL-213)
+	epicTk, _ := ts.CreateBacklog(ctx, "mc1", pid, "epic", "an epic", "")
+	if err := s.PlanTicket(ctx, "mc1", epicTk.ID, &plans[0].ID, nil); !errors.Is(err, ErrEpicNotPlanned) {
+		t.Fatalf("epic planned into a sprint: %v", err)
+	}
+
 	sprintOf := func(id string) *string {
 		var sp *string
 		_ = db.QueryRow(ctx, `SELECT sprint_id::text FROM tickets WHERE id = $1`, id).Scan(&sp)

@@ -83,7 +83,7 @@ func TestTicketHandlers(t *testing.T) {
 	if got := titles(expect(200, "backlog", person(org), pid, "type=bug", "")); got != "a bug" {
 		t.Fatalf("bugs only: %s", got)
 	}
-	expect(400, "backlog", person(org), pid, "type=epic", "")
+	expect(400, "backlog", person(org), pid, "type=saga", "")
 	expect(404, "backlog", person(other), pid, "", "")
 
 	// blocked by: same project only, no self or cycles; [] clears; another org can't

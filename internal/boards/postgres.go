@@ -45,6 +45,7 @@ type Ticket struct {
 	DuplicateOfID     *string `json:"duplicate_of_id"`
 	DuplicateOfKey    *string `json:"duplicate_of_key"`
 	DuplicateOfTitle  *string `json:"duplicate_of_title"`
+	EpicID            *string `json:"epic_id"` // the epic it's part of, at any depth (epics don't nest): boards filter by it (TL-215)
 }
 
 // TicketCols + ScanTicket read a ticket row; shared with the tickets package. The last column
@@ -61,7 +62,10 @@ var TicketCols = `t.id, t.created_by, t.assigned_to, t.project_id, t.column_id, 
 	to_char(t.review_requested_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'), t.resolution,
 	t.duplicate_of,
 	(SELECT kp.key_prefix || '-' || kt.number FROM tickets kt JOIN projects kp ON kp.id = kt.project_id WHERE kt.id = t.duplicate_of),
-	(SELECT kt.title FROM tickets kt WHERE kt.id = t.duplicate_of)`
+	(SELECT kt.title FROM tickets kt WHERE kt.id = t.duplicate_of),
+	(WITH RECURSIVE up AS (SELECT e.id, e.parent_id, e.type FROM tickets e WHERE e.id = t.parent_id
+		UNION SELECT e.id, e.parent_id, e.type FROM tickets e JOIN up ON e.id = up.parent_id)
+	SELECT up.id::text FROM up WHERE up.type = 'epic' LIMIT 1)`
 
 func ScanTicket(row pgx.Row) (Ticket, error) {
 	var t Ticket
@@ -85,7 +89,7 @@ var TicketBlockedSQL = `EXISTS (SELECT 1 FROM ticket_dependencies td JOIN ticket
 
 // TicketDest lists scan targets matching TicketCols, for queries that select extra columns after them.
 func TicketDest(t *Ticket) []any {
-	return []any{&t.ID, &t.CreatedBy, &t.AssignedTo, &t.ProjectID, &t.ColumnID, &t.SprintID, &t.Type, &t.Title, &t.Description, &t.Priority, &t.Estimate, &t.Position, &t.Blocked, &t.Labels, &t.ResolvedAt, &t.CreatedAt, &t.UpdatedAt, &t.DoneAt, &t.StartedAt, &t.PlannedSprintID, &t.Key, &t.ExternalSource, &t.ExternalURL, &t.ReviewRequestedAt, &t.Resolution, &t.DuplicateOfID, &t.DuplicateOfKey, &t.DuplicateOfTitle}
+	return []any{&t.ID, &t.CreatedBy, &t.AssignedTo, &t.ProjectID, &t.ColumnID, &t.SprintID, &t.Type, &t.Title, &t.Description, &t.Priority, &t.Estimate, &t.Position, &t.Blocked, &t.Labels, &t.ResolvedAt, &t.CreatedAt, &t.UpdatedAt, &t.DoneAt, &t.StartedAt, &t.PlannedSprintID, &t.Key, &t.ExternalSource, &t.ExternalURL, &t.ReviewRequestedAt, &t.Resolution, &t.DuplicateOfID, &t.DuplicateOfKey, &t.DuplicateOfTitle, &t.EpicID}
 }
 
 // Sprint is a board's time box; only the open one is shown on the board.

@@ -111,7 +111,7 @@ func TestStore(t *testing.T) {
 	if err := s.Update(ctx, "t1", ids[1], "", "bee", "d", ""); err != nil { // "" keeps type
 		t.Fatal(err)
 	}
-	if err := s.Update(ctx, "t1", ids[1], "epic", "bee", "d", ""); !errors.Is(err, ErrInvalidType) {
+	if err := s.Update(ctx, "t1", ids[1], "saga", "bee", "d", ""); !errors.Is(err, ErrInvalidType) {
 		t.Fatalf("bad type: %v", err)
 	}
 

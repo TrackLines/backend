@@ -16,7 +16,7 @@ func id(what string) map[string]any {
 }
 
 var (
-	ticketType = map[string]any{"type": "string", "enum": []string{"bug", "feature", "task"}}
+	ticketType = map[string]any{"type": "string", "enum": []string{"bug", "feature", "task", "epic"}}
 	priority   = map[string]any{"type": "string", "enum": []string{"low", "medium", "high", "urgent"}}
 	labels     = map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Free-form labels; [] clears"}
 	estimate   = str("Estimate on the board's scale (see the board's estimate_scale); \"\" clears")
@@ -36,9 +36,13 @@ var tools = []tool{
 		method: "GET", path: "/api/projects/{project_id}", props: map[string]any{"project_id": id("Project")}, required: []string{"project_id"}, readOnly: true},
 	{name: "get_board", title: "Get board", description: "A board with its columns (in order; the last is Done) and their tickets, plus its open sprint, style and estimate scale.",
 		method: "GET", path: "/api/boards/{board_id}", props: map[string]any{"board_id": id("Board")}, required: []string{"board_id"}, readOnly: true},
+	{name: "list_epics", title: "List epics", description: "A project's epics (large pieces of work, kept in the backlog; their sub-tickets go on boards), " +
+		"open ones first, each with progress (done/total sub-tickets) and size (points from their estimates, and how many are unestimated). " +
+		"To add work to an epic, set_parent on the ticket.",
+		method: "GET", path: "/api/projects/{project_id}/epics", props: map[string]any{"project_id": id("Project")}, required: []string{"project_id"}, readOnly: true},
 	{name: "list_backlog", title: "List backlog", description: "A page of a project's backlog (tickets not on a board), optionally filtered by type, label, and priority. Defaults to ready-first manual order; sort=newest or sort=oldest orders all tickets by creation date before pagination. Per-type counts respect label and priority filters, while label counts cover the whole backlog.",
-		method: "GET", path: "/api/projects/{project_id}/backlog/page", query: []string{"type", "label", "priority", "sort", "page", "per_page"},
-		props: map[string]any{"project_id": id("Project"), "type": ticketType,
+		method: "GET", path: "/api/projects/{project_id}/backlog/page", query: []string{"type", "label", "priority", "sort", "page", "per_page", "epic"},
+		props: map[string]any{"project_id": id("Project"), "type": ticketType, "epic": str("Epic id: only its sub-tickets, at any depth"),
 			"sort":     map[string]any{"type": "string", "enum": []string{"manual", "newest", "oldest"}},
 			"priority": map[string]any{"type": "array", "items": priority, "description": "Only tickets with any of these priorities"},
 			"label":    map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Only tickets with any of these labels"},
@@ -59,8 +63,8 @@ var tools = []tool{
 	{name: "search_tickets", title: "Search tickets", description: "Find tickets in the caller's organization by words in their title, description or comments " +
 		"(every word, matched as a prefix), or by key (TL-123, found exactly). Ranked by relevance, then most recently changed; with no q it just filters. " +
 		"Each result says where the ticket lives (project, board/column or backlog) and whether it's done.",
-		method: "GET", path: "/api/search", query: []string{"q", "project", "board", "type", "priority", "label", "assignee", "status", "limit", "page"},
-		props: map[string]any{"q": str("Words, a ticket key (TL-123) or just its number (123)"), "project": id("Project"), "board": id("Board"),
+		method: "GET", path: "/api/search", query: []string{"q", "project", "board", "type", "priority", "label", "assignee", "status", "limit", "page", "epic"},
+		props: map[string]any{"q": str("Words, a ticket key (TL-123) or just its number (123)"), "epic": str("Epic id: only its sub-tickets, at any depth"), "project": id("Project"), "board": id("Board"),
 			"type":     map[string]any{"type": "array", "items": ticketType, "description": "Any of these types"},
 			"priority": map[string]any{"type": "array", "items": priority, "description": "Any of these priorities"},
 			"label":    map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Any of these labels"},
@@ -114,7 +118,7 @@ var tools = []tool{
 			"title": str("Item title"), "description": str("Item description"), "start_date": map[string]any{"type": []string{"string", "null"}, "format": "date"},
 			"target_date": map[string]any{"type": []string{"string", "null"}, "format": "date"}, "manual_status": map[string]any{"type": "string", "enum": []string{"not_started", "in_progress", "done"}}}, "required": []string{"title"}}}},
 		required: []string{"roadmap_id", "items"}, destructive: true},
-	{name: "set_roadmap_item_tickets", title: "Link tickets to roadmap item", description: "Replace the tickets linked to a roadmap item (a feature milestone): all the tickets that deliver that feature, which give it its progress and status. Public viewers see only the counts, not the tickets. Accepts ticket UUIDs or keys (e.g. TL-123); [] clears the links.",
+	{name: "set_roadmap_item_tickets", title: "Link tickets to roadmap item", description: "Replace the tickets linked to a roadmap item (a feature milestone): all the tickets that deliver that feature, which give it its progress and status. Public viewers see only the counts, not the tickets. Linking an epic counts its sub-tickets, including ones added later. Accepts ticket UUIDs or keys (e.g. TL-123); [] clears the links.",
 		method: "PUT", path: "/api/roadmaps/{roadmap_id}/items/{item_id}/tickets", body: []string{"ticket_ids"},
 		props:    map[string]any{"roadmap_id": id("Roadmap"), "item_id": id("Roadmap item"), "ticket_ids": map[string]any{"type": "array", "items": str("Ticket UUID or key")}},
 		required: []string{"roadmap_id", "item_id", "ticket_ids"}},
@@ -141,13 +145,14 @@ var tools = []tool{
 	{name: "assign_ticket", title: "Assign ticket", description: "Assign a ticket to someone from list_assignees, or null to unassign.",
 		method: "PUT", path: "/api/tickets/{ticket_id}/assignee", body: []string{"assignee"},
 		props: map[string]any{"ticket_id": id("Ticket"), "assignee": map[string]any{"type": []string{"string", "null"}}}, required: []string{"ticket_id"}},
-	{name: "move_ticket", title: "Move ticket", description: "Move a ticket to a column (any board in the same project, which also takes it out of the backlog). Moving to the board's last column marks it done, except on a board with agent review (get_board: agent_review): there an agent's move into Done stops in the column before Done as needs review (review_requested_at set) until a person approves it. " +
+	{name: "move_ticket", title: "Move ticket", description: "Move a ticket to a column (any board in the same project, which also takes it out of the backlog). Moved to another board, its open sub-tickets on the old board come too, to the new board's first column (also_moved lists them; if one can't, nothing moves). Moving to the board's last column marks it done, except on a board with agent review (get_board: agent_review): there an agent's move into Done stops in the column before Done as needs review (review_requested_at set) until a person approves it. " +
 		"On a sprint's last day, moving a ticket into that sprint is refused (scope locked); moves within it or out are fine. " +
 		"A board with an estimate scale only takes estimated tickets: moving one in from the backlog or another board needs estimate (on the target board's scale, see get_board) " +
 		"unless it already has one on the same scale.",
 		method: "POST", path: "/api/tickets/{ticket_id}/move", body: []string{"column_id", "position", "estimate"},
 		props: map[string]any{"ticket_id": id("Ticket"), "column_id": id("Destination column"), "position": position, "estimate": str("Estimate on the target board's scale; required entering a board with an estimate scale")}, required: []string{"ticket_id", "column_id"}},
-	{name: "send_to_backlog", title: "Send to backlog", description: "Take a ticket off its board and put it at the bottom of the project backlog (clears its estimate).",
+	{name: "send_to_backlog", title: "Send to backlog", description: "Take a ticket off its board and put it at the bottom of the project backlog (clears its estimate). " +
+		"Its open sub-tickets on that board (any depth) go too; finished ones and ones on other boards stay. The response's also_moved lists them; if one can't go, nothing moves and the error names it.",
 		method: "POST", path: "/api/tickets/{ticket_id}/backlog", props: map[string]any{"ticket_id": id("Ticket")}, required: []string{"ticket_id"}},
 	{name: "resolve_ticket", title: "Resolve ticket", description: "Close a backlog ticket in place, without putting it on a board (a board ticket is finished by moving it to the board's last column). " +
 		"It counts as done, leaves the backlog and open-ticket lists, and stays readable by id. If it was the last unfinished sub-ticket, its parent is completed too. " +

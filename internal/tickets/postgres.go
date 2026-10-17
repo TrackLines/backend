@@ -35,7 +35,7 @@ const scaleSQL = `COALESCE((SELECT estimate_scale FROM boards WHERE id = t.board
 type Store struct{ DB *pgxpool.Pool }
 
 // ValidType reports whether t is a ticket type; "" means "unchanged" on update.
-func ValidType(t string) bool { return t == "bug" || t == "feature" || t == "task" }
+func ValidType(t string) bool { return t == "bug" || t == "feature" || t == "task" || t == TypeEpic }
 
 // notFound maps "no rows" and malformed uuids (22P02) to ErrNotFound.
 func notFound(err error) error {
@@ -66,6 +66,9 @@ func (s Store) CreateEstimated(ctx context.Context, owner, actor, columnID, typ,
 }
 
 func (s Store) create(ctx context.Context, owner, actor, columnID, typ, title, desc, estimate string, require bool) (*Ticket, error) {
+	if typ == TypeEpic {
+		return nil, ErrEpicOffBoard // made in the backlog (TL-213)
+	}
 	if !ValidType(typ) {
 		return nil, ErrInvalidType
 	}
@@ -165,6 +168,11 @@ func (s Store) PageBacklog(ctx context.Context, owner, projectID, typ string, la
 // PageBacklogSorted orders the filtered backlog before paging. Date sorts include every ticket;
 // manual order keeps ready tickets before blocked ones, then follows the user's backlog positions.
 func (s Store) PageBacklogSorted(ctx context.Context, owner, projectID, typ string, labels []string, page, perPage int, sortBy string, priorities ...string) (*BacklogPage, error) {
+	return s.PageBacklogIn(ctx, owner, projectID, "", typ, labels, page, perPage, sortBy, priorities...)
+}
+
+// PageBacklogIn is PageBacklogSorted narrowed to epic's sub-tickets at any depth ("" for all, TL-215).
+func (s Store) PageBacklogIn(ctx context.Context, owner, projectID, epic, typ string, labels []string, page, perPage int, sortBy string, priorities ...string) (*BacklogPage, error) {
 	if typ != "" && !ValidType(typ) {
 		return nil, ErrInvalidType
 	}
@@ -186,12 +194,12 @@ func (s Store) PageBacklogSorted(ctx context.Context, owner, projectID, typ stri
 	for i, l := range labels {
 		lower[i] = strings.ToLower(l)
 	}
-	const where = `t.project_id = $1 AND t.board_id IS NULL AND t.resolved_at IS NULL AND (cardinality($2::text[]) = 0 OR EXISTS (
+	where := `t.project_id = $1 AND t.board_id IS NULL AND t.resolved_at IS NULL AND (cardinality($2::text[]) = 0 OR EXISTS (
 		SELECT 1 FROM ticket_labels l WHERE l.ticket_id = t.id AND lower(l.label) = ANY($2)))
-		AND (cardinality($3::text[]) = 0 OR t.priority::text = ANY($3))`
+		AND (cardinality($3::text[]) = 0 OR t.priority::text = ANY($3)) AND ` + inEpic("$4::text")
 
-	out := &BacklogPage{Counts: map[string]int{"all": 0, "bug": 0, "feature": 0, "task": 0}}
-	rows, err := s.DB.Query(ctx, `SELECT t.type::text, count(*) FROM tickets t WHERE `+where+` GROUP BY 1`, projectID, lower, priorities)
+	out := &BacklogPage{Counts: map[string]int{"all": 0, "bug": 0, "feature": 0, "task": 0, "epic": 0}}
+	rows, err := s.DB.Query(ctx, `SELECT t.type::text, count(*) FROM tickets t WHERE `+where+` GROUP BY 1`, projectID, lower, priorities, epic)
 	if err != nil {
 		return nil, err
 	}
@@ -228,9 +236,9 @@ func (s Store) PageBacklogSorted(ctx context.Context, owner, projectID, typ stri
 		order = `t.created_at, t.position, t.id`
 	}
 	rows, err = s.DB.Query(ctx, `SELECT `+boards.TicketCols+` FROM tickets t
-		WHERE `+where+` AND ($4 = '' OR t.type::text = $4)
-		ORDER BY `+order+` LIMIT $5 OFFSET $6`,
-		projectID, lower, priorities, typ, perPage, (page-1)*perPage)
+		WHERE `+where+` AND ($5 = '' OR t.type::text = $5)
+		ORDER BY `+order+` LIMIT $6 OFFSET $7`,
+		projectID, lower, priorities, epic, typ, perPage, (page-1)*perPage)
 	if err != nil {
 		return nil, err
 	}
@@ -248,9 +256,39 @@ func (s Store) Update(ctx context.Context, owner, id, typ, title, desc, priority
 	if typ != "" && !ValidType(typ) {
 		return ErrInvalidType
 	}
+	if typ == TypeEpic {
+		if err := s.becomeEpic(ctx, owner, id); err != nil {
+			return err
+		}
+	}
 	return exec(s.DB.Exec(ctx, `UPDATE tickets t SET title = $3, description = $4,
 		type = COALESCE(NULLIF($5, '')::ticket_type, t.type), priority = COALESCE(NULLIF($6, '')::priority, t.priority), updated_at = now()
 		FROM projects p WHERE t.id = $1 AND p.id = t.project_id AND p.owner_clerk_id = $2`, id, owner, title, desc, typ, priority))
+}
+
+// becomeEpic gets ticket id ready to be an epic (TL-213): no epic above or below it, off its board (to
+// the backlog) and out of any planned sprint, with no estimate.
+// ponytail: the move to the backlog commits before the type changes; if that update then fails, the
+// ticket is just a backlog ticket, which is harmless.
+func (s Store) becomeEpic(ctx context.Context, owner, id string) error {
+	var onBoard bool
+	err := pgx.BeginFunc(ctx, s.DB, func(tx pgx.Tx) error {
+		if err := tx.QueryRow(ctx, `SELECT t.board_id IS NOT NULL FROM tickets t JOIN projects p ON p.id = t.project_id
+			WHERE t.id::text = $1 AND p.owner_clerk_id = $2`, id, owner).Scan(&onBoard); err != nil {
+			return notFound(err)
+		}
+		return canBecomeEpic(ctx, tx, id)
+	})
+	if err != nil {
+		return err
+	}
+	if onBoard { // just the epic: its sub-tickets are the work, and stay on their boards (not TL-218's group move)
+		if err := pgx.BeginFunc(ctx, s.DB, func(tx pgx.Tx) error { _, err := toBacklogTx(ctx, tx, owner, id, false); return err }); err != nil {
+			return err
+		}
+	}
+	_, err = s.DB.Exec(ctx, `UPDATE tickets SET planned_sprint_id = NULL, estimate = NULL WHERE id::text = $1`, id)
+	return err
 }
 
 // SetEstimate sets ("" clears) the ticket's estimate; it must be on its board's scale, so a
@@ -270,6 +308,12 @@ func (s Store) setEstimate(ctx context.Context, owner, id, estimate string, requ
 	if err := s.DB.QueryRow(ctx, `SELECT COALESCE(`+scaleSQL+`, 'none') FROM tickets t
 		JOIN projects p ON p.id = t.project_id AND p.owner_clerk_id = $2 WHERE t.id = $1`, id, owner).Scan(&scale); err != nil {
 		return notFound(err)
+	}
+	if estimate != "" {
+		var epic bool
+		if err := s.DB.QueryRow(ctx, `SELECT type = 'epic' FROM tickets WHERE id::text = $1`, id).Scan(&epic); err == nil && epic {
+			return ErrEpicEstimate
+		}
 	}
 	if !boards.ValidEstimate(scale, estimate) {
 		return boards.ErrBadEstimate
@@ -372,11 +416,21 @@ func (s Store) Move(ctx context.Context, owner, id, toColumn string, pos int) er
 // With agent (an API key moved it) on a board with agent review, a move into Done lands in the
 // column before Done waiting for review instead (review is true).
 func (s Store) MoveEstimated(ctx context.Context, owner, id, toColumn string, pos int, estimate *string, require, agent bool) (review bool, err error) {
+	review, _, err = s.MoveGroup(ctx, owner, id, toColumn, pos, estimate, require, agent)
+	return review, err
+}
+
+// MoveGroup is MoveEstimated that also reports the open sub-tickets that came with it when it left its
+// board for another (TL-218).
+func (s Store) MoveGroup(ctx context.Context, owner, id, toColumn string, pos int, estimate *string, require, agent bool) (review bool, alsoMoved []Moved, err error) {
 	o := moveOpts{lock: true, require: require, estimate: estimate, agent: agent}
 	if err := s.move(ctx, owner, id, toColumn, pos, &o); err != nil {
-		return false, err
+		return false, nil, err
 	}
-	return o.review, s.completeParent(ctx, owner, id)
+	if o.alsoMoved == nil {
+		o.alsoMoved = []Moved{}
+	}
+	return o.review, o.alsoMoved, s.completeParent(ctx, owner, id)
 }
 
 // moveOpts: lock refuses entering a sprint on its last day (off for completing a parent, which
@@ -386,12 +440,45 @@ type moveOpts struct {
 	estimate      *string
 	agent         bool // set by: an API key; review is set when its move into Done became a review request
 	review        bool
+	left          *string // set by the move: the board it left for another one (its sub-tickets follow, TL-218)
+	toBoard       string
+	alsoMoved     []Moved // its open sub-tickets that came with it
 }
 
 func (s Store) move(ctx context.Context, owner, id, toColumn string, pos int, o *moveOpts) error {
 	return pgx.BeginFunc(ctx, s.DB, func(tx pgx.Tx) error {
+		if err := s.moveTx(ctx, tx, owner, id, toColumn, pos, o); err != nil || o.left == nil {
+			return err
+		}
+		// it left its board for another: its open sub-tickets there come along, to the new board's first
+		// column, by the same rules; one that can't stops the whole move (TL-218)
+		var first string
+		if err := tx.QueryRow(ctx, `SELECT id FROM columns WHERE board_id = $1 ORDER BY position LIMIT 1`, o.toBoard).Scan(&first); err != nil {
+			return err
+		}
+		subs, err := openSubTickets(ctx, tx, id, *o.left)
+		for _, sub := range subs {
+			if err != nil {
+				break
+			}
+			so := moveOpts{lock: o.lock, require: o.require, agent: o.agent}
+			if err = s.moveTx(ctx, tx, owner, sub.ID, first, 1<<30, &so); err != nil {
+				err = GroupMoveError{Sub: sub, Err: err}
+			}
+		}
+		o.alsoMoved = subs
+		return err
+	})
+}
+
+func (s Store) moveTx(ctx context.Context, tx pgx.Tx, owner, id, toColumn string, pos int, o *moveOpts) error {
+	{
 		if err := boards.SetActor(ctx, tx, ""); err != nil { // for the ticket's history
 			return err
+		}
+		var epic bool
+		if err := tx.QueryRow(ctx, `SELECT type = 'epic' FROM tickets WHERE id::text = $1`, id).Scan(&epic); err == nil && epic {
+			return ErrEpicOffBoard
 		}
 		var boardID, scale string
 		var archived, duplicate bool
@@ -472,6 +559,9 @@ func (s Store) move(ctx context.Context, owner, id, toColumn string, pos int, o 
 			WHERE t.id = $1`, id, boardID, toColumn, sprint, estimate, o.review); err != nil {
 			return err
 		}
+		if fromBoard != nil && *fromBoard != boardID {
+			o.left, o.toBoard = fromBoard, boardID
+		}
 		if err := renumber(ctx, tx, ids); err != nil {
 			return err
 		}
@@ -479,7 +569,7 @@ func (s Store) move(ctx context.Context, owner, id, toColumn string, pos int, o 
 			return nil
 		}
 		return renumberSource(ctx, tx, id, from, fromSprint)
-	})
+	}
 }
 
 // ToBacklog takes a ticket off its board/sprint and appends it to the project backlog. Its estimate
@@ -490,39 +580,75 @@ func (s Store) ToBacklog(ctx context.Context, owner, id string) error {
 
 // ToBacklogAs moves a ticket to the backlog, refusing to let an agent bypass requested review.
 func (s Store) ToBacklogAs(ctx context.Context, owner, id string, agent bool) error {
-	return pgx.BeginFunc(ctx, s.DB, func(tx pgx.Tx) error {
-		if err := boards.SetActor(ctx, tx, ""); err != nil { // for the ticket's history
+	_, err := s.ToBacklogGroup(ctx, owner, id, agent)
+	return err
+}
+
+// ToBacklogGroup is ToBacklogAs that also takes the ticket's open sub-tickets on its board to the
+// backlog (TL-218), returning them; one that can't go stops the whole move.
+func (s Store) ToBacklogGroup(ctx context.Context, owner, id string, agent bool) ([]Moved, error) {
+	var moved []Moved
+	err := pgx.BeginFunc(ctx, s.DB, func(tx pgx.Tx) error {
+		left, err := toBacklogTx(ctx, tx, owner, id, agent)
+		if err != nil || left == nil {
 			return err
 		}
-		var from, fromSprint *string
+		subs, err := openSubTickets(ctx, tx, id, *left)
+		for _, sub := range subs {
+			if err != nil {
+				break
+			}
+			if _, err = toBacklogTx(ctx, tx, owner, sub.ID, agent); err != nil {
+				err = GroupMoveError{Sub: sub, Err: err}
+			}
+		}
+		moved = subs
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	if moved == nil {
+		moved = []Moved{}
+	}
+	return moved, nil
+}
+
+// toBacklogTx sends one ticket to the backlog in tx; left is the board it was on (nil: already there).
+func toBacklogTx(ctx context.Context, tx pgx.Tx, owner, id string, agent bool) (left *string, err error) {
+	{
+		if err := boards.SetActor(ctx, tx, ""); err != nil { // for the ticket's history
+			return nil, err
+		}
+		var from, fromSprint, board *string
 		var duplicate bool
 		var reviewPending, reviewBoard bool
-		err := tx.QueryRow(ctx, `SELECT t.column_id, t.sprint_id, t.duplicate_of IS NOT NULL, t.review_requested_at IS NOT NULL,
+		err := tx.QueryRow(ctx, `SELECT t.column_id, t.sprint_id, t.board_id::text, t.duplicate_of IS NOT NULL, t.review_requested_at IS NOT NULL,
 				COALESCE(b.agent_review, false) FROM tickets t
 			JOIN projects p ON p.id = t.project_id AND p.owner_clerk_id = $2
 			LEFT JOIN boards b ON b.id = t.board_id
-			WHERE t.id = $1 FOR UPDATE OF t`, id, owner).Scan(&from, &fromSprint, &duplicate, &reviewPending, &reviewBoard)
+			WHERE t.id = $1 FOR UPDATE OF t`, id, owner).Scan(&from, &fromSprint, &board, &duplicate, &reviewPending, &reviewBoard)
 		if err != nil {
-			return notFound(err)
+			return nil, notFound(err)
 		}
 		if duplicate {
-			return ErrIsDuplicate
+			return nil, ErrIsDuplicate
 		}
 		// on a board where a person reviews agent work, an agent can't take a ticket off it: from the
 		// backlog it could resolve the ticket as done with nobody looking (TL-249)
 		if agent && (reviewPending || reviewBoard) {
-			return ErrAgentReviewBypass
+			return nil, ErrAgentReviewBypass
 		}
 		if from == nil {
-			return nil // already in the backlog
+			return nil, nil // already in the backlog
 		}
 		if _, err := tx.Exec(ctx, `UPDATE tickets t SET board_id = NULL, column_id = NULL, sprint_id = NULL, estimate = NULL, done_at = NULL, review_requested_at = NULL, updated_at = now(),
 				position = COALESCE((SELECT max(position) + 1 FROM tickets x WHERE x.project_id = t.project_id AND x.board_id IS NULL), 0)
 			WHERE t.id = $1`, id); err != nil {
-			return err
+			return nil, err
 		}
-		return renumberSource(ctx, tx, id, from, fromSprint)
-	})
+		return board, renumberSource(ctx, tx, id, from, fromSprint)
+	}
 }
 
 // renumberSource closes the gap a ticket left in its old column (or the backlog when from is nil).
@@ -580,6 +706,7 @@ type Detail struct {
 	Parent        *Dep           `json:"parent"`   // the ticket this one is a sub-ticket of, if any
 	Children      []Child        `json:"children"` // immediate sub-tickets, with done status
 	Duplicates    []DuplicateRef `json:"duplicates"`
+	Epic          *EpicProgress  `json:"epic,omitempty"` // an epic's progress and size, from its sub-tickets (TL-213)
 }
 
 type DuplicateRef struct {
@@ -589,11 +716,15 @@ type DuplicateRef struct {
 }
 
 type Child struct {
-	ID     string  `json:"id"`
-	Title  string  `json:"title"`
-	Done   bool    `json:"done"`
-	Type   string  `json:"type"`
-	Assign *string `json:"assigned_to"`
+	ID        string  `json:"id"`
+	Key       *string `json:"key"`
+	Title     string  `json:"title"`
+	Done      bool    `json:"done"`
+	Type      string  `json:"type"`
+	Assign    *string `json:"assigned_to"`
+	Estimate  *string `json:"estimate"`
+	BoardID   *string `json:"board_id"`   // nil: in the backlog
+	BoardName *string `json:"board_name"` // an epic's page groups its sub-tickets by board (TL-214)
 }
 
 // SetParent clears (parentID nil) or sets the parent of ticket id. Both must be in the same
@@ -633,6 +764,9 @@ func (s Store) SetParent(ctx context.Context, owner, id string, parentID *string
 			}
 			if loop {
 				return ErrParentLoop
+			}
+			if err := epicNesting(ctx, tx, id, *parentID); err != nil {
+				return err
 			}
 		}
 		_, err := tx.Exec(ctx, `UPDATE tickets SET parent_id = $2, updated_at = now() WHERE id = $1`, id, parentID)
@@ -675,6 +809,9 @@ func (s Store) Get(ctx context.Context, owner, id string) (*Detail, error) {
 			return nil, err
 		}
 	}
+	if d.Epic, err = s.epicProgress(ctx, id); err != nil {
+		return nil, err
+	}
 	if d.Children, err = s.ChildrenFor(ctx, id); err != nil {
 		return nil, err
 	}
@@ -702,14 +839,15 @@ func (s Store) DuplicatesFor(ctx context.Context, id string) ([]DuplicateRef, er
 
 // ChildrenFor returns the ticket's immediate children with done status.
 func (s Store) ChildrenFor(ctx context.Context, id string) ([]Child, error) {
-	rows, err := s.DB.Query(ctx, `SELECT t.id, t.title, t.type::text, t.assigned_to, `+boards.TicketDoneSQL+`
-		FROM tickets t WHERE t.parent_id = $1 ORDER BY t.created_at`, id)
+	rows, err := s.DB.Query(ctx, `SELECT t.id, pr.key_prefix || '-' || t.number, t.title, t.type::text, t.assigned_to, t.estimate, t.board_id::text, b.name, `+boards.TicketDoneSQL+`
+		FROM tickets t JOIN projects pr ON pr.id = t.project_id LEFT JOIN boards b ON b.id = t.board_id
+		WHERE t.parent_id = $1 ORDER BY t.created_at`, id)
 	if err != nil {
 		return nil, err
 	}
 	out, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (Child, error) {
 		var c Child
-		err := row.Scan(&c.ID, &c.Title, &c.Type, &c.Assign, &c.Done)
+		err := row.Scan(&c.ID, &c.Key, &c.Title, &c.Type, &c.Assign, &c.Estimate, &c.BoardID, &c.BoardName, &c.Done)
 		return c, err
 	})
 	if out == nil {

@@ -49,6 +49,7 @@ type LinkedTicket struct {
 	ID    string `json:"id"`
 	Title string `json:"title"`
 	Done  bool   `json:"done"`
+	Type  string `json:"type"` // epic: the milestone counts its sub-tickets, not it (TL-216)
 }
 
 type Roadmap struct {
@@ -110,22 +111,49 @@ func (s Store) Get(ctx context.Context, id string) (*Roadmap, error) {
 	for n, i := range r.Items {
 		idx[i.ID] = n
 	}
-	allTickets := []LinkedTicket{}
-	links, err := s.DB.Query(ctx, `SELECT l.item_id, t.id, t.title, `+boards.TicketDoneSQL+`
+	links, err := s.DB.Query(ctx, `SELECT l.item_id, t.id, t.title, `+boards.TicketDoneSQL+`, t.type::text
 		FROM roadmap_item_tickets l JOIN roadmap_items ri ON ri.id = l.item_id JOIN tickets t ON t.id = l.ticket_id
 		WHERE ri.roadmap_id = $1 ORDER BY t.title`, id)
 	if err != nil {
 		return nil, err
 	}
-	defer links.Close()
 	for links.Next() {
 		var itemID string
 		var lt LinkedTicket
-		if err := links.Scan(&itemID, &lt.ID, &lt.Title, &lt.Done); err != nil {
+		if err := links.Scan(&itemID, &lt.ID, &lt.Title, &lt.Done, &lt.Type); err != nil {
+			links.Close()
 			return nil, err
 		}
 		it := &r.Items[idx[itemID]]
 		it.Tickets = append(it.Tickets, lt)
+	}
+	links.Close()
+	if err := links.Err(); err != nil {
+		return nil, err
+	}
+	// progress counts what delivers the milestone: linked tickets, and for a linked epic its sub-tickets
+	// (the same ones its own progress counts), as they are now, so ones added later count too (TL-216)
+	counted, err := s.DB.Query(ctx, `SELECT DISTINCT ON (c.item_id, c.id) c.item_id, c.id, c.title, c.done FROM (
+			SELECT l.item_id, t.id, t.title, `+boards.TicketDoneSQL+` AS done
+			FROM roadmap_item_tickets l JOIN roadmap_items ri ON ri.id = l.item_id JOIN tickets t ON t.id = l.ticket_id
+			WHERE ri.roadmap_id = $1 AND t.type <> 'epic'
+			UNION ALL
+			SELECT l.item_id, t.id, t.title, `+boards.TicketDoneSQL+`
+			FROM roadmap_item_tickets l JOIN roadmap_items ri ON ri.id = l.item_id JOIN tickets e ON e.id = l.ticket_id AND e.type = 'epic'
+			JOIN tickets t ON t.parent_id = e.id AND t.duplicate_of IS NULL
+			WHERE ri.roadmap_id = $1) c`, id)
+	if err != nil {
+		return nil, err
+	}
+	defer counted.Close()
+	allTickets := []LinkedTicket{}
+	for counted.Next() {
+		var itemID string
+		var lt LinkedTicket
+		if err := counted.Scan(&itemID, &lt.ID, &lt.Title, &lt.Done); err != nil {
+			return nil, err
+		}
+		it := &r.Items[idx[itemID]]
 		allTickets = append(allTickets, lt)
 		it.Progress.Total++
 		if lt.Done {
@@ -136,7 +164,7 @@ func (s Store) Get(ctx context.Context, id string) (*Roadmap, error) {
 		r.Items[n].Status = DeriveItemStatus(r.Items[n].ManualStatus, r.Items[n].Progress)
 	}
 	r.Progress = AggregateProgress(allTickets)
-	return &r, links.Err()
+	return &r, counted.Err()
 }
 
 // DeriveItemStatus follows linked ticket completion while preserving the owner's manual status

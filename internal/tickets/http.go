@@ -151,7 +151,8 @@ func writeErr(w http.ResponseWriter, err error) {
 	case errors.Is(err, ErrInvalidType), errors.Is(err, ErrBadPriority), errors.Is(err, ErrBadBacklogSort), errors.Is(err, ErrBadExternal):
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
-	case errors.Is(err, ErrOnBoard), errors.Is(err, ErrIsDuplicate), errors.Is(err, boards.ErrBoardArchived), errors.Is(err, ErrAgentReviewBypass):
+	case errors.Is(err, ErrOnBoard), errors.Is(err, ErrIsDuplicate), errors.Is(err, boards.ErrBoardArchived), errors.Is(err, ErrAgentReviewBypass),
+		errors.Is(err, ErrEpicOffBoard):
 		http.Error(w, err.Error(), http.StatusConflict)
 		return
 	case errors.Is(err, ErrAlreadyAssigned):
@@ -161,7 +162,8 @@ func writeErr(w http.ResponseWriter, err error) {
 		http.Error(w, err.Error(), http.StatusConflict)
 		return
 	case errors.Is(err, ErrSelfBlock), errors.Is(err, ErrOtherProject), errors.Is(err, ErrCycle), errors.Is(err, ErrUnknownAssignee), errors.Is(err, ErrBadLabels),
-		errors.Is(err, ErrSelfParent), errors.Is(err, ErrParentLoop), errors.Is(err, boards.ErrBadEstimate):
+		errors.Is(err, ErrSelfParent), errors.Is(err, ErrParentLoop), errors.Is(err, boards.ErrBadEstimate),
+		errors.Is(err, ErrEpicInEpic), errors.Is(err, ErrEpicEstimate):
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -246,7 +248,7 @@ func (h System) Move(w http.ResponseWriter, r *http.Request) {
 	org := auth.OrgID(r.Context())
 	before := h.detail(r.Context(), org, r.PathValue("id"))
 	from, unassigned := h.store.moveFrom(r.Context(), org, r.PathValue("id"))
-	review, err := h.store.MoveEstimated(r.Context(), org, r.PathValue("id"), in.ColumnID, in.Position, in.Estimate, true, auth.ViaAPIKey(r.Context()))
+	review, alsoMoved, err := h.store.MoveGroup(r.Context(), org, r.PathValue("id"), in.ColumnID, in.Position, in.Estimate, true, auth.ViaAPIKey(r.Context()))
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -263,6 +265,10 @@ func (h System) Move(w http.ResponseWriter, r *http.Request) {
 	}
 	if review { // an agent finished it on a board with agent review: a person has to approve it
 		httpx.JSON(w, http.StatusOK, map[string]any{"needs_review": true, "message": "Moved to the column before Done to wait for a person's review."})
+		return
+	}
+	if len(alsoMoved) > 0 { // it left its board and took its open sub-tickets with it (TL-218)
+		httpx.JSON(w, http.StatusOK, map[string]any{"also_moved": alsoMoved})
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -291,7 +297,7 @@ func (h System) PageBacklog(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	org := auth.OrgID(r.Context())
-	out, err := h.store.PageBacklogSorted(r.Context(), org, r.PathValue("id"), q.Get("type"), q["label"], page, perPage, q.Get("sort"), q["priority"]...)
+	out, err := h.store.PageBacklogIn(r.Context(), org, r.PathValue("id"), q.Get("epic"), q.Get("type"), q["label"], page, perPage, q.Get("sort"), q["priority"]...)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -388,8 +394,13 @@ func (h System) Release(w http.ResponseWriter, r *http.Request) {
 // ToBacklog sends ticket {id} back to its project's backlog.
 func (h System) ToBacklog(w http.ResponseWriter, r *http.Request) {
 	org := auth.OrgID(r.Context())
-	if err := h.store.ToBacklogAs(r.Context(), org, r.PathValue("id"), auth.ViaAPIKey(r.Context())); err != nil {
+	alsoMoved, err := h.store.ToBacklogGroup(r.Context(), org, r.PathValue("id"), auth.ViaAPIKey(r.Context()))
+	if err != nil {
 		writeErr(w, err)
+		return
+	}
+	if len(alsoMoved) > 0 { // its open sub-tickets on the board came too (TL-218)
+		httpx.JSON(w, http.StatusOK, map[string]any{"also_moved": alsoMoved})
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -420,6 +431,16 @@ func (h System) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.JSON(w, http.StatusOK, d)
+}
+
+// Epics: GET /api/projects/{id}/epics, the project's epics with their progress and size (TL-213).
+func (h System) Epics(w http.ResponseWriter, r *http.Request) {
+	out, err := h.store.Epics(r.Context(), auth.OrgID(r.Context()), r.PathValue("id"))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, out)
 }
 
 // History: GET /api/tickets/{id}/history, ticket {id}'s lifecycle oldest first (TL-76): each stage it
