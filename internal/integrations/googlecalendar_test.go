@@ -125,7 +125,9 @@ func TestGoogleCalendarConnection(t *testing.T) {
 	fake := &fakeCalendar{users: map[string]bool{"boss@acme.test": true}, events: map[string][]map[string]any{
 		"primary": {}, "en.uk%23holiday@group.v.calendar.google.com": {},
 	}}
-	h := CalendarSystem{DB: db, Admins: organizations.Admins{DB: db}, Google: newTestCalendar(t, db, fake)}
+	// the admin connecting acme.test has a verified acme.test address; org_cal2's admin doesn't
+	h := CalendarSystem{DB: db, Admins: organizations.Admins{DB: db}, Google: newTestCalendar(t, db, fake),
+		Users: fakeUsers{"cal_admin": {"cal@gmail.test": true, "Boss@acme.test": true}, "other_admin": {"x@acme.test": false, "x@other.test": true}}}
 	session := func(user, org string) context.Context {
 		return clerk.ContextWithSessionClaims(ctx, func() *clerk.SessionClaims {
 			c := &clerk.SessionClaims{RegisteredClaims: clerk.RegisteredClaims{Subject: user}}
@@ -164,6 +166,15 @@ func TestGoogleCalendarConnection(t *testing.T) {
 			t.Errorf("bad input %s: %d", bad, rec.Code)
 		}
 	}
+	// audit: only an organization whose admin has a verified address at the domain can connect it,
+	// and only one organization per domain; the holidays calendar is never someone's own
+	other := session("other_admin", "org_cal2")
+	if rec := call(h.Connect, other, "PUT", body); rec.Code != 403 || !strings.Contains(rec.Body.String(), "verify your own acme.test email") {
+		t.Errorf("connecting a domain you don't belong to: %d %s", rec.Code, rec.Body)
+	}
+	if rec := call(h.Connect, admin, "PUT", `{"domain":"acme.test","admin_email":"boss@acme.test","holidays_calendar":"ceo@acme.test"}`); rec.Code != 400 {
+		t.Errorf("a person's calendar as the holidays calendar: %d %s", rec.Code, rec.Body)
+	}
 	rec := call(h.Connect, admin, "PUT", body)
 	if rec.Code != 400 || !strings.Contains(rec.Body.String(), "Manage Domain Wide Delegation") {
 		t.Errorf("not delegated yet: %d %s", rec.Code, rec.Body)
@@ -175,7 +186,7 @@ func TestGoogleCalendarConnection(t *testing.T) {
 	if rec := call(h.Connect, admin, "PUT", `{"domain":"acme.test","admin_email":"ghost@acme.test"}`); rec.Code != 400 || !strings.Contains(rec.Body.String(), "doesn't know that user") {
 		t.Errorf("unknown admin: %d %s", rec.Code, rec.Body)
 	}
-	if rec := call(h.Connect, admin, "PUT", `{"domain":"acme.test","admin_email":"boss@acme.test","holidays_calendar":"missing@group.v.calendar.google.com"}`); rec.Code != 400 || !strings.Contains(rec.Body.String(), "couldn't find that calendar") {
+	if rec := call(h.Connect, admin, "PUT", `{"domain":"acme.test","admin_email":"boss@acme.test","holidays_calendar":"missing@group.calendar.google.com"}`); rec.Code != 400 || !strings.Contains(rec.Body.String(), "couldn't find that calendar") {
 		t.Errorf("unknown holidays calendar: %d %s", rec.Code, rec.Body)
 	}
 	if rec := call(h.Connect, admin, "PUT", body); rec.Code != 204 {
@@ -187,6 +198,12 @@ func TestGoogleCalendarConnection(t *testing.T) {
 	}
 	if !strings.Contains(fake.query[len(fake.query)-2], "eventTypes=outOfOffice") {
 		t.Errorf("primary calendar query: %s", fake.query[len(fake.query)-2])
+	}
+
+	// another organization can't take the same domain, even with an admin who has an address there
+	h.Users = fakeUsers{"cal_admin": {"boss@acme.test": true}, "other_admin": {"x@acme.test": true}}
+	if rec := call(h.Connect, other, "PUT", body); rec.Code != 409 {
+		t.Errorf("a second organization on acme.test: %d %s", rec.Code, rec.Body)
 	}
 
 	// members see it's connected, not the admin's email; admins see everything

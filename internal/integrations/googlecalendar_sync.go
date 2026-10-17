@@ -98,10 +98,12 @@ func (s CalendarSync) Org(ctx context.Context, org string) error {
 	syncErr := s.org(ctx, org, c)
 	message := ""
 	if syncErr != nil {
-		message = "Couldn't sync: " + syncErr.Error()
+		message = "Couldn't sync; we'll try again within the hour" // details go to the log, not admins' screens (audit)
 		var refused CalendarError
 		if errors.As(syncErr, &refused) {
 			message = refused.Message
+		} else {
+			logs.Warnf("google calendar: sync %s: %v", org, syncErr)
 		}
 	}
 	if _, err := s.DB.Exec(ctx, `UPDATE calendar_connections SET last_sync_at = now(), last_sync_error = $2 WHERE org_id = $1`, org, message); err != nil {
@@ -156,7 +158,7 @@ func (s CalendarSync) org(ctx context.Context, org string, c *CalendarConnection
 		if err != nil {
 			return fmt.Errorf("holidays calendar: %w", err)
 		}
-		if err := s.replace(ctx, org, nil, from, to, spans(events, zone)); err != nil {
+		if err := s.replace(ctx, org, nil, from, to, wholeDays(spans(events, zone))); err != nil { // days off: all-day events only
 			return err
 		}
 	} else if err := s.replace(ctx, org, nil, from, to, nil); err != nil { // holidays calendar removed
@@ -213,6 +215,17 @@ func spans(events []CalendarEvent, zone string) []span {
 	return out
 }
 
+// wholeDays keeps whole days: a shared calendar's meetings aren't company days off.
+func wholeDays(list []span) []span {
+	var out []span
+	for _, sp := range list {
+		if sp.allDay {
+			out = append(out, sp)
+		}
+	}
+	return out
+}
+
 // replace swaps one person's (or, user nil, the company's) time away in the window for what Google
 // has now, in one transaction so readers never see it half done.
 func (s CalendarSync) replace(ctx context.Context, org string, user *string, from, to time.Time, list []span) error {
@@ -221,6 +234,10 @@ func (s CalendarSync) replace(ctx context.Context, org string, user *string, fro
 		return err
 	}
 	defer tx.Rollback(ctx)
+	// one sync of an org at a time (hourly, Sync now, every instance), so two can't both insert (audit)
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext('time-away:' || $1))`, org); err != nil {
+		return err
+	}
 	if _, err := tx.Exec(ctx, `DELETE FROM time_away WHERE org_id = $1 AND user_id IS NOT DISTINCT FROM $2 AND ends_at > $3 AND starts_at < $4`, org, user, from, to); err != nil {
 		return err
 	}

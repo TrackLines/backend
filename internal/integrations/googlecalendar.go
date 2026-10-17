@@ -264,6 +264,9 @@ func calendarInput(domain, adminEmail, holidays string) (string, string, string,
 		return "", "", "", fmt.Errorf("the admin email must be an address at %s", domain)
 	case len(holidays) > 300 || strings.ContainsAny(holidays, " \t\r\n/"):
 		return "", "", "", errors.New("the holidays calendar should be a calendar ID, e.g. en.uk#holiday@group.v.calendar.google.com")
+	// a public holiday calendar or a shared (group) calendar, never someone's own calendar (audit)
+	case holidays != "" && !strings.HasSuffix(holidays, "#holiday@group.v.calendar.google.com") && !strings.HasSuffix(holidays, "@group.calendar.google.com"):
+		return "", "", "", errors.New("the holidays calendar must be a public holiday calendar (…#holiday@group.v.calendar.google.com) or a shared calendar (…@group.calendar.google.com)")
 	}
 	return domain, adminEmail, holidays, nil
 }

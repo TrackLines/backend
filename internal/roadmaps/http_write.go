@@ -20,8 +20,8 @@ func (in *roadmapInput) valid(w http.ResponseWriter) bool {
 		http.Error(w, "title is required", http.StatusBadRequest)
 		return false
 	}
-	if in.Visibility == "" {
-		in.Visibility = Public
+	if in.Visibility == "" { // left out (API, MCP): team only; publishing is a choice (the web form asks)
+		in.Visibility = Team
 	}
 	return true
 }

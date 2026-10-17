@@ -1,8 +1,12 @@
 package integrations
 
 import (
+	"strings"
+
 	"context"
 	"errors"
+	"github.com/clerk/clerk-sdk-go/v2"
+	"github.com/clerk/clerk-sdk-go/v2/user"
 	"net/http"
 	"time"
 
@@ -20,6 +24,29 @@ type CalendarSystem struct {
 	Admins organizations.Admins
 	Google *GoogleCalendar // nil: the server has no service account
 	Sync   *CalendarSync   // syncs after connecting and on Sync now; nil: hourly only
+	// Users proves the admin connecting a domain has a verified address in it: our service account
+	// is shared, so a domain must never be connectable by an organization that doesn't own it.
+	Users userLister
+}
+
+// ownsDomain: does the person have a verified email address at domain?
+func (h CalendarSystem) ownsDomain(r *http.Request, userID, domain string) (bool, error) {
+	if h.Users == nil {
+		return false, nil
+	}
+	one := int64(1)
+	list, err := h.Users.List(r.Context(), &user.ListParams{UserIDs: []string{userID}, ListParams: clerk.ListParams{Limit: &one}})
+	if err != nil || list == nil {
+		return false, err
+	}
+	for _, u := range list.Users {
+		for _, e := range u.EmailAddresses {
+			if e != nil && e.Verification != nil && e.Verification.Status == "verified" && inDomain([]string{strings.ToLower(e.EmailAddress)}, domain) != "" {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
 }
 
 // Get: GET /api/integrations/google-calendar. Whether the server offers it, whether the org is
@@ -77,6 +104,24 @@ func (h CalendarSystem) Connect(w http.ResponseWriter, r *http.Request) {
 	domain, adminEmail, holidays, err := calendarInput(in.Domain, in.AdminEmail, in.HolidaysCalendar)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	// the domain must be theirs: an organization can only connect a Workspace one of its admins belongs to
+	if owns, err := h.ownsDomain(r, user, domain); err != nil {
+		logs.Warnf("google calendar: domain check: %v", err)
+		http.Error(w, "couldn't check your email addresses; try again in a minute", http.StatusBadGateway)
+		return
+	} else if !owns {
+		http.Error(w, "to connect "+domain+", add and verify your own "+domain+" email address on your TrackLin.es account first", http.StatusForbidden)
+		return
+	}
+	var other bool
+	if err := h.DB.QueryRow(r.Context(), `SELECT EXISTS (SELECT 1 FROM calendar_connections WHERE lower(domain) = $1 AND org_id <> $2)`, domain, org).Scan(&other); err != nil {
+		logs.Errorf("google calendar: connect: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	} else if other {
+		http.Error(w, domain+" is already connected to another organization", http.StatusConflict)
 		return
 	}
 	if !h.check(w, r, adminEmail, holidays) {

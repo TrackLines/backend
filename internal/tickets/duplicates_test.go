@@ -54,6 +54,16 @@ func TestMarkDuplicate(t *testing.T) {
 	original, _ := s.CreateBacklog(ctx, "dup1", pid, "bug", "can't sign in", "")
 	other, _ := s.CreateBacklog(ctx, "dup1", pid, "bug", "sign-in fails", "")
 	elsewhere, _ := s.CreateBacklog(ctx, "dup2", project("dup2"), "bug", "x", "")
+	// audit: an AI key can't close a ticket as a duplicate on a board where a person reviews agents' work
+	if _, err := db.Exec(ctx, `UPDATE boards SET agent_review = true WHERE id = $1`, b.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.MarkDuplicate(ctx, "dup1", "agent", copyTk.ID, original.ID, DuplicateOptions{Agent: true}); !errors.Is(err, ErrAgentReview) {
+		t.Fatalf("agent on a review board: %v", err)
+	}
+	if _, err := db.Exec(ctx, `UPDATE boards SET agent_review = false WHERE id = $1`, b.ID); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := db.Exec(ctx, `INSERT INTO ticket_labels (ticket_id, label) VALUES ($1, 'auth')`, copyTk.ID); err != nil {
 		t.Fatal(err)
 	}

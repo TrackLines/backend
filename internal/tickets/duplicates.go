@@ -20,7 +20,12 @@ var (
 type DuplicateOptions struct {
 	CopyLabels   bool
 	CopyComments bool
+	// Agent: the caller is an AI key, which can't close a ticket that a person must review (audit)
+	Agent bool
 }
+
+// ErrAgentReview: marking a duplicate closes the ticket, so an AI agent can't do it where a person reviews agents' work.
+var ErrAgentReview = errors.New("an AI agent can't close a ticket on a board with agent review: ask a person to mark it as a duplicate")
 
 // MarkDuplicate closes id as a duplicate of canonical, optionally copying its labels and
 // comments to the original. Both tickets must be in the caller's project.
@@ -54,6 +59,16 @@ func (s Store) MarkDuplicate(ctx context.Context, owner, actor, id, canonical st
 		var alreadyDuplicate bool
 		if err := tx.QueryRow(ctx, `SELECT board_id, duplicate_of, sprint_id, estimate, column_id, resolution IS NOT DISTINCT FROM 'duplicate' FROM tickets WHERE id = $1 FOR UPDATE`, id).Scan(&boardID, &current, &sprintID, &estimate, &fromColumn, &alreadyDuplicate); err != nil {
 			return notFound(err)
+		}
+		if options.Agent {
+			var reviewed bool
+			if err := tx.QueryRow(ctx, `SELECT t.agent_review_at IS NOT NULL OR COALESCE(b.agent_review, false)
+				FROM tickets t LEFT JOIN boards b ON b.id = t.board_id WHERE t.id = $1`, id).Scan(&reviewed); err != nil {
+				return err
+			}
+			if reviewed {
+				return ErrAgentReview
+			}
 		}
 		var originalIsDuplicate bool
 		if err := tx.QueryRow(ctx, `SELECT duplicate_of IS NOT NULL OR resolution IS NOT DISTINCT FROM 'duplicate' FROM tickets WHERE id = $1 FOR UPDATE`, canonical).Scan(&originalIsDuplicate); err != nil {
@@ -147,8 +162,11 @@ func (h System) MarkDuplicate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	org := auth.OrgID(r.Context())
-	if err := h.store.MarkDuplicate(r.Context(), org, auth.ActorID(r.Context()), r.PathValue("id"), in.DuplicateOf, DuplicateOptions{CopyLabels: in.CopyLabels, CopyComments: in.CopyComments}); err != nil {
+	if err := h.store.MarkDuplicate(r.Context(), org, auth.ActorID(r.Context()), r.PathValue("id"), in.DuplicateOf, DuplicateOptions{CopyLabels: in.CopyLabels, CopyComments: in.CopyComments,
+		Agent: auth.ViaAPIKey(r.Context()) && auth.APIKeyKind(r.Context()) == "ai"}); err != nil {
 		switch {
+		case errors.Is(err, ErrAgentReview):
+			http.Error(w, err.Error(), http.StatusForbidden)
 		case errors.Is(err, ErrSelfDuplicate), errors.Is(err, ErrOtherProject), errors.Is(err, ErrDuplicateTarget):
 			http.Error(w, err.Error(), http.StatusBadRequest)
 		case errors.Is(err, ErrAlreadyDuplicate):

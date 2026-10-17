@@ -116,7 +116,7 @@ var tools = []tool{
 		method: "GET", path: "/api/roadmaps/{roadmap_id}", props: map[string]any{"roadmap_id": id("Roadmap")}, required: []string{"roadmap_id"}, readOnly: true},
 	{name: "create_roadmap", title: "Create roadmap", description: "Org admins and the project's team leaders only (an agent acts as its owner). Create a roadmap in a project. Visibility can be public (anyone with the link), login_only, or team; defaults to public. A roadmap is a handful of feature milestones for people outside the team, not a list of tickets: add milestones with replace_roadmap_items, then link each feature's tickets with set_roadmap_item_tickets.",
 		method: "POST", path: "/api/projects/{project_id}/roadmaps", body: []string{"title", "description", "visibility"},
-		props:    map[string]any{"project_id": id("Project"), "title": str("Roadmap title"), "description": str("Roadmap description (markdown)"), "visibility": map[string]any{"type": "string", "enum": []string{"public", "login_only", "team"}, "description": "Defaults to public"}},
+		props:    map[string]any{"project_id": id("Project"), "title": str("Roadmap title"), "description": str("Roadmap description (markdown)"), "visibility": map[string]any{"type": "string", "enum": []string{"public", "login_only", "team"}, "description": "Defaults to team"}},
 		required: []string{"project_id", "title"}},
 	{name: "update_roadmap", title: "Update roadmap", description: "Org admins and the project's team leaders only (an agent acts as its owner). Replace a roadmap's title, description and visibility; send all three fields.",
 		method: "PUT", path: "/api/roadmaps/{roadmap_id}", body: []string{"title", "description", "visibility"},

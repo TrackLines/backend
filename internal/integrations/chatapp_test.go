@@ -167,7 +167,7 @@ func TestChatApp(t *testing.T) {
 		return rec
 	}
 	dm := func(kind, user, space string) string {
-		return `{"type":"` + kind + `","user":{"name":"` + user + `","displayName":"Ava"},"space":{"name":"` + space + `","spaceType":"DIRECT_MESSAGE"}}`
+		return `{"type":"` + kind + `","user":{"name":"` + user + `","displayName":"Ava","email":"ava@acme.test"},"space":{"name":"` + space + `","spaceType":"DIRECT_MESSAGE"}}`
 	}
 	codeIn := func(rec *httptest.ResponseRecorder) string {
 		m := regexp.MustCompile(`/chat/link\?code=([A-Za-z0-9_-]+)`).FindStringSubmatch(rec.Body.String())
@@ -218,6 +218,21 @@ func TestChatApp(t *testing.T) {
 	}
 	if rec := call(app.Link, auth.WithAPIKeyUser(ctx, "user_ava", "claude"), "POST", `{"code":"`+code+`"}`); rec.Code != 403 {
 		t.Fatalf("api key linked: %d", rec.Code)
+	}
+	// audit: the page first asks "link ava@acme.test?": looking doesn't use the code up; API keys and bad codes can't look
+	look := func(c context.Context, code string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		app.LinkCode(rec, httptest.NewRequest("GET", "/?code="+code, nil).WithContext(c))
+		return rec
+	}
+	if rec := look(session("user_ava"), code); rec.Code != 200 || !strings.Contains(rec.Body.String(), `"google":"ava@acme.test"`) {
+		t.Fatalf("which account: %d %s", rec.Code, rec.Body)
+	}
+	if rec := look(auth.WithAPIKeyUser(ctx, "user_ava", "claude"), code); rec.Code != 403 {
+		t.Fatalf("api key looked: %d", rec.Code)
+	}
+	if rec := look(session("user_ava"), "nope"); rec.Code != 400 {
+		t.Fatalf("bad code: %d", rec.Code)
 	}
 	if rec := call(app.Link, session("user_ava"), "POST", `{"code":"`+code+`"}`); rec.Code != 200 {
 		t.Fatalf("link: %d %s", rec.Code, rec.Body)

@@ -166,6 +166,15 @@ func (s chatSpace) direct() bool {
 type chatUser struct {
 	Name        string `json:"name"` // users/123…
 	DisplayName string `json:"displayName"`
+	Email       string `json:"email"`
+}
+
+// label: how the link page names this Google account (email, else name)
+func (u chatUser) label() string {
+	if u.Email != "" {
+		return u.Email
+	}
+	return u.DisplayName
 }
 
 // chatRequest is either of Chat's formats: Chat app events ({type, space, user}) or, for an app
@@ -257,7 +266,7 @@ func (c *ChatApp) Events(w http.ResponseWriter, r *http.Request) {
 			text = "You’re linked. I’ll message you here when you’re assigned a ticket, mentioned, or something needs your review. To stop, unlink it in TrackLin.es: Your settings, in your account menu."
 			button, buttonURL = "Your settings", c.Site+"/account"
 		} else {
-			code, err := c.newLinkCode(ctx, user.Name, space.Name)
+			code, err := c.newLinkCode(ctx, user, space.Name)
 			if err != nil {
 				logs.Errorf("google chat app: link code: %v", err)
 				http.Error(w, "unavailable", http.StatusServiceUnavailable)
@@ -299,15 +308,15 @@ func (c *ChatApp) linked(ctx context.Context, google string, space chatSpace) (b
 	return tag.RowsAffected() > 0, err
 }
 
-func (c *ChatApp) newLinkCode(ctx context.Context, google, space string) (string, error) {
+func (c *ChatApp) newLinkCode(ctx context.Context, google chatUser, space string) (string, error) {
 	b := make([]byte, 24)
 	if _, err := rand.Read(b); err != nil {
 		return "", err
 	}
 	code := base64.RawURLEncoding.EncodeToString(b)
 	_, err := c.DB.Exec(ctx, `WITH gone AS (DELETE FROM chat_link_codes WHERE expires_at < now())
-		INSERT INTO chat_link_codes (code_hash, google_user, space, expires_at) VALUES ($1, $2, $3, $4)`,
-		hashCode(code), google, space, c.clock().Add(linkCodeTTL))
+		INSERT INTO chat_link_codes (code_hash, google_user, space, expires_at, google_label) VALUES ($1, $2, $3, $4, $5)`,
+		hashCode(code), google.Name, space, c.clock().Add(linkCodeTTL), google.label())
 	return code, err
 }
 
@@ -340,6 +349,32 @@ func (c *ChatApp) Status(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	httpx.JSON(w, http.StatusOK, out)
+}
+
+// LinkCode: GET /api/me/google-chat/link?code=…: which Google account a code would link, without
+// using it up, so the page asks before linking (audit: a link someone else sent used to link silently).
+func (c *ChatApp) LinkCode(w http.ResponseWriter, r *http.Request) {
+	if c == nil {
+		http.Error(w, "the Google Chat app isn't set up on this server", http.StatusServiceUnavailable)
+		return
+	}
+	if _, ok := auth.UserID(r.Context()); !ok || auth.ViaAPIKey(r.Context()) {
+		http.Error(w, "sign in to link Google Chat", http.StatusForbidden)
+		return
+	}
+	var label string
+	err := c.DB.QueryRow(r.Context(), `SELECT google_label FROM chat_link_codes WHERE code_hash = $1 AND expires_at > $2`,
+		hashCode(r.URL.Query().Get("code")), c.clock()).Scan(&label)
+	if errors.Is(err, pgx.ErrNoRows) {
+		http.Error(w, ErrLinkCode.Error(), http.StatusBadRequest)
+		return
+	}
+	if err != nil {
+		logs.Errorf("google chat app: link code: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]string{"google": label})
 }
 
 // Link: POST /api/me/google-chat/link {"code"}: the signed-in person claims the Google user the code

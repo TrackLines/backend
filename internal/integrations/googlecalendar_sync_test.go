@@ -94,10 +94,11 @@ func TestGoogleCalendarSync(t *testing.T) {
 				{"id": "ava-pm", "status": "confirmed", "eventType": "outOfOffice", "start": map[string]any{"dateTime": "2026-10-27T13:00:00+00:00"}, "end": map[string]any{"dateTime": "2026-10-27T17:00:00+00:00"}},
 				{"id": "ava-gone", "status": "cancelled", "start": map[string]any{"date": "2026-10-28"}, "end": map[string]any{"date": "2026-10-29"}},
 			},
-			"primary:ben@acme.test":                {allDay("ben-day", "2026-10-30", "2026-10-31")},
-			"primary:eve@acme.test":                {allDay("eve-day", "2026-10-18", "2026-10-19")},
-			"primary:fay@acme.test":                {allDay("fay-day", "2026-10-18", "2026-10-19")},
-			"holidays@group.v.calendar.google.com": {allDay("xmas", "2026-12-25", "2026-12-27")},
+			"primary:ben@acme.test": {allDay("ben-day", "2026-10-30", "2026-10-31")},
+			"primary:eve@acme.test": {allDay("eve-day", "2026-10-18", "2026-10-19")},
+			"primary:fay@acme.test": {allDay("fay-day", "2026-10-18", "2026-10-19")},
+			"holidays@group.v.calendar.google.com": {allDay("xmas", "2026-12-25", "2026-12-27"), // a timed meeting on the shared calendar isn't a day off (audit)
+				{"id": "meeting", "status": "confirmed", "start": map[string]any{"dateTime": "2026-10-21T10:00:00Z"}, "end": map[string]any{"dateTime": "2026-10-21T11:00:00Z"}}},
 		}}
 	g := newTestCalendar(t, db, fake)
 	members := fakeMembers{"u_ava": "ava@acme.test", "u_ben": "ben@gmail.test", "u_cara": "cara@elsewhere.test", "u_dan": "dan@acme.test",

@@ -182,7 +182,7 @@ func (s Store) Promote(ctx context.Context, owner, actor, id string) (Submission
 		desc := x.Details
 		note := "_Sent through the project's request form"
 		if x.Contact != "" {
-			note += " by " + x.Contact
+			note += " by `" + strings.ReplaceAll(x.Contact, "`", "'") + "`" // code: an anonymous sender's text never renders as a link (audit)
 		}
 		note += "._"
 		if desc != "" {

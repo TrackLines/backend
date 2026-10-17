@@ -114,7 +114,7 @@ func (s Store) BoardReport(ctx context.Context, owner, boardID string, from, to 
 	unit := unitOf(scale)
 	r := &Report{BoardID: boardID, BoardName: name, Unit: unit, From: from.UTC().Format(time.RFC3339), To: to.UTC().Format(time.RFC3339), Sprints: []SprintReport{}}
 	// every closed sprint up to the period's end, so velocity can look back two sprints
-	all, err := s.sprintReports(ctx, boardID, unit, to)
+	all, err := s.sprintReports(ctx, boardID, unit, from, to)
 	if err != nil {
 		return nil, err
 	}
@@ -140,29 +140,64 @@ func (s Store) BoardReport(ctx context.Context, owner, boardID string, from, to 
 	return r, nil
 }
 
-func (s Store) sprintReports(ctx context.Context, boardID, unit string, before time.Time) ([]SprintReport, error) {
+// sprintReports: the board's sprints a report over [from, to) needs, with their numbers: those in the
+// period and the one before it (same length, for trends), and two closed sprints before those for
+// velocity. Their tickets come in at most three queries, whatever the number of sprints (audit:
+// it used to be one query per sprint since the board began).
+func (s Store) sprintReports(ctx context.Context, boardID, unit string, from, to time.Time) ([]SprintReport, error) {
 	rows, err := s.DB.Query(ctx, `SELECT id, number, to_char(starts_at AT TIME ZONE 'UTC', `+ts+`), to_char(ends_at AT TIME ZONE 'UTC', `+ts+`),
-			to_char(closed_at AT TIME ZONE 'UTC', `+ts+`), goal, snapshot, scope_tickets, scope_points::float8, approved_over::float8
-		FROM sprints WHERE board_id = $1 AND starts_at < $2 ORDER BY number`, boardID, before)
+			to_char(closed_at AT TIME ZONE 'UTC', `+ts+`), goal, snapshot, scope_tickets, scope_points::float8, approved_over::float8, closed_at
+		FROM sprints WHERE board_id = $1 AND starts_at < $2 ORDER BY number`, boardID, to)
 	if err != nil {
 		return nil, err
 	}
 	var sprints []sprintRow
 	var sp sprintRow
-	if _, err := pgx.ForEachRow(rows, []any{&sp.id, &sp.number, &sp.startsAt, &sp.endsAt, &sp.closedAt, &sp.goal, &sp.snapshot, &sp.scopeTickets, &sp.scopePoints, &sp.approved}, func() error {
+	var closed *time.Time
+	first, earliest := -1, from.Add(-to.Sub(from)) // the first sprint the report or its previous period counts
+	if _, err := pgx.ForEachRow(rows, []any{&sp.id, &sp.number, &sp.startsAt, &sp.endsAt, &sp.closedAt, &sp.goal, &sp.snapshot, &sp.scopeTickets, &sp.scopePoints, &sp.approved, &closed}, func() error {
+		if first < 0 && (closed == nil || !closed.Before(earliest)) {
+			first = len(sprints)
+		}
 		sprints = append(sprints, sp)
 		return nil
 	}); err != nil {
 		return nil, err
 	}
+	if first < 0 {
+		return []SprintReport{}, nil
+	}
+	sprints = sprints[max(0, first-2):] // two more back, for the first sprints' velocity
+
+	// tickets: recorded sprints from sprint_tickets; older closed ones from the tickets they finished;
+	// the open one (at most one) from what's in it now
+	var recordedIDs, finishedIDs []string
+	for _, sp := range sprints {
+		switch {
+		case sp.closedAt != nil && sp.snapshot:
+			recordedIDs = append(recordedIDs, sp.id)
+		case sp.closedAt != nil:
+			finishedIDs = append(finishedIDs, sp.id)
+		}
+	}
+	lists := map[string][]sprintTicket{}
+	if err := s.collect(ctx, lists, `SELECT sprint_id::text, at_start, at_close, done, estimate, type FROM sprint_tickets WHERE sprint_id = ANY($1)`, recordedIDs); err != nil {
+		return nil, err
+	}
+	if err := s.collect(ctx, lists, `SELECT t.sprint_id::text, false, true, true, t.estimate, t.type::text FROM tickets t
+		WHERE t.sprint_id = ANY($1) AND t.duplicate_of IS NULL AND `+boards.TicketDoneSQL, finishedIDs); err != nil {
+		return nil, err
+	}
 	value := valueIn(unit)
 	out := make([]SprintReport, 0, len(sprints))
 	for _, sp := range sprints {
-		rep, err := s.sprintReport(ctx, sp, unit, value)
-		if err != nil {
-			return nil, err
+		list := lists[sp.id]
+		if sp.closedAt == nil {
+			if list, err = s.openNow(ctx, sp.id); err != nil {
+				return nil, err
+			}
 		}
-		out = append(out, rep)
+		out = append(out, sprintReport(sp, unit, value, list))
 	}
 	for i := range out { // velocity: this and up to two closed sprints before it
 		if out[i].ClosedAt == nil {
@@ -181,6 +216,24 @@ func (s Store) sprintReports(ctx context.Context, boardID, unit string, before t
 	return out, nil
 }
 
+// collect runs query (sprint id, then a sprintTicket's columns) for ids and files the rows by sprint.
+func (s Store) collect(ctx context.Context, into map[string][]sprintTicket, query string, ids []string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	rows, err := s.DB.Query(ctx, query, ids)
+	if err != nil {
+		return err
+	}
+	var id string
+	var t sprintTicket
+	_, err = pgx.ForEachRow(rows, []any{&id, &t.atStart, &t.atClose, &t.done, &t.estimate, &t.typ}, func() error {
+		into[id] = append(into[id], t)
+		return nil
+	})
+	return err
+}
+
 // sprintTicket is a ticket as a report sees it.
 type sprintTicket struct {
 	atStart, atClose, done bool
@@ -188,21 +241,9 @@ type sprintTicket struct {
 	typ                    string
 }
 
-func (s Store) sprintReport(ctx context.Context, sp sprintRow, unit string, value func(*string) float64) (SprintReport, error) {
+// sprintReport works out one sprint's numbers from its tickets (recorded, finished, or in it now).
+func sprintReport(sp sprintRow, unit string, value func(*string) float64, list []sprintTicket) SprintReport {
 	rep := SprintReport{Number: sp.number, StartsAt: sp.startsAt, EndsAt: sp.endsAt, ClosedAt: sp.closedAt, Goal: sp.goal, ApprovedOver: sp.approved, Mix: []Mix{}}
-	var list []sprintTicket
-	var err error
-	switch {
-	case sp.closedAt != nil && sp.snapshot: // recorded at start and close
-		list, err = s.recorded(ctx, sp.id)
-	case sp.closedAt == nil: // open: its start (if recorded) against what's in it now
-		list, err = s.openNow(ctx, sp.id)
-	default: // closed before reports were recorded: what it finished, and what it held at close
-		list, err = s.finished(ctx, sp.id)
-	}
-	if err != nil {
-		return rep, err
-	}
 	var planned, done, added, removed, carried, current float64
 	mix := map[string]*Mix{}
 	for _, t := range list {
@@ -269,7 +310,7 @@ func (s Store) sprintReport(ctx context.Context, sp sprintRow, unit string, valu
 			rep.Mix = append(rep.Mix, *m)
 		}
 	}
-	return rep, nil
+	return rep
 }
 
 func scanTickets(rows pgx.Rows) ([]sprintTicket, error) {
@@ -282,30 +323,12 @@ func scanTickets(rows pgx.Rows) ([]sprintTicket, error) {
 	return out, err
 }
 
-func (s Store) recorded(ctx context.Context, sprintID string) ([]sprintTicket, error) {
-	rows, err := s.DB.Query(ctx, `SELECT at_start, at_close, done, estimate, type FROM sprint_tickets WHERE sprint_id = $1`, sprintID)
-	if err != nil {
-		return nil, err
-	}
-	return scanTickets(rows)
-}
-
 // openNow: an open sprint's recorded start, and what's in it now (at_close meaning "in it now").
 func (s Store) openNow(ctx context.Context, sprintID string) ([]sprintTicket, error) {
 	rows, err := s.DB.Query(ctx, `SELECT COALESCE(st.at_start, false), t.id IS NOT NULL, COALESCE(`+boards.TicketDoneSQL+`, false),
 			COALESCE(t.estimate, st.estimate), COALESCE(t.type::text, st.type)
 		FROM (SELECT * FROM sprint_tickets WHERE sprint_id = $1) st
 		FULL JOIN (SELECT * FROM tickets WHERE sprint_id = $1 AND duplicate_of IS NULL) t ON t.id = st.ticket_id`, sprintID)
-	if err != nil {
-		return nil, err
-	}
-	return scanTickets(rows)
-}
-
-// finished: a sprint closed before reports were recorded keeps only the tickets it finished.
-func (s Store) finished(ctx context.Context, sprintID string) ([]sprintTicket, error) {
-	rows, err := s.DB.Query(ctx, `SELECT false, true, true, t.estimate, t.type::text FROM tickets t
-		WHERE t.sprint_id = $1 AND t.duplicate_of IS NULL AND `+boards.TicketDoneSQL, sprintID)
 	if err != nil {
 		return nil, err
 	}

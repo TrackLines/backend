@@ -115,6 +115,12 @@ func TestRoadmapWritesNeedAnAdminOrProjectLeader(t *testing.T) {
 			t.Errorf("%s creating a roadmap: %d, want %d", tc.who, got, tc.create)
 		}
 	}
+	// audit: a roadmap made without saying who sees it (API, MCP) is team only, never public by accident
+	var made Roadmap
+	json.Unmarshal(call(as("user_admin", org), http.MethodPost, "/", `{"title":"Unsaid"}`, h.Create, p).Body.Bytes(), &made)
+	if made.Visibility != Team {
+		t.Errorf("default visibility: %q", made.Visibility)
+	}
 	if code := call(as("user_mem", org), http.MethodDelete, "/", "", h.Delete, rm.ID).Code; code != http.StatusForbidden {
 		t.Errorf("a member deleting: %d", code)
 	}

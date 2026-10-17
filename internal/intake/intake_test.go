@@ -139,7 +139,7 @@ func TestIntake(t *testing.T) {
 	}
 	tk, err := tickets.Store{DB: db}.Get(ctx, "ik1", *promoted.TicketID)
 	if err != nil || tk.BoardID != nil || tk.AssignedTo != nil || tk.Type != "bug" || tk.Title != "Login button does nothing" ||
-		!strings.HasPrefix(tk.Description, "On Safari 18\n\n_Sent through the project's request form by sam@example.com._") || tk.CreatedBy != "user_ava" {
+		!strings.HasPrefix(tk.Description, "On Safari 18\n\n_Sent through the project's request form by `sam@example.com`._") || tk.CreatedBy != "user_ava" {
 		t.Fatalf("ticket: %+v %v", tk, err)
 	}
 	if rec := call(member, h.Promote, "POST", "", map[string]string{"id": bug.ID}, ""); rec.Code != 409 {

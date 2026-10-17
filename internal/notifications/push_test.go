@@ -93,6 +93,12 @@ func TestPush(t *testing.T) {
 			t.Fatalf("subscribe %s: %d %s", e, rec.Code, rec.Body)
 		}
 	}
+	// audit: someone who learns Ava's endpoint can't re-register it as theirs and take her pushes
+	call(person("user_eve", "pu1"), h.Subscribe, "POST", sub("https://fcm.googleapis.com/fcm/send/ava-phone"))
+	var owner string
+	if err := db.QueryRow(ctx, `SELECT user_id FROM push_subscriptions WHERE endpoint = 'https://fcm.googleapis.com/fcm/send/ava-phone'`).Scan(&owner); err != nil || owner != "user_ava" {
+		t.Fatalf("endpoint taken over: %q %v", owner, err)
+	}
 	if rec := call(ava, h.Subscribe, "POST", sub("https://169.254.169.254/x")); rec.Code != 400 {
 		t.Fatalf("internal endpoint: %d", rec.Code)
 	}

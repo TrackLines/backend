@@ -7,6 +7,7 @@ import (
 	"github.com/clerk/clerk-sdk-go/v2/organization"
 	"github.com/clerk/clerk-sdk-go/v2/organizationmembership"
 	"github.com/clerk/clerk-sdk-go/v2/user"
+	"net"
 	"net/http"
 	"os/signal"
 	"strings"
@@ -146,7 +147,7 @@ func (s *Service) Start() error {
 	go billing.SyncAllMemberCaps(ctx, s.DB, organization.NewClient(&clerk.ClientConfig{}))
 	// a new version of the Terms or Privacy policy on the web app: everyone's told once, in-app (TL-424)
 	go legal.Announcer{DB: s.DB, Site: siteURL(config.Get(s.Config).AuthorizedParties())}.Run(ctx, time.Hour)
-	// who's on holiday, from Google Calendar (TL-406): every connected org, hourly, while the flag is on
+	// who's on holiday, from Google Calendar (TL-406): every connected org, hourly
 	go s.calendarSync(clerkcache.Memberships{Next: organizationmembership.NewClient(&clerk.ClientConfig{}), VK: s.Valkey, TTL: time.Minute}).Run(ctx, time.Hour)
 	// the bin and deleted organizations are purged, and deleted files removed, by Railway cron jobs
 	// running this binary as `server purge` (00:00) and `server sweep-files` (00:30): see cmd/server (TL-256)
@@ -243,6 +244,7 @@ func (s *Service) Handler() http.Handler {
 	mux.Handle("GET /api/push", signedIn(nf.PushKey))
 	// Google Chat app (TL-289): linking your own account (Chat's requests: see the end of Handler)
 	mux.Handle("GET /api/me/google-chat", sessionRequired(http.HandlerFunc(chatApp.Status)))
+	mux.Handle("GET /api/me/google-chat/link", sessionRequired(http.HandlerFunc(chatApp.LinkCode)))
 	mux.Handle("POST /api/me/google-chat/link", sessionRequired(http.HandlerFunc(chatApp.Link)))
 	mux.Handle("DELETE /api/me/google-chat", sessionRequired(http.HandlerFunc(chatApp.Unlink)))
 	mux.Handle("POST /api/push/subscriptions", signedIn(nf.Subscribe))
@@ -291,7 +293,7 @@ func (s *Service) Handler() http.Handler {
 	// Google Calendar (TL-404): who's on holiday, read with the Chat app's service account once a
 	// Workspace admin delegates to it. Before {provider}: more specific.
 	calSync := s.calendarSync(members)
-	cal := integrations.CalendarSystem{DB: s.DB, Admins: o.AdminModel(), Google: calSync.Google, Sync: &calSync}
+	cal := integrations.CalendarSystem{DB: s.DB, Admins: o.AdminModel(), Google: calSync.Google, Sync: &calSync, Users: calSync.Users}
 	mux.Handle("GET /api/integrations/google-calendar", signedIn(cal.Get))
 	mux.Handle("PUT /api/integrations/google-calendar", signedIn(cal.Connect)) // org admins; checks Google first
 	mux.Handle("POST /api/integrations/google-calendar/test", signedIn(cal.Test))
@@ -471,27 +473,45 @@ func (s *Service) health(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte("ok"))
 }
 
-// serve runs until SIGINT/SIGTERM, then drains in-flight requests.
+// serve runs until SIGINT/SIGTERM, then drains in-flight requests before returning: returning is
+// what lets main close the database, so it must wait (audit: deploys used to cut writes off mid-way).
 func (s *Service) serve(ctx context.Context, h http.Handler) error {
+	ln, err := net.Listen("tcp", ":"+s.Port)
+	if err != nil {
+		return err
+	}
+	logs.Logf("Listening on %s", ln.Addr())
+	return serveOn(ctx, ln, h, 15*time.Second)
+}
+
+// serveOn serves on ln until ctx ends, then gives in-flight requests up to drain to finish.
+func serveOn(ctx context.Context, ln net.Listener, h http.Handler, drain time.Duration) error {
 	srv := &http.Server{
-		Addr:              ":" + s.Port,
 		Handler:           h,
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		// SSE connections stay open; per-response write deadlines would close every live view.
 		WriteTimeout: 0,
 	}
-	go func() {
-		<-ctx.Done()
-		shutdown, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		defer cancel()
-		_ = srv.Shutdown(shutdown)
-	}()
-	logs.Logf("Listening on %s", srv.Addr)
-	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+	served := make(chan error, 1)
+	go func() { served <- srv.Serve(ln) }()
+	select {
+	case err := <-served: // failed to serve at all
+		if errors.Is(err, http.ErrServerClosed) {
+			return nil
+		}
 		return err
+	case <-ctx.Done():
 	}
-	return nil
+	shutdown, cancel := context.WithTimeout(context.Background(), drain)
+	defer cancel()
+	err := srv.Shutdown(shutdown) // waits for in-flight requests (SSE streams end at the deadline)
+	<-served
+	if errors.Is(err, context.DeadlineExceeded) {
+		logs.Warnf("shutdown: requests still running after %s", drain)
+		return nil
+	}
+	return err
 }
 
 // stillMember asks Clerk (through the minute-long membership cache) whether user is still in org,

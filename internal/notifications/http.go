@@ -226,7 +226,7 @@ func (h System) Subscribe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, err := h.store.DB.Exec(r.Context(), `INSERT INTO push_subscriptions (user_id, endpoint, p256dh, auth) VALUES ($1, $2, $3, $4)
-		ON CONFLICT (endpoint) DO UPDATE SET user_id = $1, p256dh = $3, auth = $4`, user, in.Endpoint, in.Keys.P256dh, in.Keys.Auth); err != nil {
+		ON CONFLICT (endpoint) DO UPDATE SET p256dh = $3, auth = $4 WHERE push_subscriptions.user_id = $1`, user, in.Endpoint, in.Keys.P256dh, in.Keys.Auth); err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
