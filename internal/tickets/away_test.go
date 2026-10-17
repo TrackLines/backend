@@ -33,7 +33,7 @@ func TestAwayStatus(t *testing.T) {
 	}
 }
 
-// TL-407: with Google Calendar on, the assignee list says who's on holiday; agents never; off: nobody.
+// TL-407: the assignee list says who's on holiday (from Google Calendar's time away); agents never.
 func TestAssigneesSayWhosAway(t *testing.T) {
 	ctx := context.Background()
 	url := os.Getenv("TEST_DATABASE_URL")
@@ -57,8 +57,7 @@ func TestAssigneesSayWhosAway(t *testing.T) {
 			('aw2', 'user_cat', now() - interval '1 hour', now() + interval '1 hour', 'c')`); err != nil {
 		t.Fatal(err)
 	}
-	on := true
-	h := System{store: Store{DB: db}, memberships: testAssigneeMembers{"user_ava", "user_ben", "user_cat"}}.WithTimeAway(func() bool { return on })
+	h := System{store: Store{DB: db}, memberships: testAssigneeMembers{"user_ava", "user_ben", "user_cat"}}
 	list := func(org string) map[string]Assignee {
 		req := httptest.NewRequest("GET", "/api/assignees", nil)
 		req = req.WithContext(auth.WithAPIKey(req.Context(), "user_ben", org, "codex", "ai"))
@@ -101,9 +100,4 @@ func TestAssigneesSayWhosAway(t *testing.T) {
 		t.Error("an agent marked away")
 	}
 
-	// the flag off: nobody's marked
-	on = false
-	if a := list("aw1")["user_ava"]; a.Away != nil {
-		t.Error("marked away with the flag off")
-	}
 }

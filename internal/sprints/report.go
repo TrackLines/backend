@@ -441,5 +441,10 @@ func (h System) BoardReport(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
+	if wantsMarkdown(r) { // TL-399
+		loc := httpx.Zone(r.Context())
+		sendMarkdown(w, rep.BoardName, from, to, loc, BoardMarkdown(rep, from, to, loc, time.Now()))
+		return
+	}
 	httpx.JSON(w, http.StatusOK, rep)
 }

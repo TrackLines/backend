@@ -170,10 +170,9 @@ func (h System) Assignees(w http.ResponseWriter, r *http.Request) {
 		seen[agent.ID] = true
 		merged = append(merged, agent)
 	}
-	if h.timeAway != nil && h.timeAway() {
-		if err := h.store.markAway(r.Context(), org, merged, time.Now()); err != nil {
-			logs.Warnf("tickets: time away: %v", err) // only costs the holiday marks
-		}
+	// who's on holiday (TL-407): only organizations that connected Google Calendar have any
+	if err := h.store.markAway(r.Context(), org, merged, time.Now()); err != nil && !httpx.Canceled(err) {
+		logs.Warnf("tickets: time away: %v", err) // only costs the holiday marks
 	}
 	httpx.JSON(w, http.StatusOK, merged)
 }

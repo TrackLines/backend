@@ -1567,7 +1567,7 @@ paths:
     get:
       tags: [Organizations]
       operationId: getGoogleCalendar
-      summary: Google Calendar (TL-404) for the org; any member. The admin email is for org admins only. 404 while the google-calendar flag is off.
+      summary: Google Calendar (TL-404) for the org; any member. The admin email is for org admins only.
       responses:
         '200':
           description: Whether the server offers it and the org is connected, plus what a Workspace admin authorizes for domain-wide delegation.
@@ -2423,6 +2423,7 @@ paths:
       - { name: boardId, in: path, required: true, schema: { type: string, format: uuid } }
       - { name: from, in: query, schema: { type: string, format: date }, description: "First day (in the caller's Tracklines-Timezone); default 90 days ago." }
       - { name: to, in: query, schema: { type: string, format: date }, description: Last day, inclusive; default today. At most two years after from. }
+      - { name: format, in: query, schema: { type: string, enum: [json, md, markdown] }, description: "md (or markdown): the report as a Markdown download (text/markdown, attachment) with Mermaid charts, for wikis and docs (TL-399)." }
     get:
       tags: [Sprints]
       operationId: boardSprintReport
@@ -2466,6 +2467,33 @@ paths:
                   previous: { $ref: '#/components/schemas/ReportTotals' }
         '400': { description: Bad dates. }
         '404': { description: Not your organization's board, or reports are off. }
+  /projects/{projectId}/reports/sprints:
+    parameters:
+      - { name: projectId, in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: from, in: query, schema: { type: string, format: date }, description: "First day (in the caller's Tracklines-Timezone); default 90 days ago." }
+      - { name: to, in: query, schema: { type: string, format: date }, description: Last day, inclusive; default today. }
+      - { name: format, in: query, schema: { type: string, enum: [json, md, markdown] }, description: "md (or markdown): the report as a Markdown download (text/markdown, attachment) with Mermaid charts, for wikis and docs (TL-399)." }
+    get:
+      tags: [Sprints]
+      operationId: projectSprintReport
+      summary: "A project's sprint boards together (TL-398): each board's report, points and tickets totalled apart, predictability across both, and calendar months. Anyone in the organization; 404 while sprint-reports is off."
+      responses:
+        '200': { description: The roll-up., content: { application/json: { schema: { $ref: '#/components/schemas/ReportRollup' } } } }
+        '400': { description: Bad dates. }
+        '404': { description: Not your organization's project, or reports are off. }
+  /org/reports/sprints:
+    parameters:
+      - { name: from, in: query, schema: { type: string, format: date }, description: "First day (in the caller's Tracklines-Timezone); default 90 days ago." }
+      - { name: to, in: query, schema: { type: string, format: date }, description: Last day, inclusive; default today. }
+      - { name: format, in: query, schema: { type: string, enum: [json, md, markdown] }, description: "md (or markdown): the report as a Markdown download (text/markdown, attachment) with Mermaid charts, for wikis and docs (TL-399)." }
+    get:
+      tags: [Sprints]
+      operationId: orgSprintReport
+      summary: "Every project in the organization together (TL-398), by project. Organization admins only (people, not API keys)."
+      responses:
+        '200': { description: The roll-up., content: { application/json: { schema: { $ref: '#/components/schemas/ReportRollup' } } } }
+        '403': { description: Not an organization admin. }
+        '404': { description: Reports are off. }
   /boards/{boardId}/velocity:
     parameters:
       - $ref: '#/components/parameters/BoardId'
@@ -4085,6 +4113,37 @@ components:
       properties:
         health: { type: string, enum: [on_track, at_risk, off_track] }
         note: { type: string, minLength: 1, maxLength: 2000, description: Plain text or Markdown; rendered as safe text by clients. }
+    ReportRollup:
+      type: object
+      properties:
+        id: { type: string, description: The project; absent for the organization. }
+        name: { type: string }
+        from: { type: string, format: date-time }
+        to: { type: string, format: date-time }
+        boards: { type: array, description: "A project's sprint boards (not kanban or archived): each a board report.", items: { type: object } }
+        projects: { type: array, description: "The organization's projects, each a roll-up without its boards.", items: { $ref: '#/components/schemas/ReportRollup' } }
+        points: { oneOf: [{ $ref: '#/components/schemas/ReportTotals' }, { type: 'null' }], description: Boards that estimate. }
+        tickets: { oneOf: [{ $ref: '#/components/schemas/ReportTotals' }, { type: 'null' }], description: Boards that count tickets. }
+        overall: { $ref: '#/components/schemas/ReportOverall' }
+        previous: { $ref: '#/components/schemas/ReportOverall' }
+        months:
+          type: array
+          items:
+            type: object
+            properties:
+              month: { type: string, example: 2026-08 }
+              sprints: { type: integer }
+              predictability: { type: [number, 'null'] }
+              points_done: { type: number }
+              tickets_done: { type: number }
+        summary: { type: string }
+    ReportOverall:
+      type: object
+      properties:
+        sprints: { type: integer }
+        predictability: { type: [number, 'null'] }
+        goals_set: { type: integer }
+        goals_met: { type: integer }
     ReportMix:
       type: object
       properties:

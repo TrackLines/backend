@@ -16,28 +16,16 @@ import (
 // CalendarSystem is Google Calendar's settings (TL-405): org members see whether it's connected;
 // org admins connect, check and disconnect it.
 type CalendarSystem struct {
-	DB      *pgxpool.Pool
-	Admins  organizations.Admins
-	Google  *GoogleCalendar // nil: the server has no service account
-	Enabled func() bool     // the flags.gg flag; nil or false: off (404)
-	Sync    *CalendarSync   // syncs after connecting and on Sync now; nil: hourly only
-}
-
-func (h CalendarSystem) on(w http.ResponseWriter, r *http.Request) bool {
-	if h.Enabled == nil || !h.Enabled() {
-		http.NotFound(w, r)
-		return false
-	}
-	return true
+	DB     *pgxpool.Pool
+	Admins organizations.Admins
+	Google *GoogleCalendar // nil: the server has no service account
+	Sync   *CalendarSync   // syncs after connecting and on Sync now; nil: hourly only
 }
 
 // Get: GET /api/integrations/google-calendar. Whether the server offers it, whether the org is
 // connected, and what an admin pastes into Google (our client ID and scope). The admin email is for
 // admins only.
 func (h CalendarSystem) Get(w http.ResponseWriter, r *http.Request) {
-	if !h.on(w, r) {
-		return
-	}
 	org := auth.OrgID(r.Context())
 	if org == "" {
 		http.Error(w, "sign in to an organization", http.StatusForbidden)
@@ -70,9 +58,6 @@ func (h CalendarSystem) Get(w http.ResponseWriter, r *http.Request) {
 // Connect: PUT /api/integrations/google-calendar {"domain", "admin_email", "holidays_calendar"?}.
 // Org admins only. It checks Google lets us in before saving, so a saved connection works.
 func (h CalendarSystem) Connect(w http.ResponseWriter, r *http.Request) {
-	if !h.on(w, r) {
-		return
-	}
 	org, user, ok := h.Admins.RequireAdmin(w, r)
 	if !ok {
 		return
@@ -121,9 +106,6 @@ func (h CalendarSystem) Connect(w http.ResponseWriter, r *http.Request) {
 // SyncNow: POST /api/integrations/google-calendar/sync. Org admins: sync now rather than within the
 // hour, and see how it went (the connection, with last_sync_at and last_sync_error).
 func (h CalendarSystem) SyncNow(w http.ResponseWriter, r *http.Request) {
-	if !h.on(w, r) {
-		return
-	}
 	org, _, ok := h.Admins.RequireAdmin(w, r)
 	if !ok {
 		return
@@ -148,9 +130,6 @@ func (h CalendarSystem) SyncNow(w http.ResponseWriter, r *http.Request) {
 
 // Test: POST /api/integrations/google-calendar/test. Org admins: is access still granted?
 func (h CalendarSystem) Test(w http.ResponseWriter, r *http.Request) {
-	if !h.on(w, r) {
-		return
-	}
 	org, _, ok := h.Admins.RequireAdmin(w, r)
 	if !ok {
 		return
@@ -193,9 +172,6 @@ func (h CalendarSystem) check(w http.ResponseWriter, r *http.Request, adminEmail
 // Disconnect: DELETE /api/integrations/google-calendar. Org admins only. The time away it found goes
 // with it (TL-406: time_away rows cascade from the connection).
 func (h CalendarSystem) Disconnect(w http.ResponseWriter, r *http.Request) {
-	if !h.on(w, r) {
-		return
-	}
 	org, _, ok := h.Admins.RequireAdmin(w, r)
 	if !ok {
 		return

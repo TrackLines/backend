@@ -125,8 +125,7 @@ func TestGoogleCalendarConnection(t *testing.T) {
 	fake := &fakeCalendar{users: map[string]bool{"boss@acme.test": true}, events: map[string][]map[string]any{
 		"primary": {}, "en.uk%23holiday@group.v.calendar.google.com": {},
 	}}
-	on := true
-	h := CalendarSystem{DB: db, Admins: organizations.Admins{DB: db}, Google: newTestCalendar(t, db, fake), Enabled: func() bool { return on }}
+	h := CalendarSystem{DB: db, Admins: organizations.Admins{DB: db}, Google: newTestCalendar(t, db, fake)}
 	session := func(user, org string) context.Context {
 		return clerk.ContextWithSessionClaims(ctx, func() *clerk.SessionClaims {
 			c := &clerk.SessionClaims{RegisteredClaims: clerk.RegisteredClaims{Subject: user}}
@@ -236,12 +235,7 @@ func TestGoogleCalendarConnection(t *testing.T) {
 		t.Errorf("disconnect: %d", rec.Code)
 	}
 
-	// the flag off: not there at all; no service account: not available
-	on = false
-	if rec := call(h.Get, admin, "GET", ""); rec.Code != 404 {
-		t.Errorf("flag off: %d", rec.Code)
-	}
-	on = true
+	// no service account: not available
 	h.Google = nil
 	if g := get(admin); g["available"] != false || g["client_id"] != nil {
 		t.Errorf("no service account: %v", g)

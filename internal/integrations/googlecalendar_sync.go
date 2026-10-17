@@ -38,7 +38,6 @@ type CalendarSync struct {
 	Google  *GoogleCalendar
 	Members memberLister
 	Users   userLister // every verified email of each member (one may be GitHub's, another Google's); nil: sign-in and on-file only
-	Enabled func() bool
 	now     func() time.Time
 }
 
@@ -59,9 +58,7 @@ func (s CalendarSync) Run(ctx context.Context, every time.Duration) {
 	t := time.NewTicker(every)
 	defer t.Stop()
 	for {
-		if s.Enabled != nil && s.Enabled() {
-			s.All(ctx)
-		}
+		s.All(ctx)
 		select {
 		case <-ctx.Done():
 			return

@@ -141,6 +141,11 @@ func TestBoardReport(t *testing.T) {
 			t.Errorf("the report mentions people (%q)", banned)
 		}
 	}
+	// ?format=md: the same report as a Markdown download (TL-399)
+	if md := get("rp1", "?format=md"); md.Code != 200 || md.Header().Get("Content-Type") != "text/markdown; charset=utf-8" ||
+		!strings.HasPrefix(md.Header().Get("Content-Disposition"), `attachment; filename="backend-sprints-`) || !strings.Contains(md.Body.String(), "# Sprint report: Backend") {
+		t.Errorf("markdown: %d %v", md.Code, md.Header())
+	}
 	if get("rp2", "").Code != 404 {
 		t.Error("another org read the report")
 	}

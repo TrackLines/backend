@@ -106,7 +106,7 @@ func (s *Service) calendarSync(members clerkcache.Memberships) integrations.Cale
 		s.gcal = g
 	})
 	users := clerkcache.Users{Next: user.NewClient(&clerk.ClientConfig{}), VK: s.Valkey, TTL: time.Minute} // every verified email, not just the sign-in one
-	return integrations.CalendarSync{DB: s.DB, Google: s.gcal, Members: members, Users: users, Enabled: s.flag("google-calendar")}
+	return integrations.CalendarSync{DB: s.DB, Google: s.gcal, Members: members, Users: users}
 }
 
 // flag is a flags.gg feature flag (cached by the client), off without flags.gg.
@@ -240,8 +240,7 @@ func (s *Service) Handler() http.Handler {
 	mux.Handle("POST /api/notifications/{id}/read", signedIn(nf.Read))
 	mux.Handle("DELETE /api/notifications/read", signedIn(nf.ClearRead)) // clear everything already read
 	mux.Handle("DELETE /api/notifications/{id}", signedIn(nf.Dismiss))
-	// the assignee list says who's on holiday while Google Calendar's flag is on (TL-407)
-	t := tickets.NewSystem(s.DB).CachingMembers(members).WithNotifier(notify).WithTimeAway(s.flag("google-calendar")).
+	t := tickets.NewSystem(s.DB).CachingMembers(members).WithNotifier(notify).
 		CachingUsers(clerkcache.Users{Next: user.NewClient(&clerk.ClientConfig{}), VK: s.Valkey, TTL: time.Minute})
 	push.People = t.People // pushes name who did it
 	if chat != nil {
@@ -277,9 +276,9 @@ func (s *Service) Handler() http.Handler {
 	mux.Handle("DELETE /api/google-chat", signedIn(in.DeleteChat))
 	mux.Handle("POST /api/google-chat/test", signedIn(in.TestChat))
 	// Google Calendar (TL-404): who's on holiday, read with the Chat app's service account once a
-	// Workspace admin delegates to it; behind the google-calendar flag. Before {provider}: more specific.
+	// Workspace admin delegates to it. Before {provider}: more specific.
 	calSync := s.calendarSync(members)
-	cal := integrations.CalendarSystem{DB: s.DB, Admins: o.AdminModel(), Google: calSync.Google, Enabled: calSync.Enabled, Sync: &calSync}
+	cal := integrations.CalendarSystem{DB: s.DB, Admins: o.AdminModel(), Google: calSync.Google, Sync: &calSync}
 	mux.Handle("GET /api/integrations/google-calendar", signedIn(cal.Get))
 	mux.Handle("PUT /api/integrations/google-calendar", signedIn(cal.Connect)) // org admins; checks Google first
 	mux.Handle("POST /api/integrations/google-calendar/test", signedIn(cal.Test))
@@ -368,10 +367,12 @@ func (s *Service) Handler() http.Handler {
 	mux.Handle("PUT /api/projects/{id}/live/refinement/host", signedIn(lv.RefinementHost))   // hand over / take over
 	mux.Handle("GET /api/boards/{id}/sprints", signedIn(sp.List))
 	mux.Handle("POST /api/boards/{id}/sprints", signedIn(sp.Start))
-	mux.Handle("GET /api/boards/{id}/velocity", signedIn(sp.Velocity))           // per closed sprint + open sprint burn
-	mux.Handle("GET /api/boards/{id}/reports/sprints", signedIn(sp.BoardReport)) // sprint reports (TL-397); ?from=&to=, flag sprint-reports
-	mux.Handle("GET /api/sprints/{id}", signedIn(sp.Get))                        // read-only: burn data and tickets
-	mux.Handle("PATCH /api/sprints/{id}", signedIn(sp.Update))                   // change an open sprint's length and/or goal
+	mux.Handle("GET /api/boards/{id}/velocity", signedIn(sp.Velocity))               // per closed sprint + open sprint burn
+	mux.Handle("GET /api/boards/{id}/reports/sprints", signedIn(sp.BoardReport))     // sprint reports (TL-397); ?from=&to=, flag sprint-reports
+	mux.Handle("GET /api/projects/{id}/reports/sprints", signedIn(sp.ProjectReport)) // a project's sprint boards together (TL-398)
+	mux.Handle("GET /api/org/reports/sprints", signedIn(sp.OrgReport))               // every project; org admins only
+	mux.Handle("GET /api/sprints/{id}", signedIn(sp.Get))                            // read-only: burn data and tickets
+	mux.Handle("PATCH /api/sprints/{id}", signedIn(sp.Update))                       // change an open sprint's length and/or goal
 	mux.Handle("POST /api/sprints/{id}/close", signedIn(sp.Close))
 	// Refinement: up to 2 planned sprints per board; backlog tickets are planned and sized into them
 	mux.Handle("GET /api/boards/{id}/planned-sprints", signedIn(sp.ListPlanned)) // with tickets and capacity (velocity + 10%)
