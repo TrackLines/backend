@@ -126,6 +126,15 @@ func TestAssign(t *testing.T) {
 			t.Fatalf("service key assigned %s: %d %s", who, rec.Code, rec.Body)
 		}
 	}
+	// a personal key is its owner (TL-450), so it assigns like they do
+	personalReq := httptest.NewRequest("PUT", "/api/tickets/"+tid+"/assignee", strings.NewReader(`{"assignee":"user_1"}`))
+	personalReq.SetPathValue("id", tid)
+	personalReq = personalReq.WithContext(auth.WithAPIKey(personalReq.Context(), "user_1", "as1", "", "personal"))
+	personalRec := httptest.NewRecorder()
+	h.Assign(personalRec, personalReq)
+	if personalRec.Code != 200 || !strings.Contains(personalRec.Body.String(), `"assigned_to":"user_1"`) {
+		t.Fatalf("personal key assigned its owner: %d %s", personalRec.Code, personalRec.Body)
+	}
 
 	assignReq := httptest.NewRequest("PUT", "/api/tickets/"+tid+"/assignee", strings.NewReader(`{"assignee":"user_2"}`))
 	assignReq.SetPathValue("id", tid)

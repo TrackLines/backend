@@ -25,3 +25,14 @@ func TestServiceKeyCannotClaimOrReleaseTickets(t *testing.T) {
 		t.Fatalf("release status = %d, want %d", release.Code, http.StatusForbidden)
 	}
 }
+
+// a personal key is its owner (TL-450): it gets past the service-key gate (and on to the store)
+func TestPersonalKeyMayClaim(t *testing.T) {
+	ctx := auth.WithAPIKey(context.Background(), "owner", "org", "", "personal")
+	defer func() { _ = recover() }() // System{} has no store: reaching it is the point
+	rec := httptest.NewRecorder()
+	System{}.Claim(rec, httptest.NewRequest(http.MethodPost, "/tickets/t1/claim", nil).WithContext(ctx))
+	if rec.Code == http.StatusForbidden {
+		t.Fatalf("personal key refused: %s", rec.Body)
+	}
+}

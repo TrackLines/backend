@@ -13,18 +13,22 @@ import (
 )
 
 // Prefix marks tracklines API keys, so the auth middleware can tell them from Clerk JWTs. Keys say
-// their kind too, so people can tell them apart (TL-271): tl_ai_… for agents, tl_s_… for services;
+// their kind too, so people can tell them apart (TL-271): tl_ai_… for agents, tl_s_… for services,
+// tl_p_… for personal keys (TL-450);
 // keys made before that are plain tl_… and still work. The kind that counts is the stored one: the
 // whole key, prefix included, is what's hashed, so an edited prefix is just a wrong key.
 const (
-	Prefix        = "tl_"
-	PrefixAI      = "tl_ai_"
-	PrefixService = "tl_s_"
+	Prefix         = "tl_"
+	PrefixAI       = "tl_ai_"
+	PrefixService  = "tl_s_"
+	PrefixPersonal = "tl_p_"
 )
 
 const (
 	KindAI      = "ai"
 	KindService = "service"
+	// KindPersonal acts exactly as its owner: its name is only a label, never who work is recorded as
+	KindPersonal = "personal"
 )
 
 var (
@@ -49,6 +53,7 @@ type Key struct {
 	CreatedAt  string  `json:"created_at"`
 	LastUsedAt *string `json:"last_used_at"`
 	ExpiresAt  string  `json:"expires_at"`
+	ReadOnly   bool    `json:"read_only"` // GET only (TL-450)
 }
 
 type Store struct{ DB *pgxpool.Pool }
@@ -61,11 +66,11 @@ func hash(key string) []byte {
 const cols = `id, name, kind, prefix, client, label,
 	to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
 	to_char(last_used_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
-	to_char(expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')`
+	to_char(expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'), read_only`
 
 func scan(row pgx.Row) (Key, error) {
 	var k Key
-	err := row.Scan(&k.ID, &k.Name, &k.Kind, &k.Prefix, &k.Client, &k.Label, &k.CreatedAt, &k.LastUsedAt, &k.ExpiresAt)
+	err := row.Scan(&k.ID, &k.Name, &k.Kind, &k.Prefix, &k.Client, &k.Label, &k.CreatedAt, &k.LastUsedAt, &k.ExpiresAt, &k.ReadOnly)
 	k.Display = k.Name
 	if k.Client != nil {
 		k.Display = DisplayName(*k.Client, value(k.Label))
@@ -74,19 +79,19 @@ func scan(row pgx.Row) (Key, error) {
 }
 
 // Create mints a key for owner that works for days days. The plaintext is returned once and never
-// stored. client and label are for agent keys (nil for service keys).
-func (s Store) Create(ctx context.Context, owner, org, name, kind string, client, label *string, days int) (string, *Key, error) {
+// stored. client and label are for agent keys (nil otherwise). A read-only key can only read.
+func (s Store) Create(ctx context.Context, owner, org, name, kind string, client, label *string, days int, readOnly bool) (string, *Key, error) {
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {
 		return "", nil, err
 	}
-	start := PrefixService
-	if kind == KindAI {
-		start = PrefixAI
+	start := map[string]string{KindAI: PrefixAI, KindPersonal: PrefixPersonal}[kind]
+	if start == "" {
+		start = PrefixService
 	}
 	plain := start + base64.RawURLEncoding.EncodeToString(b)
-	k, err := scan(s.DB.QueryRow(ctx, `INSERT INTO api_keys (owner_clerk_id, org_id, name, kind, prefix, hash, client, label, expires_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now() + make_interval(days => $9)) RETURNING `+cols, owner, org, name, kind, plain[:12], hash(plain), client, label, days))
+	k, err := scan(s.DB.QueryRow(ctx, `INSERT INTO api_keys (owner_clerk_id, org_id, name, kind, prefix, hash, client, label, expires_at, read_only)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now() + make_interval(days => $9), $10) RETURNING `+cols, owner, org, name, kind, plain[:12], hash(plain), client, label, days, readOnly))
 	if err != nil {
 		return "", nil, err
 	}
@@ -126,7 +131,8 @@ func (s Store) Revoke(ctx context.Context, id, owner string) error {
 
 // Owner resolves an active key to its owner and stamps last_used_at.
 // ponytail: one UPDATE per API request; batch the stamp if key traffic ever gets heavy.
-// Owner looks up a live key: its owner, the org it acts in ("" for pre-org keys), name and kind.
+// Owner looks up a live key: its owner, the org it acts in ("" for pre-org keys), name, kind and
+// whether it's read-only.
 // RevokeKey revokes the key with this plaintext (its owner left the org).
 func (s Store) RevokeKey(ctx context.Context, plain string) error {
 	_, err := s.DB.Exec(ctx, `UPDATE api_keys SET revoked_at = now() WHERE hash = $1 AND revoked_at IS NULL`, hash(plain))
@@ -134,18 +140,18 @@ func (s Store) RevokeKey(ctx context.Context, plain string) error {
 }
 
 // An expired key is ErrExpired, and its last use isn't stamped.
-func (s Store) Owner(ctx context.Context, plain string) (owner, org, name, kind string, err error) {
+func (s Store) Owner(ctx context.Context, plain string) (owner, org, name, kind string, readOnly bool, err error) {
 	var expired bool
 	err = s.DB.QueryRow(ctx, `UPDATE api_keys SET last_used_at = CASE WHEN expires_at > now() THEN now() ELSE last_used_at END
-		WHERE hash = $1 AND revoked_at IS NULL RETURNING owner_clerk_id, COALESCE(org_id, ''), name, kind, expires_at <= now()`,
-		hash(plain)).Scan(&owner, &org, &name, &kind, &expired)
+		WHERE hash = $1 AND revoked_at IS NULL RETURNING owner_clerk_id, COALESCE(org_id, ''), name, kind, read_only, expires_at <= now()`,
+		hash(plain)).Scan(&owner, &org, &name, &kind, &readOnly, &expired)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return "", "", "", "", ErrNotFound
+		return "", "", "", "", false, ErrNotFound
 	}
 	if err == nil && expired {
-		return "", "", "", "", ErrExpired
+		return "", "", "", "", false, ErrExpired
 	}
-	return owner, org, name, kind, err
+	return owner, org, name, kind, readOnly, err
 }
 
 // NameTakenByOther: another member has a live key in org with this name (any case). One person may

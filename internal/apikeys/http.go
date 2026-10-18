@@ -23,7 +23,8 @@ func NewSystem(db *pgxpool.Pool) System {
 // Member reports whether user still belongs to org in Clerk (cached briefly by the caller).
 type Member func(ctx context.Context, org, user string) (bool, error)
 
-// Middleware lets `Authorization: Bearer tl_…` act as the key's owner. Anything else
+// Middleware lets `Authorization: Bearer tl_…` act as the key's owner. A read-only key may only
+// read (GET, HEAD, OPTIONS): anything else is a 403 (TL-450). Anything else
 // (Clerk JWTs, anon) passes through untouched. A bad or revoked tl_ key is a 401, never anon.
 // With member set, a key whose owner has left its org is revoked on use and refused, so a missed
 // Clerk webhook can't leave a leaver with access (TL-160); if Clerk can't say, it's a 503.
@@ -36,7 +37,7 @@ func Middleware(db *pgxpool.Pool, member Member) func(http.Handler) http.Handler
 				next.ServeHTTP(w, r)
 				return
 			}
-			owner, org, name, kind, err := s.Owner(r.Context(), key)
+			owner, org, name, kind, readOnly, err := s.Owner(r.Context(), key)
 			if errors.Is(err, ErrExpired) {
 				http.Error(w, "api key expired: create a new one in Settings → API keys", http.StatusUnauthorized)
 				return
@@ -63,6 +64,13 @@ func Middleware(db *pgxpool.Pool, member Member) func(http.Handler) http.Handler
 					return
 				}
 			}
+			if readOnly && r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions {
+				http.Error(w, "this api key is read-only", http.StatusForbidden)
+				return
+			}
+			if kind == KindPersonal {
+				name = "" // a personal key is its owner: work is recorded as them, not the key
+			}
 			next.ServeHTTP(w, r.WithContext(auth.WithAPIKey(r.Context(), owner, org, name, kind)))
 		})
 	}
@@ -81,14 +89,16 @@ func (h System) List(w http.ResponseWriter, r *http.Request) {
 
 // Create returns {"key": "tl_…", …}; the plaintext key is only ever shown in this response.
 // Agent keys (kind ai) say their client, and a label for "other"; their name is generated (TL-269).
-// Service keys (scripts, integrations) are named by hand.
+// Service keys (scripts, integrations) are named by hand; so are personal keys (TL-450), whose name is
+// only a label since they act as their owner. Any key can be read_only.
 func (h System) Create(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		Name   string `json:"name"`
-		Kind   string `json:"kind"`
-		Client string `json:"client"`
-		Label  string `json:"label"`
-		Days   *int   `json:"expires_in_days"` // left out: DefaultDays
+		Name     string `json:"name"`
+		Kind     string `json:"kind"`
+		Client   string `json:"client"`
+		Label    string `json:"label"`
+		Days     *int   `json:"expires_in_days"` // left out: DefaultDays
+		ReadOnly bool   `json:"read_only"`
 	}
 	if !httpx.Decode(w, r, &in) {
 		return
@@ -101,17 +111,22 @@ func (h System) Create(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("expires_in_days must be from 1 to %d", MaxDays), http.StatusBadRequest)
 		return
 	}
-	if in.Kind != KindAI && in.Kind != KindService {
-		http.Error(w, "kind must be ai or service", http.StatusBadRequest)
+	if in.Kind != KindAI && in.Kind != KindService && in.Kind != KindPersonal {
+		http.Error(w, "kind must be ai, service or personal", http.StatusBadRequest)
 		return
 	}
 	user, _ := auth.UserID(r.Context())
 	if in.Kind == KindAI {
-		h.createAgent(w, r, user, in.Client, in.Label, days)
+		h.createAgent(w, r, user, in.Client, in.Label, days, in.ReadOnly)
 		return
 	}
 	if in.Name = strings.TrimSpace(in.Name); in.Name == "" {
 		http.Error(w, "name is required (e.g. the script using it)", http.StatusBadRequest)
+		return
+	}
+	if in.Kind == KindPersonal {
+		plain, k, err := h.store.Create(r.Context(), user, auth.OrgID(r.Context()), in.Name, in.Kind, nil, nil, days, in.ReadOnly)
+		created(w, plain, k, err)
 		return
 	}
 	// a key's name is who its work is recorded as (comments, tickets, claims), so it can't pose as a
@@ -130,12 +145,12 @@ func (h System) Create(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "someone else in this organization already has a key with that name: choose another", http.StatusConflict)
 		return
 	}
-	plain, k, err := h.store.Create(r.Context(), user, auth.OrgID(r.Context()), in.Name, in.Kind, nil, nil, days)
+	plain, k, err := h.store.Create(r.Context(), user, auth.OrgID(r.Context()), in.Name, in.Kind, nil, nil, days, in.ReadOnly)
 	created(w, plain, k, err)
 }
 
 // createAgent mints an agent key for client, under a generated name nobody in the org has used.
-func (h System) createAgent(w http.ResponseWriter, r *http.Request, user, client, label string, days int) {
+func (h System) createAgent(w http.ResponseWriter, r *http.Request, user, client, label string, days int, readOnly bool) {
 	if !ValidClient(client) {
 		http.Error(w, "client must be one of claude-code, claude-desktop, codex, cursor, vscode, gemini or other", http.StatusBadRequest)
 		return
@@ -166,7 +181,7 @@ func (h System) createAgent(w http.ResponseWriter, r *http.Request, user, client
 			}
 			continue
 		}
-		plain, k, err := h.store.Create(r.Context(), user, org, name, KindAI, &client, lbl, days)
+		plain, k, err := h.store.Create(r.Context(), user, org, name, KindAI, &client, lbl, days, readOnly)
 		created(w, plain, k, err)
 		return
 	}

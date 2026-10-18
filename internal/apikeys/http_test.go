@@ -203,7 +203,7 @@ func TestKeyOwnerMustStillBeAMember(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := Store{DB: db}
-	plain, _, err := s.Create(ctx, "akm1", "org_akm", "Claude", KindAI, nil, nil, DefaultDays)
+	plain, _, err := s.Create(ctx, "akm1", "org_akm", "Claude", KindAI, nil, nil, DefaultDays, false)
 	if err != nil {
 		t.Fatal(err)
 	}

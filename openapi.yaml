@@ -13,12 +13,13 @@ info:
     response carries X-RateLimit-Limit / X-RateLimit-Remaining. MCP tool calls
     count like the REST calls they make. Browser sessions aren't limited.
 
-    Most private endpoints accept a Clerk session token or a TrackLin.es (`tl_ai_…` for AI agents, `tl_s_…` for services; older keys are `tl_…`)
+    Most private endpoints accept a Clerk session token or a TrackLin.es (`tl_ai_…` for AI agents, `tl_s_…` for services, `tl_p_…` for personal keys; older keys are `tl_…`)
     or BugFixes (`bf_…`) agent API key as a Bearer token. Projects, boards and
     roadmaps belong to a Clerk organization: a session sees its active
     organization's data, and a request without an active organization gets
     403. API keys act inside the organization they were created in, as their
-    creator, and attribute writes to the key's name. API-key management
+    creator, and attribute writes to the key's name; a personal key is its creator, so
+    its writes are theirs. A read-only key gets 403 for anything but GET. API-key management
     requires a Clerk session. Stripe webhooks use Stripe-Signature.
 
     Timestamps are stored and returned in UTC. Day-based rules (a sprint's last
@@ -4223,8 +4224,8 @@ components:
       type: object
       properties:
         id: { type: string, format: uuid }
-        name: { type: string, description: 'The id its work is recorded under. Generated for AI keys (e.g. claude-482193); chosen for service keys.' }
-        kind: { type: string, enum: [ai, service], description: AI keys can be assigned tickets; service keys are for servers and integrations. }
+        name: { type: string, description: 'The id its work is recorded under. Generated for AI keys (e.g. claude-482193); chosen for service keys. Only a label for personal keys, whose work is recorded as their owner.' }
+        kind: { type: string, enum: [ai, service, personal], description: AI keys can be assigned tickets; service keys are for servers and integrations; personal keys act exactly as their owner (their own scripts and displays). }
         client: { type: [string, 'null'], enum: [claude-code, claude-desktop, codex, cursor, vscode, gemini, other, null], description: AI keys only. The client the agent runs in. }
         label: { type: [string, 'null'], description: 'AI keys with client "other": what the agent is called.' }
         display: { type: string, description: 'What it is called: "Claude", an other agent''s label (or "AI agent"), or a service key''s name. Others see AI keys with their owner: "Claude (keloran)".' }
@@ -4232,14 +4233,16 @@ components:
         created_at: { type: string, format: date-time }
         last_used_at: { type: [string, 'null'], format: date-time }
         expires_at: { type: string, format: date-time, description: 'After this the key is refused (401 "api key expired").' }
+        read_only: { type: boolean, description: 'Only GET, HEAD and OPTIONS; anything else is 403 "this api key is read-only".' }
     CreateApiKeyInput:
       type: object
       required: [kind]
       properties:
-        kind: { type: string, enum: [ai, service] }
+        kind: { type: string, enum: [ai, service, personal] }
+        read_only: { type: boolean, default: false, description: The key can only read. }
         client: { type: string, enum: [claude-code, claude-desktop, codex, cursor, vscode, gemini, other], description: Required for AI keys. Their name is generated from it. }
         label: { type: string, maxLength: 40, description: 'AI keys with client "other": what the agent is called (optional).' }
-        name: { type: string, description: Required for service keys; ignored for AI keys. }
+        name: { type: string, description: Required for service and personal keys; ignored for AI keys. }
         expires_in_days: { type: integer, minimum: 1, maximum: 366, default: 90, description: How long the key works. }
     CreatedApiKey:
       allOf:
