@@ -11,11 +11,13 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/clerk/clerk-sdk-go/v2"
 	"github.com/golang-migrate/migrate/v4"
 	_ "github.com/golang-migrate/migrate/v4/database/pgx/v5"
 	_ "github.com/golang-migrate/migrate/v4/source/file"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/tracklines/backend/internal/auth"
+	"github.com/tracklines/backend/internal/organizations"
 	"github.com/tracklines/backend/internal/tickets"
 )
 
@@ -34,14 +36,26 @@ func TestIntake(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	if _, err := db.Exec(ctx, `DELETE FROM projects WHERE owner_clerk_id IN ('ik1', 'ik2')`); err != nil {
-		t.Fatal(err)
+	for _, q := range []string{
+		`DELETE FROM projects WHERE owner_clerk_id IN ('ik1', 'ik2')`,
+		`DELETE FROM org_admins WHERE org_id IN ('ik1', 'ik2')`,
+		`INSERT INTO org_admins (org_id, user_clerk_id, granted_by) VALUES ('ik1', 'user_ava', 'test'), ('ik2', 'user_eve', 'test')`,
+	} {
+		if _, err := db.Exec(ctx, q); err != nil {
+			t.Fatal(q, err)
+		}
 	}
 	var pid string
 	_ = db.QueryRow(ctx, `INSERT INTO projects (owner_clerk_id, name, key_prefix) VALUES ('ik1', 'Secret Project', 'IK') RETURNING id`).Scan(&pid)
-	h := NewSystem(db)
-	member := auth.WithAPIKeyUser(ctx, "ik1", "user_ava")
-	outsider := auth.WithAPIKeyUser(ctx, "ik2", "user_eve")
+	h := NewSystem(db).WithAdmins(organizations.Admins{DB: db})
+	signedIn := func(org, user string) context.Context {
+		c := &clerk.SessionClaims{RegisteredClaims: clerk.RegisteredClaims{Subject: user}}
+		c.ActiveOrganizationID = org
+		return clerk.ContextWithSessionClaims(ctx, c)
+	}
+	member := auth.WithAPIKeyUser(ctx, "ik1", "user_ava") // an admin's API key
+	admin := signedIn("ik1", "user_ava")
+	outsider := signedIn("ik2", "user_eve") // an admin of another organization
 	call := func(c context.Context, handler http.HandlerFunc, method, body string, path map[string]string, ip string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(method, "/", strings.NewReader(body)).WithContext(c)
 		for k, v := range path {
@@ -62,15 +76,27 @@ func TestIntake(t *testing.T) {
 		}
 	}
 
-	// closed by default; members open it and get a link; other orgs can't see or change it
+	// closed by default; only a signed-in admin opens it and gets a link (TL-432); other orgs can't
+	// see or change it
 	decode(call(member, h.Settings, "GET", "", map[string]string{"id": pid}, ""), &st)
-	if st.Open || st.Token != nil {
-		t.Fatalf("closed by default: %+v", st)
+	if st.Open || st.Token != nil || st.CanManage {
+		t.Fatalf("closed by default, and an API key can't manage it: %+v", st)
+	}
+	if decode(call(admin, h.Settings, "GET", "", map[string]string{"id": pid}, ""), &st); !st.CanManage {
+		t.Fatalf("a signed-in admin can manage it: %+v", st)
 	}
 	if rec := call(outsider, h.SetOpen, "PUT", `{"open":true}`, map[string]string{"id": pid}, ""); rec.Code != 404 {
 		t.Fatalf("outsider opens: %d", rec.Code)
 	}
-	decode(call(member, h.SetOpen, "PUT", `{"open":true}`, map[string]string{"id": pid}, ""), &st)
+	for who, c := range map[string]context.Context{"an admin's API key": member, "a signed-in member": signedIn("ik1", "user_bob")} {
+		if rec := call(c, h.SetOpen, "PUT", `{"open":true}`, map[string]string{"id": pid}, ""); rec.Code != http.StatusForbidden {
+			t.Fatalf("%s opens: %d", who, rec.Code)
+		}
+	}
+	if decode(call(signedIn("ik1", "user_bob"), h.Settings, "GET", "", map[string]string{"id": pid}, ""), &st); st.CanManage {
+		t.Fatalf("a member can't manage it: %+v", st)
+	}
+	decode(call(admin, h.SetOpen, "PUT", `{"open":true}`, map[string]string{"id": pid}, ""), &st)
 	if !st.Open || st.Token == nil || len(*st.Token) < 20 {
 		t.Fatalf("opened: %+v", st)
 	}
@@ -164,11 +190,11 @@ func TestIntake(t *testing.T) {
 	}
 
 	// rotating the link kills the old one; closing stops the form
-	decode(call(member, h.SetOpen, "PUT", `{"open":true,"rotate":true}`, map[string]string{"id": pid}, ""), &st)
+	decode(call(admin, h.SetOpen, "PUT", `{"open":true,"rotate":true}`, map[string]string{"id": pid}, ""), &st)
 	if *st.Token == token || form(token).Code != 404 || form(*st.Token).Code != 200 {
 		t.Fatal("rotate didn't replace the link")
 	}
-	decode(call(member, h.SetOpen, "PUT", `{"open":false}`, map[string]string{"id": pid}, ""), &st)
+	decode(call(admin, h.SetOpen, "PUT", `{"open":false}`, map[string]string{"id": pid}, ""), &st)
 	if st.Open || st.Token != nil {
 		t.Fatalf("closed: %+v", st)
 	}

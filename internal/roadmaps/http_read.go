@@ -19,8 +19,10 @@ func NewSystem(db *pgxpool.Pool) System {
 }
 
 // Managers says who may change a project's roadmaps: org admins and its teams' leaders (TL-413).
+// Publishing one (public, or no longer public) and deleting one are for org admins only (TL-432).
 type Managers interface {
 	IsProjectManager(ctx context.Context, org, user, project string) (bool, error)
+	IsAdmin(ctx context.Context, org, user string) (bool, error)
 }
 
 type System struct {
@@ -87,6 +89,27 @@ func (h System) manager(w http.ResponseWriter, r *http.Request, roadmap, project
 	return true
 }
 
+// publisher lets only a signed-in org admin make a roadmap public, take it off public or delete it,
+// never an API key, even an admin's: what the outside world sees is a person's decision (TL-432).
+func (h System) publisher(w http.ResponseWriter, r *http.Request) bool {
+	ctx := r.Context()
+	const msg = "only an organization admin, signed in, can publish, unpublish or delete a roadmap"
+	if auth.ViaAPIKey(ctx) || h.managers == nil {
+		http.Error(w, msg, http.StatusForbidden)
+		return false
+	}
+	user, _ := auth.UserID(ctx)
+	admin, err := h.managers.IsAdmin(ctx, auth.OrgID(ctx), user)
+	if err != nil {
+		writeErr(w, err)
+		return false
+	}
+	if !admin {
+		http.Error(w, msg, http.StatusForbidden)
+	}
+	return admin
+}
+
 func (h System) canManage(ctx context.Context, org, user, project string) (bool, error) {
 	if h.managers == nil {
 		return false, nil
@@ -94,16 +117,14 @@ func (h System) canManage(ctx context.Context, org, user, project string) (bool,
 	return h.managers.IsProjectManager(ctx, org, user, project)
 }
 
-// canRead: public → anyone, login_only → any signed-in user, team → members of the owning org (org).
-// Returns 0 when allowed, else the status to send.
+// canRead: public → anyone; login_only and team → signed-in members of the owning org (org). Other
+// organizations never read a login_only roadmap (TL-432). Returns 0 when allowed, else the status to send.
 func canRead(r *Roadmap, org string, signedIn bool) int {
 	switch {
 	case r.Visibility == Public, org != "" && r.OwnerClerkID == org && signedIn:
 		return 0
 	case !signedIn:
 		return http.StatusUnauthorized
-	case r.Visibility == LoginOnly:
-		return 0
 	default:
 		return http.StatusForbidden
 	}

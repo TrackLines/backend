@@ -27,7 +27,16 @@ const (
 	KindService = "service"
 )
 
-var ErrNotFound = errors.New("api key not found")
+var (
+	ErrNotFound = errors.New("api key not found")
+	ErrExpired  = errors.New("api key expired")
+)
+
+// Key lifetimes (TL-433): 90 days unless the creator picks otherwise, at most a year and a day.
+const (
+	DefaultDays = 90
+	MaxDays     = 366
+)
 
 type Key struct {
 	ID         string  `json:"id"`
@@ -39,6 +48,7 @@ type Key struct {
 	Display    string  `json:"display"` // what it's called: "Claude", or the service key's name
 	CreatedAt  string  `json:"created_at"`
 	LastUsedAt *string `json:"last_used_at"`
+	ExpiresAt  string  `json:"expires_at"`
 }
 
 type Store struct{ DB *pgxpool.Pool }
@@ -50,11 +60,12 @@ func hash(key string) []byte {
 
 const cols = `id, name, kind, prefix, client, label,
 	to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
-	to_char(last_used_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')`
+	to_char(last_used_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
+	to_char(expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')`
 
 func scan(row pgx.Row) (Key, error) {
 	var k Key
-	err := row.Scan(&k.ID, &k.Name, &k.Kind, &k.Prefix, &k.Client, &k.Label, &k.CreatedAt, &k.LastUsedAt)
+	err := row.Scan(&k.ID, &k.Name, &k.Kind, &k.Prefix, &k.Client, &k.Label, &k.CreatedAt, &k.LastUsedAt, &k.ExpiresAt)
 	k.Display = k.Name
 	if k.Client != nil {
 		k.Display = DisplayName(*k.Client, value(k.Label))
@@ -62,9 +73,9 @@ func scan(row pgx.Row) (Key, error) {
 	return k, err
 }
 
-// Create mints a key for owner. The plaintext is returned once and never stored.
-// client and label are for agent keys (nil for service keys).
-func (s Store) Create(ctx context.Context, owner, org, name, kind string, client, label *string) (string, *Key, error) {
+// Create mints a key for owner that works for days days. The plaintext is returned once and never
+// stored. client and label are for agent keys (nil for service keys).
+func (s Store) Create(ctx context.Context, owner, org, name, kind string, client, label *string, days int) (string, *Key, error) {
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {
 		return "", nil, err
@@ -74,8 +85,8 @@ func (s Store) Create(ctx context.Context, owner, org, name, kind string, client
 		start = PrefixAI
 	}
 	plain := start + base64.RawURLEncoding.EncodeToString(b)
-	k, err := scan(s.DB.QueryRow(ctx, `INSERT INTO api_keys (owner_clerk_id, org_id, name, kind, prefix, hash, client, label)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING `+cols, owner, org, name, kind, plain[:12], hash(plain), client, label))
+	k, err := scan(s.DB.QueryRow(ctx, `INSERT INTO api_keys (owner_clerk_id, org_id, name, kind, prefix, hash, client, label, expires_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now() + make_interval(days => $9)) RETURNING `+cols, owner, org, name, kind, plain[:12], hash(plain), client, label, days))
 	if err != nil {
 		return "", nil, err
 	}
@@ -122,11 +133,17 @@ func (s Store) RevokeKey(ctx context.Context, plain string) error {
 	return err
 }
 
+// An expired key is ErrExpired, and its last use isn't stamped.
 func (s Store) Owner(ctx context.Context, plain string) (owner, org, name, kind string, err error) {
-	err = s.DB.QueryRow(ctx, `UPDATE api_keys SET last_used_at = now()
-		WHERE hash = $1 AND revoked_at IS NULL RETURNING owner_clerk_id, COALESCE(org_id, ''), name, kind`, hash(plain)).Scan(&owner, &org, &name, &kind)
+	var expired bool
+	err = s.DB.QueryRow(ctx, `UPDATE api_keys SET last_used_at = CASE WHEN expires_at > now() THEN now() ELSE last_used_at END
+		WHERE hash = $1 AND revoked_at IS NULL RETURNING owner_clerk_id, COALESCE(org_id, ''), name, kind, expires_at <= now()`,
+		hash(plain)).Scan(&owner, &org, &name, &kind, &expired)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", "", "", "", ErrNotFound
+	}
+	if err == nil && expired {
+		return "", "", "", "", ErrExpired
 	}
 	return owner, org, name, kind, err
 }

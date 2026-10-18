@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/clerk/clerk-sdk-go/v2"
 	"github.com/golang-migrate/migrate/v4"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/tracklines/backend/internal/auth"
@@ -151,6 +152,60 @@ func TestRoadmapWritesNeedAnAdminOrProjectLeader(t *testing.T) {
 	}
 	if !canManage("user_lead") || canManage("user_mem") {
 		t.Errorf("can_manage: leader %v, member %v", canManage("user_lead"), canManage("user_mem"))
+	}
+
+	// TL-432: publishing, unpublishing and deleting are for a signed-in org admin only; a leader
+	// still edits, and no API key publishes, not even an admin's
+	session := func(user string) context.Context {
+		c := &clerk.SessionClaims{RegisteredClaims: clerk.RegisteredClaims{Subject: user}}
+		c.ActiveOrganizationID = org
+		return clerk.ContextWithSessionClaims(ctx, c)
+	}
+	created := func(c context.Context, vis string) (int, Roadmap) {
+		var made Roadmap
+		rec := call(c, http.MethodPost, "/", `{"title":"Pub","visibility":"`+vis+`"}`, h.Create, p)
+		json.Unmarshal(rec.Body.Bytes(), &made)
+		return rec.Code, made
+	}
+	update := func(c context.Context, id, body string) int {
+		return call(c, http.MethodPut, "/", body, h.Update, id).Code
+	}
+	visibility := func(id string) string {
+		got, err := Store{DB: db}.Get(ctx, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return got.Visibility
+	}
+	for who, c := range map[string]context.Context{"a leader": session("user_lead"), "an admin's API key": as("user_admin", org)} {
+		if code, _ := created(c, Public); code != http.StatusForbidden {
+			t.Errorf("%s creating a public roadmap: %d", who, code)
+		}
+		if code := update(c, rm.ID, `{"title":"Launch","visibility":"team"}`); code != http.StatusForbidden {
+			t.Errorf("%s unpublishing: %d", who, code)
+		}
+		if code := update(c, rm.ID, `{"title":"Launch, renamed"}`); code != http.StatusNoContent || visibility(rm.ID) != Public {
+			t.Errorf("%s renaming a public roadmap (visibility left out): %d, %s", who, code, visibility(rm.ID))
+		}
+		if code := call(c, http.MethodDelete, "/", "", h.Delete, rm.ID).Code; code != http.StatusForbidden {
+			t.Errorf("%s deleting: %d", who, code)
+		}
+	}
+	code, teamOnly := created(session("user_lead"), Team)
+	if code != http.StatusCreated {
+		t.Fatalf("a leader creating a team roadmap: %d", code)
+	}
+	if code := update(session("user_lead"), teamOnly.ID, `{"title":"Pub","visibility":"public"}`); code != http.StatusForbidden {
+		t.Errorf("a leader publishing: %d", code)
+	}
+	if code := update(session("user_admin"), teamOnly.ID, `{"title":"Pub","visibility":"public"}`); code != http.StatusNoContent || visibility(teamOnly.ID) != Public {
+		t.Errorf("an admin publishing: %d, %s", code, visibility(teamOnly.ID))
+	}
+	if code, _ := created(session("user_admin"), Public); code != http.StatusCreated {
+		t.Errorf("an admin creating a public roadmap: %d", code)
+	}
+	if code := call(session("user_admin"), http.MethodDelete, "/", "", h.Delete, teamOnly.ID).Code; code != http.StatusNoContent {
+		t.Errorf("an admin deleting: %d", code)
 	}
 
 	// without a managers model nobody can change roadmaps

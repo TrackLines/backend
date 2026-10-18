@@ -203,7 +203,7 @@ func TestKeyOwnerMustStillBeAMember(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := Store{DB: db}
-	plain, _, err := s.Create(ctx, "akm1", "org_akm", "Claude", KindAI, nil, nil)
+	plain, _, err := s.Create(ctx, "akm1", "org_akm", "Claude", KindAI, nil, nil, DefaultDays)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -238,5 +238,106 @@ func TestKeyOwnerMustStillBeAMember(t *testing.T) {
 	member = true // even if they rejoin, the key stays revoked
 	if got := use(); got != http.StatusUnauthorized {
 		t.Fatalf("revoked key used again: %d", got)
+	}
+}
+
+// TL-433: keys last 90 days unless the creator picks 1 to 366; an expired key is refused, and old
+// keys got 90 days from the migration.
+func TestKeysExpire(t *testing.T) {
+	ctx := context.Background()
+	url := os.Getenv("TEST_DATABASE_URL")
+	m, err := migrate.New("file://../migrations", "pgx5"+url[len("postgres"):])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Up(); err != nil && !errors.Is(err, migrate.ErrNoChange) {
+		t.Fatal(err)
+	}
+	db, err := pgxpool.New(ctx, url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(ctx, `INSERT INTO users (clerk_id, email) VALUES ('akx1', 'x@k.x') ON CONFLICT DO NOTHING`); err != nil {
+		t.Fatal(err)
+	}
+	h := NewSystem(db)
+	c := &clerk.SessionClaims{RegisteredClaims: clerk.RegisteredClaims{Subject: "akx1"}}
+	c.ActiveOrganizationID = "org_akx"
+	session := clerk.ContextWithSessionClaims(ctx, c)
+	create := func(body string) (int, map[string]any) {
+		rec := httptest.NewRecorder()
+		h.Create(rec, httptest.NewRequest("POST", "/", strings.NewReader(body)).WithContext(session))
+		var out map[string]any
+		json.Unmarshal(rec.Body.Bytes(), &out)
+		return rec.Code, out
+	}
+	// days until a key's expiry, by the database's clock
+	daysLeft := func(id any) int {
+		var d int
+		if err := db.QueryRow(ctx, `SELECT round(extract(epoch FROM expires_at - now()) / 86400) FROM api_keys WHERE id = $1`, id).Scan(&d); err != nil {
+			t.Fatal(err)
+		}
+		return d
+	}
+	for _, tc := range []struct {
+		body string
+		code int
+		days int
+	}{
+		{`{"kind":"ai","client":"codex"}`, http.StatusCreated, 90},
+		{`{"kind":"ai","client":"codex","expires_in_days":1}`, http.StatusCreated, 1},
+		{`{"kind":"service","name":"deploy","expires_in_days":366}`, http.StatusCreated, 366},
+		{`{"kind":"ai","client":"codex","expires_in_days":0}`, http.StatusBadRequest, 0},
+		{`{"kind":"ai","client":"codex","expires_in_days":367}`, http.StatusBadRequest, 0},
+		{`{"kind":"ai","client":"codex","expires_in_days":-5}`, http.StatusBadRequest, 0},
+	} {
+		code, out := create(tc.body)
+		if code != tc.code {
+			t.Fatalf("%s: %d %v", tc.body, code, out)
+		}
+		if code == http.StatusCreated {
+			if got := daysLeft(out["id"]); got != tc.days {
+				t.Errorf("%s: expires in %d days, want %d", tc.body, got, tc.days)
+			}
+			if out["expires_at"] == "" || out["expires_at"] == nil {
+				t.Errorf("%s: no expires_at in %v", tc.body, out)
+			}
+		}
+	}
+
+	// an expired key is refused with a reason, and its last use isn't stamped
+	_, out := create(`{"kind":"ai","client":"codex"}`)
+	plain := out["key"].(string)
+	mw := Middleware(db, nil)(auth.Required(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})))
+	use := func() *httptest.ResponseRecorder {
+		req := httptest.NewRequest("GET", "/", nil)
+		req.Header.Set("Authorization", "Bearer "+plain)
+		rec := httptest.NewRecorder()
+		mw.ServeHTTP(rec, req)
+		return rec
+	}
+	if rec := use(); rec.Code != http.StatusOK {
+		t.Fatalf("a live key: %d", rec.Code)
+	}
+	if _, err := db.Exec(ctx, `UPDATE api_keys SET expires_at = now() - interval '1 second', last_used_at = NULL WHERE id = $1`, out["id"]); err != nil {
+		t.Fatal(err)
+	}
+	if rec := use(); rec.Code != http.StatusUnauthorized || !strings.Contains(rec.Body.String(), "expired") {
+		t.Fatalf("an expired key: %d %s", rec.Code, rec.Body)
+	}
+	var lastUsed *string
+	_ = db.QueryRow(ctx, `SELECT last_used_at::text FROM api_keys WHERE id = $1`, out["id"]).Scan(&lastUsed)
+	if lastUsed != nil {
+		t.Errorf("an expired key's use was stamped: %s", *lastUsed)
+	}
+
+	// a key made without saying (as every key before the migration was) gets 90 days
+	var id string
+	if err := db.QueryRow(ctx, `INSERT INTO api_keys (owner_clerk_id, org_id, name, kind, prefix, hash) VALUES ('akx1', 'org_akx', 'old', 'service', 'tl_s_old', 'x') RETURNING id`).Scan(&id); err != nil {
+		t.Fatal(err)
+	}
+	if got := daysLeft(id); got != 90 {
+		t.Errorf("an old key: %d days", got)
 	}
 }

@@ -20,9 +20,6 @@ func (in *roadmapInput) valid(w http.ResponseWriter) bool {
 		http.Error(w, "title is required", http.StatusBadRequest)
 		return false
 	}
-	if in.Visibility == "" { // left out (API, MCP): team only; publishing is a choice (the web form asks)
-		in.Visibility = Team
-	}
 	return true
 }
 
@@ -32,7 +29,10 @@ func (h System) Create(w http.ResponseWriter, r *http.Request) {
 	if !httpx.Decode(w, r, &in) || !in.valid(w) {
 		return
 	}
-	if !h.manager(w, r, "", r.PathValue("id")) {
+	if in.Visibility == "" { // left out (API, MCP): team only; publishing is a choice (the web form asks)
+		in.Visibility = Team
+	}
+	if !h.manager(w, r, "", r.PathValue("id")) || (in.Visibility == Public && !h.publisher(w, r)) {
 		return
 	}
 	org := auth.OrgID(r.Context())
@@ -52,6 +52,17 @@ func (h System) Update(w http.ResponseWriter, r *http.Request) {
 	if !h.manager(w, r, r.PathValue("id"), "") {
 		return
 	}
+	cur, err := h.store.Get(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	if in.Visibility == "" { // left out: unchanged
+		in.Visibility = cur.Visibility
+	}
+	if (cur.Visibility == Public) != (in.Visibility == Public) && !h.publisher(w, r) {
+		return
+	}
 	org := auth.OrgID(r.Context())
 	if err := h.store.Update(r.Context(), r.PathValue("id"), org, in.Title, in.Description, in.Visibility); err != nil {
 		writeErr(w, err)
@@ -61,7 +72,7 @@ func (h System) Update(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h System) Delete(w http.ResponseWriter, r *http.Request) {
-	if !h.manager(w, r, r.PathValue("id"), "") {
+	if !h.manager(w, r, r.PathValue("id"), "") || !h.publisher(w, r) {
 		return
 	}
 	org := auth.OrgID(r.Context())

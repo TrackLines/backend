@@ -160,7 +160,8 @@ func TestRoadmapUpdatesPermissionsHistoryAndPrivacy(t *testing.T) {
 		want           int
 	}{
 		{loginOnly.ID, "", http.StatusUnauthorized},
-		{loginOnly.ID, "ru2", http.StatusOK},
+		{loginOnly.ID, "ru2", http.StatusForbidden}, // signed in, but another organization (TL-432)
+		{loginOnly.ID, "ru1", http.StatusOK},
 		{team.ID, "", http.StatusUnauthorized},
 		{team.ID, "ru2", http.StatusForbidden},
 		{team.ID, "ru1", http.StatusOK},

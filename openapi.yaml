@@ -983,6 +983,7 @@ paths:
       tags: [Intake]
       operationId: setIntake
       summary: Open or close the request form; rotate replaces the link (the old one stops working)
+      description: Org admins only, in a signed-in session. API keys get 403, even an admin's.
       requestBody:
         required: true
         content:
@@ -990,6 +991,7 @@ paths:
             schema: { type: object, required: [open], properties: { open: { type: boolean }, rotate: { type: boolean } } }
       responses:
         '200': { description: Settings., content: { application/json: { schema: { $ref: '#/components/schemas/IntakeSettings' } } } }
+        '403': { description: Not a signed-in org admin. }
         '404': { $ref: '#/components/responses/NotFound' }
   /projects/{projectId}/intake/submissions:
     parameters:
@@ -3078,7 +3080,7 @@ paths:
       tags: [Roadmaps]
       operationId: getRoadmap
       summary: Get a roadmap
-      description: Public roadmaps are readable without a token; login_only roadmaps require sign-in; team roadmaps require the owner. Non-owner readers see progress counts but not linked-ticket IDs or titles.
+      description: Public roadmaps are readable without a token; login_only and team roadmaps require a signed-in member of the owning organization. Non-owner readers see progress counts but not linked-ticket IDs or titles.
       security:
         - {}
         - bearerAuth: []
@@ -3095,6 +3097,7 @@ paths:
       tags: [Roadmaps]
       operationId: updateRoadmap
       summary: Update a roadmap
+      description: Org admins and the project's team leaders. Leaving out visibility keeps it. Changing visibility to or from public needs a signed-in org admin (API keys get 403).
       requestBody:
         required: true
         content:
@@ -3109,6 +3112,7 @@ paths:
       tags: [Roadmaps]
       operationId: deleteRoadmap
       summary: Delete a roadmap
+      description: Signed-in org admins only; API keys get 403.
       responses:
         '204': { description: Roadmap deleted. }
         '401': { $ref: '#/components/responses/Unauthorized' }
@@ -3166,6 +3170,7 @@ paths:
       tags: [Roadmaps]
       operationId: createRoadmap
       summary: Create a roadmap in a project
+      description: Org admins and the project's team leaders. Visibility defaults to team; public needs a signed-in org admin (API keys get 403).
       parameters:
         - $ref: '#/components/parameters/ProjectId'
       requestBody:
@@ -4226,6 +4231,7 @@ components:
         prefix: { type: string }
         created_at: { type: string, format: date-time }
         last_used_at: { type: [string, 'null'], format: date-time }
+        expires_at: { type: string, format: date-time, description: 'After this the key is refused (401 "api key expired").' }
     CreateApiKeyInput:
       type: object
       required: [kind]
@@ -4234,6 +4240,7 @@ components:
         client: { type: string, enum: [claude-code, claude-desktop, codex, cursor, vscode, gemini, other], description: Required for AI keys. Their name is generated from it. }
         label: { type: string, maxLength: 40, description: 'AI keys with client "other": what the agent is called (optional).' }
         name: { type: string, description: Required for service keys; ignored for AI keys. }
+        expires_in_days: { type: integer, minimum: 1, maximum: 366, default: 90, description: How long the key works. }
     CreatedApiKey:
       allOf:
         - $ref: '#/components/schemas/ApiKey'
@@ -4251,6 +4258,7 @@ components:
       properties:
         open: { type: boolean }
         token: { type: [string, 'null'], description: 'The form is at /request/{token}.' }
+        can_manage: { type: boolean, description: 'The caller may open, close or reset it: a signed-in org admin.' }
     IntakeSubmission:
       type: object
       properties:

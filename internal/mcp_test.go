@@ -53,7 +53,7 @@ func TestMCP(t *testing.T) {
 	if _, err := db.Exec(ctx, `INSERT INTO users (clerk_id, email) VALUES ('mcp-user', 'm@c.p') ON CONFLICT DO NOTHING`); err != nil {
 		t.Fatal(err)
 	}
-	key, _, err := apikeys.Store{DB: db}.Create(ctx, "mcp-user", "mcp-org", "claude", "ai", nil, nil)
+	key, _, err := apikeys.Store{DB: db}.Create(ctx, "mcp-user", "mcp-org", "claude", "ai", nil, nil, apikeys.DefaultDays)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,9 +119,13 @@ func TestMCP(t *testing.T) {
 	if res := call("get_board", map[string]any{"board_id": b.ID}); res.IsError || !strings.Contains(text(res), "Broken") {
 		t.Fatalf("get_board: %s", text(res))
 	}
-	createdRoadmap := call("create_roadmap", map[string]any{"project_id": pid, "title": "Launch", "visibility": "public"})
-	if createdRoadmap.IsError || !strings.Contains(text(createdRoadmap), `"visibility":"public"`) {
-		t.Fatalf("create public roadmap: %s", text(createdRoadmap))
+	// agents never publish a roadmap: that's a signed-in org admin's call (TL-432)
+	if res := call("create_roadmap", map[string]any{"project_id": pid, "title": "Launch", "visibility": "public"}); !res.IsError || !strings.Contains(text(res), "organization admin") {
+		t.Fatalf("an agent creating a public roadmap: %s", text(res))
+	}
+	createdRoadmap := call("create_roadmap", map[string]any{"project_id": pid, "title": "Launch"})
+	if createdRoadmap.IsError || !strings.Contains(text(createdRoadmap), `"visibility":"team"`) {
+		t.Fatalf("create roadmap: %s", text(createdRoadmap))
 	}
 	var rm struct {
 		ID string `json:"id"`

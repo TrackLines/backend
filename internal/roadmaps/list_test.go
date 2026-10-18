@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/clerk/clerk-sdk-go/v2"
 	"github.com/golang-migrate/migrate/v4"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/tracklines/backend/internal/auth"
@@ -106,7 +107,9 @@ func TestUpdateDeleteAreOrgScoped(t *testing.T) {
 	}
 	h := NewSystem(db).WithManagers(everyone{})
 	run := func(action, org, body string) int {
-		req := httptest.NewRequest("PUT", "/", strings.NewReader(body)).WithContext(auth.WithAPIKey(ctx, "user_ru", org, "ui", ""))
+		c := &clerk.SessionClaims{RegisteredClaims: clerk.RegisteredClaims{Subject: "user_ru"}}
+		c.ActiveOrganizationID = org // signed in: unpublishing and deleting aren't for API keys (TL-432)
+		req := httptest.NewRequest("PUT", "/", strings.NewReader(body)).WithContext(clerk.ContextWithSessionClaims(ctx, c))
 		req.SetPathValue("id", rm.ID)
 		rec := httptest.NewRecorder()
 		if action == "update" {

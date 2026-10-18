@@ -37,6 +37,10 @@ func Middleware(db *pgxpool.Pool, member Member) func(http.Handler) http.Handler
 				return
 			}
 			owner, org, name, kind, err := s.Owner(r.Context(), key)
+			if errors.Is(err, ErrExpired) {
+				http.Error(w, "api key expired: create a new one in Settings → API keys", http.StatusUnauthorized)
+				return
+			}
 			if err != nil {
 				if !errors.Is(err, ErrNotFound) {
 					logs.Errorf("apikeys: lookup: %v", err)
@@ -84,8 +88,17 @@ func (h System) Create(w http.ResponseWriter, r *http.Request) {
 		Kind   string `json:"kind"`
 		Client string `json:"client"`
 		Label  string `json:"label"`
+		Days   *int   `json:"expires_in_days"` // left out: DefaultDays
 	}
 	if !httpx.Decode(w, r, &in) {
+		return
+	}
+	days := DefaultDays
+	if in.Days != nil {
+		days = *in.Days
+	}
+	if days < 1 || days > MaxDays {
+		http.Error(w, fmt.Sprintf("expires_in_days must be from 1 to %d", MaxDays), http.StatusBadRequest)
 		return
 	}
 	if in.Kind != KindAI && in.Kind != KindService {
@@ -94,7 +107,7 @@ func (h System) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	user, _ := auth.UserID(r.Context())
 	if in.Kind == KindAI {
-		h.createAgent(w, r, user, in.Client, in.Label)
+		h.createAgent(w, r, user, in.Client, in.Label, days)
 		return
 	}
 	if in.Name = strings.TrimSpace(in.Name); in.Name == "" {
@@ -117,12 +130,12 @@ func (h System) Create(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "someone else in this organization already has a key with that name: choose another", http.StatusConflict)
 		return
 	}
-	plain, k, err := h.store.Create(r.Context(), user, auth.OrgID(r.Context()), in.Name, in.Kind, nil, nil)
+	plain, k, err := h.store.Create(r.Context(), user, auth.OrgID(r.Context()), in.Name, in.Kind, nil, nil, days)
 	created(w, plain, k, err)
 }
 
 // createAgent mints an agent key for client, under a generated name nobody in the org has used.
-func (h System) createAgent(w http.ResponseWriter, r *http.Request, user, client, label string) {
+func (h System) createAgent(w http.ResponseWriter, r *http.Request, user, client, label string, days int) {
 	if !ValidClient(client) {
 		http.Error(w, "client must be one of claude-code, claude-desktop, codex, cursor, vscode, gemini or other", http.StatusBadRequest)
 		return
@@ -153,7 +166,7 @@ func (h System) createAgent(w http.ResponseWriter, r *http.Request, user, client
 			}
 			continue
 		}
-		plain, k, err := h.store.Create(r.Context(), user, org, name, KindAI, &client, lbl)
+		plain, k, err := h.store.Create(r.Context(), user, org, name, KindAI, &client, lbl, days)
 		created(w, plain, k, err)
 		return
 	}

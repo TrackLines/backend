@@ -398,7 +398,7 @@ func (s *Service) Handler() http.Handler {
 	mux.Handle("PUT /api/tickets/{id}/planned-sprint", signedIn(sp.PlanTicket))
 
 	// Request intake: a project's unlisted public form (no account) and the team's triage inbox
-	ik := intake.NewSystem(s.DB).WithNotifier(notify) // a promoted request is announced to the project's spaces (TL-288)
+	ik := intake.NewSystem(s.DB).WithNotifier(notify).WithAdmins(o.AdminModel()) // a promoted request is announced to the project's spaces (TL-288)
 	mux.Handle("GET /api/intake/{token}", public("intake-form", 60, ik.Form))
 	mux.Handle("POST /api/intake/{token}", public("intake-submit", 10, ik.Submit)) // on top of the per-sender hourly cap
 	mux.Handle("GET /api/projects/{id}/intake", signedIn(ik.Settings))

@@ -17,3 +17,5 @@ type everyone struct{}
 func (everyone) IsProjectManager(context.Context, string, string, string) (bool, error) {
 	return true, nil
 }
+
+func (everyone) IsAdmin(context.Context, string, string) (bool, error) { return true, nil }
