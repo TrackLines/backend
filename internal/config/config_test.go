@@ -15,7 +15,7 @@ func TestBuild(t *testing.T) {
 	if got := Get(c).ChewedFeedURL; got != "https://api.chewedfeed.com" {
 		t.Fatalf("default ChewedFeed URL = %q", got)
 	}
-	if got, want := Get(c).AuthorizedParties(), []string{"https://tracklin.es", "http://localhost:3000"}; !equalStrings(got, want) {
+	if got, want := Get(c).AuthorizedParties(), []string{"https://tracklin.es"}; !equalStrings(got, want) {
 		t.Fatalf("default authorized parties = %q, want %q", got, want)
 	}
 }

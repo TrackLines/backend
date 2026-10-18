@@ -34,7 +34,7 @@ type Git struct {
 type Project struct {
 	Stripe                 Stripe
 	PortalURL              string `env:"PORTAL_URL" envDefault:"http://localhost:3000/settings"`
-	ClerkAuthorizedParties string `env:"CLERK_AUTHORIZED_PARTIES" envDefault:"https://tracklin.es,http://localhost:3000"`
+	ClerkAuthorizedParties string `env:"CLERK_AUTHORIZED_PARTIES" envDefault:"https://tracklin.es"` // docker-compose adds http://localhost:3000 for local dev
 	ValkeyURL              string `env:"VALKEY_URL" envDefault:"redis://localhost:6379"`
 	RailwayPort            string `env:"PORT"` // Railway injects PORT; overrides HTTP_PORT
 	BugfixesLogLevel       string `env:"BUGFIXES_LOG_LEVEL" envDefault:"info"`
