@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"net/http"
+	"strings"
 
 	"github.com/clerk/clerk-sdk-go/v2"
 	clerkhttp "github.com/clerk/clerk-sdk-go/v2/http"
@@ -75,6 +76,16 @@ func SessionRequiredWith(required func(http.Handler) http.Handler) func(http.Han
 			next.ServeHTTP(w, r)
 		}))
 	}
+}
+
+// Bearer is the token in an `Authorization: Bearer …` header, "" without one. The scheme is
+// case-insensitive (RFC 7235): TRMNL, for one, sends "bearer".
+func Bearer(r *http.Request) string {
+	scheme, token, ok := strings.Cut(r.Header.Get("Authorization"), " ")
+	if !ok || !strings.EqualFold(scheme, "Bearer") {
+		return ""
+	}
+	return strings.TrimSpace(token)
 }
 
 type apiKeyUserContextKey struct{}

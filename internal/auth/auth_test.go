@@ -99,3 +99,16 @@ func TestOrgID(t *testing.T) {
 		}
 	}
 }
+
+func TestBearerSchemeIsCaseInsensitive(t *testing.T) {
+	for header, want := range map[string]string{
+		"Bearer tl_p_x": "tl_p_x", "bearer tl_p_x": "tl_p_x", "BEARER  tl_p_x": "tl_p_x",
+		"": "", "Basic dXNlcg==": "", "tl_p_x": "", "Bearertl_p_x": "",
+	} {
+		r := httptest.NewRequest("GET", "/", nil)
+		r.Header.Set("Authorization", header)
+		if got := Bearer(r); got != want {
+			t.Errorf("%q: %q, want %q", header, got, want)
+		}
+	}
+}

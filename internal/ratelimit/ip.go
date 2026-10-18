@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/bugfixes/go-bugfixes/logs"
+	"github.com/tracklines/backend/internal/auth"
 	"github.com/tracklines/backend/internal/httpx"
 )
 
@@ -57,7 +58,7 @@ func (s *statusRecorder) WriteHeader(code int) {
 func BadKeys(c Counter, perMinute int, now func() time.Time) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			token, _ := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+			token := auth.Bearer(r)
 			if !strings.HasPrefix(token, "tl_") && !strings.HasPrefix(token, "bf_") {
 				next.ServeHTTP(w, r)
 				return

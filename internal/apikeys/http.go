@@ -32,8 +32,8 @@ func Middleware(db *pgxpool.Pool, member Member) func(http.Handler) http.Handler
 	s := Store{DB: db}
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			key, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
-			if !ok || !strings.HasPrefix(key, Prefix) {
+			key := auth.Bearer(r)
+			if !strings.HasPrefix(key, Prefix) {
 				next.ServeHTTP(w, r)
 				return
 			}

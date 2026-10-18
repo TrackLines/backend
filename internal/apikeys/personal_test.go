@@ -96,6 +96,12 @@ func TestPersonalAndReadOnlyKeys(t *testing.T) {
 	if code := use("POST", theirs["key"].(string)); code != http.StatusOK || actor != "akp2" {
 		t.Fatalf("read-write personal key POST: %d actor %q", code, actor)
 	}
+	// the scheme is case-insensitive: TRMNL sends "bearer" (TL-450)
+	lower := httptest.NewRequest("GET", "/", nil)
+	lower.Header.Set("Authorization", "bearer "+mine["key"].(string))
+	if rec := httptest.NewRecorder(); func() int { mw.ServeHTTP(rec, lower); return rec.Code }() != http.StatusOK || actor != "akp1" {
+		t.Fatalf("lowercase bearer: actor %q", actor)
+	}
 	// a read-only service key still works as the key's name, for reads only
 	_, svc := create("akp1", `{"kind":"service","name":"akp-dashboard","read_only":true}`)
 	if code := use("GET", svc["key"].(string)); code != http.StatusOK || actor != "akp-dashboard" {
