@@ -3249,7 +3249,8 @@ paths:
     get:
       tags: [API keys]
       operationId: listApiKeys
-      summary: List the caller's active API keys
+      summary: List the caller's active API keys, and the organization's service keys
+      description: Service keys belong to the organization, so every member sees them and when they expire, whoever made them.
       security:
         - clerkSession: []
       responses:
@@ -3265,7 +3266,7 @@ paths:
       tags: [API keys]
       operationId: createApiKey
       summary: Create a TrackLin.es API key
-      description: The plaintext key is returned only once. This route requires a Clerk session.
+      description: The plaintext key is returned only once. This route requires a Clerk session. Only organization admins can create service keys.
       security:
         - clerkSession: []
       requestBody:
@@ -3281,6 +3282,7 @@ paths:
               schema: { $ref: '#/components/schemas/CreatedApiKey' }
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: Only organization admins can create service keys. }
         '500': { $ref: '#/components/responses/InternalError' }
 
   /keys/{keyId}:
@@ -3293,6 +3295,7 @@ paths:
       tags: [API keys]
       operationId: revokeApiKey
       summary: Revoke an API key
+      description: Your own keys; organization admins can also revoke any of the organization's service keys.
       security:
         - clerkSession: []
       responses:

@@ -13,7 +13,24 @@ import (
 	"github.com/tracklines/backend/internal/httpx"
 )
 
-type System struct{ store Store }
+type System struct {
+	store Store
+	// IsAdmin: whether user is an admin of org; only admins make and revoke the org's service keys (TL-462). nil: nobody is
+	IsAdmin func(ctx context.Context, org, user string) (bool, error)
+}
+
+// admin reports whether the caller administers their organization (false when it can't tell).
+func (h System) admin(r *http.Request) bool {
+	user, _ := auth.UserID(r.Context())
+	if h.IsAdmin == nil {
+		return false
+	}
+	ok, err := h.IsAdmin(r.Context(), auth.OrgID(r.Context()), user)
+	if err != nil {
+		logs.Errorf("apikeys: admin check: %v", err)
+	}
+	return ok && err == nil
+}
 
 // NewSystem exposes the API key handlers; routes are declared in internal/service.go.
 func NewSystem(db *pgxpool.Pool) System {
@@ -129,6 +146,11 @@ func (h System) Create(w http.ResponseWriter, r *http.Request) {
 		created(w, plain, k, err)
 		return
 	}
+	// service keys belong to the organization: everyone sees them (and when they expire), admins make them (TL-462)
+	if !h.admin(r) {
+		http.Error(w, "only organization admins can make service keys", http.StatusForbidden)
+		return
+	}
 	// a key's name is who its work is recorded as (comments, tickets, claims), so it can't pose as a
 	// person (user_…), as the system or an integration, or as another member's key (TL-247)
 	if reservedName(in.Name) {
@@ -202,7 +224,11 @@ func created(w http.ResponseWriter, plain string, k *Key, err error) {
 
 func (h System) Revoke(w http.ResponseWriter, r *http.Request) {
 	user, _ := auth.UserID(r.Context())
-	if err := h.store.Revoke(r.Context(), r.PathValue("id"), user); err != nil {
+	err := h.store.Revoke(r.Context(), r.PathValue("id"), user)
+	if errors.Is(err, ErrNotFound) && h.admin(r) { // not theirs: an admin can revoke any of the org's service keys (TL-462)
+		err = h.store.RevokeService(r.Context(), r.PathValue("id"), auth.OrgID(r.Context()))
+	}
+	if err != nil {
 		if errors.Is(err, ErrNotFound) {
 			http.Error(w, "not found", http.StatusNotFound)
 			return

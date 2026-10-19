@@ -100,9 +100,10 @@ func (s Store) Create(ctx context.Context, owner, org, name, kind string, client
 
 // List returns the owner's active keys.
 // List is owner's live keys in org (the org they act in).
+// List is owner's keys in org, and the org's service keys whoever made them (TL-462: they're the organization's).
 func (s Store) List(ctx context.Context, owner, org string) ([]Key, error) {
 	rows, err := s.DB.Query(ctx, `SELECT `+cols+` FROM api_keys
-		WHERE owner_clerk_id = $1 AND org_id = $2 AND revoked_at IS NULL ORDER BY created_at`, owner, org)
+		WHERE org_id = $2 AND revoked_at IS NULL AND (owner_clerk_id = $1 OR kind = 'service') ORDER BY created_at`, owner, org)
 	if err != nil {
 		return nil, err
 	}
@@ -114,8 +115,17 @@ func (s Store) List(ctx context.Context, owner, org string) ([]Key, error) {
 }
 
 func (s Store) Revoke(ctx context.Context, id, owner string) error {
+	return s.revoke(ctx, `owner_clerk_id = $2`, id, owner)
+}
+
+// RevokeService revokes one of org's service keys, whoever made it (an admin's revoke, TL-462).
+func (s Store) RevokeService(ctx context.Context, id, org string) error {
+	return s.revoke(ctx, `org_id = $2 AND kind = 'service'`, id, org)
+}
+
+func (s Store) revoke(ctx context.Context, whose, id, arg string) error {
 	tag, err := s.DB.Exec(ctx, `UPDATE api_keys SET revoked_at = now()
-		WHERE id = $1 AND owner_clerk_id = $2 AND revoked_at IS NULL`, id, owner)
+		WHERE id = $1 AND `+whose+` AND revoked_at IS NULL`, id, arg)
 	var pg *pgconn.PgError
 	if errors.As(err, &pg) && pg.Code == "22P02" { // malformed uuid
 		return ErrNotFound

@@ -427,6 +427,7 @@ func (s *Service) Handler() http.Handler {
 
 	// API keys — AI agent or server/service; managing keys needs a signed-in session
 	k := apikeys.NewSystem(s.DB)
+	k.IsAdmin = o.AdminModel().IsAdmin // service keys are the org's: admins make and revoke them (TL-462)
 	mux.Handle("GET /api/keys", sessionRequired(http.HandlerFunc(k.List)))
 	mux.Handle("POST /api/keys", sessionRequired(http.HandlerFunc(k.Create)))
 	mux.Handle("DELETE /api/keys/{id}", sessionRequired(http.HandlerFunc(k.Revoke)))

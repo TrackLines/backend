@@ -38,6 +38,7 @@ func TestKeyHandlers(t *testing.T) {
 		t.Fatal(err)
 	}
 	h := NewSystem(db)
+	h.IsAdmin = func(context.Context, string, string) (bool, error) { return true, nil } // service keys: admins only (TL-462)
 	as := func(user, org string) context.Context {
 		c := &clerk.SessionClaims{RegisteredClaims: clerk.RegisteredClaims{Subject: user}}
 		c.ActiveOrganizationID = org
@@ -123,7 +124,7 @@ func TestKeyHandlers(t *testing.T) {
 	expect(201, "create", as("akh2", "org_other"), "", `{"name":"Deploy","kind":"service"}`) // another org's names are its own
 	expect(204, "revoke", as("akh1", "org_akh"), deploy.ID, "")
 
-	// list: my keys in this org, never the secret; not another person's, not another org's
+	// list: my keys in this org, never the secret; not another person's (but the org's service keys, TL-462), not another org's
 	mine := list(as("akh1", "org_akh"))
 	if len(mine) != 1 || mine[0]["id"] != created.ID || strings.Contains(expect(200, "list", as("akh1", "org_akh"), "", "").Body.String(), created.Key) {
 		t.Fatalf("my keys: %+v", mine)
@@ -131,7 +132,7 @@ func TestKeyHandlers(t *testing.T) {
 	if got := list(as("akh2", "org_akh")); len(got) != 0 {
 		t.Fatalf("someone else's view: %+v", got)
 	}
-	if got := list(as("akh1", "org_other")); len(got) != 0 {
+	if got := list(as("akh1", "org_other")); len(got) != 1 || got[0]["kind"] != KindService { // akh2's Deploy there, not their agents
 		t.Fatalf("another org's view: %+v", got)
 	}
 
@@ -262,6 +263,7 @@ func TestKeysExpire(t *testing.T) {
 		t.Fatal(err)
 	}
 	h := NewSystem(db)
+	h.IsAdmin = func(context.Context, string, string) (bool, error) { return true, nil } // service keys: admins only (TL-462)
 	c := &clerk.SessionClaims{RegisteredClaims: clerk.RegisteredClaims{Subject: "akx1"}}
 	c.ActiveOrganizationID = "org_akx"
 	session := clerk.ContextWithSessionClaims(ctx, c)

@@ -36,6 +36,7 @@ func TestPersonalAndReadOnlyKeys(t *testing.T) {
 		t.Fatal(err)
 	}
 	h := NewSystem(db)
+	h.IsAdmin = func(context.Context, string, string) (bool, error) { return true, nil }
 	session := func(user string) context.Context {
 		c := &clerk.SessionClaims{RegisteredClaims: clerk.RegisteredClaims{Subject: user}}
 		c.ActiveOrganizationID = "org_akp"
