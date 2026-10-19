@@ -116,9 +116,9 @@ func (s *Service) calendarSync(members clerkcache.Memberships) integrations.Cale
 }
 
 // clerkHooks: Clerk's webhooks, which also give a new organization its member cap (TL-418).
-func clerkHooks(db *pgxpool.Pool, secret string) clerkhooks.System {
+func clerkHooks(db *pgxpool.Pool, secret string, uncapped []string) clerkhooks.System {
 	h := clerkhooks.NewSystem(db, secret)
-	h.ClerkOrgs = organization.NewClient(&clerk.ClientConfig{})
+	h.ClerkOrgs = billing.Skip{OrgUpdater: organization.NewClient(&clerk.ClientConfig{}), Orgs: uncapped}
 	return h
 }
 
@@ -147,7 +147,7 @@ func (s *Service) Start() error {
 	_, _, _, _, notify := s.notifiers()
 	go sprints.Store{DB: s.DB, Notify: notify}.RunAutoClose(ctx, time.Minute)
 	// every organization's Clerk member cap matches its plan: 20 on Free and Pro, unlimited on Enterprise (TL-418)
-	go billing.SyncAllMemberCaps(ctx, s.DB, organization.NewClient(&clerk.ClientConfig{}))
+	go billing.SyncAllMemberCaps(ctx, s.DB, billing.Skip{OrgUpdater: organization.NewClient(&clerk.ClientConfig{}), Orgs: config.Get(s.Config).ClerkUncappedOrgs})
 	// a new version of the Terms or Privacy policy on the web app: everyone's told once, in-app (TL-424)
 	go legal.Announcer{DB: s.DB, Site: siteURL(config.Get(s.Config).AuthorizedParties())}.Run(ctx, time.Hour)
 	// who's on holiday, from Google Calendar (TL-406): every connected org, hourly
@@ -445,7 +445,7 @@ func (s *Service) Handler() http.Handler {
 	// Clerk (via Svix) authenticates by signature: org/user removals clean up admins, team members and API keys
 	// Contact form: files enquiries in ChewedFeed HQ's inbox; a few per address per minute, and 20 a minute in all
 	mux.Handle("POST /api/enquiries", ratelimit.Total(limits, "enquiry-all", 20, time.Now)(public("enquiry", 3, enquiries.NewSystem(config.Get(s.Config).ChewedFeedURL, config.Get(s.Config).ChewedFeedKey).Create)))
-	mux.Handle("POST /api/webhooks/clerk", public("webhook-clerk", 600, clerkHooks(s.DB, config.Get(s.Config).ClerkWebhookSecret).Webhook(time.Now)))
+	mux.Handle("POST /api/webhooks/clerk", public("webhook-clerk", 600, clerkHooks(s.DB, config.Get(s.Config).ClerkWebhookSecret, config.Get(s.Config).ClerkUncappedOrgs).Webhook(time.Now)))
 
 	// Every request: API key (tl_…) or optional Clerk auth + users row for signed-in callers, then
 	// recovery/request id/logging (bugfixes) and CORS.

@@ -54,6 +54,11 @@ func TestMemberCaps(t *testing.T) {
 			t.Errorf("%s: member limit %d %v, want %d", org, l, err, limit)
 		}
 	}
+	// an organization in CLERK_UNCAPPED_ORGS is left alone
+	skipped := fakeOrgs{}
+	if err := SyncMemberCap(ctx, db, Skip{OrgUpdater: skipped, Orgs: []string{"org_mc_ent"}}, "org_mc_ent"); err != nil || len(skipped) != 0 {
+		t.Errorf("uncapped org: Clerk told %v (%v)", skipped, err)
+	}
 	// upgrading lifts it; nil Clerk client does nothing
 	db.Exec(ctx, `UPDATE org_billing SET plan = 'enterprise' WHERE org_id = 'org_mc_pro'`)
 	if err := SyncMemberCap(ctx, db, got, "org_mc_pro"); err != nil || got["org_mc_pro"] != 0 {

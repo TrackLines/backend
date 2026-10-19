@@ -33,14 +33,15 @@ type Git struct {
 // Project is the tracklines-specific config; go-config owns Postgres, Clerk, Bugfixes, Flags, Local.
 type Project struct {
 	Stripe                 Stripe
-	PortalURL              string `env:"PORTAL_URL" envDefault:"http://localhost:3000/settings"`
-	ClerkAuthorizedParties string `env:"CLERK_AUTHORIZED_PARTIES" envDefault:"https://tracklin.es"` // docker-compose adds http://localhost:3000 for local dev
-	ValkeyURL              string `env:"VALKEY_URL" envDefault:"redis://localhost:6379"`
-	RailwayPort            string `env:"PORT"` // Railway injects PORT; overrides HTTP_PORT
-	BugfixesLogLevel       string `env:"BUGFIXES_LOG_LEVEL" envDefault:"info"`
-	ClerkWebhookSecret     string `env:"CLERK_WEBHOOK_SECRET"`  // whsec_…; /api/webhooks/clerk answers 503 without it
-	UploadThingToken       string `env:"UPLOADTHING_TOKEN"`     // ticket attachments; used to delete stored files
-	SecretKey              string `env:"TRACKLINES_SECRET_KEY"` // 32 bytes base64: seals integration tokens; integrations stay off without it
+	PortalURL              string   `env:"PORTAL_URL" envDefault:"http://localhost:3000/settings"`
+	ClerkAuthorizedParties string   `env:"CLERK_AUTHORIZED_PARTIES" envDefault:"https://tracklin.es"` // docker-compose adds http://localhost:3000 for local dev
+	ValkeyURL              string   `env:"VALKEY_URL" envDefault:"redis://localhost:6379"`
+	RailwayPort            string   `env:"PORT"` // Railway injects PORT; overrides HTTP_PORT
+	BugfixesLogLevel       string   `env:"BUGFIXES_LOG_LEVEL" envDefault:"info"`
+	ClerkWebhookSecret     string   `env:"CLERK_WEBHOOK_SECRET"`                 // whsec_…; /api/webhooks/clerk answers 503 without it
+	ClerkUncappedOrgs      []string `env:"CLERK_UNCAPPED_ORGS" envSeparator:","` // org ids whose Clerk member cap is never set (TL-418)
+	UploadThingToken       string   `env:"UPLOADTHING_TOKEN"`                    // ticket attachments; used to delete stored files
+	SecretKey              string   `env:"TRACKLINES_SECRET_KEY"`                // 32 bytes base64: seals integration tokens; integrations stay off without it
 	Git                    Git
 	RateLimit              int    `env:"API_KEY_RATE_LIMIT" envDefault:"300"`                        // requests per minute per API key; 0 turns it off
 	ChewedFeedURL          string `env:"CHEWEDFEED_API_URL" envDefault:"https://api.chewedfeed.com"` // ChewedFeed HQ (customer sync, enquiries)

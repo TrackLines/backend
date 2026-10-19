@@ -2,6 +2,7 @@ package billing
 
 import (
 	"context"
+	"slices"
 
 	"github.com/bugfixes/go-bugfixes/logs"
 	"github.com/clerk/clerk-sdk-go/v2"
@@ -13,6 +14,20 @@ import (
 // OrgUpdater changes a Clerk organization (organization.Client in production).
 type OrgUpdater interface {
 	Update(ctx context.Context, id string, params *organization.UpdateParams) (*clerk.Organization, error)
+}
+
+// Skip leaves Clerk's cap alone for some organizations (CLERK_UNCAPPED_ORGS): an Enterprise org Clerk
+// can't make unlimited without its memberships add-on, and that doesn't need it (ours: three accounts).
+type Skip struct {
+	OrgUpdater
+	Orgs []string
+}
+
+func (s Skip) Update(ctx context.Context, id string, params *organization.UpdateParams) (*clerk.Organization, error) {
+	if slices.Contains(s.Orgs, id) {
+		return nil, nil
+	}
+	return s.OrgUpdater.Update(ctx, id, params)
 }
 
 // SyncMemberCap sets Clerk's own cap on the organization's members to its plan's (TL-418): 20, or 0
