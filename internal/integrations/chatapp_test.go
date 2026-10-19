@@ -73,7 +73,10 @@ func (f *fakeGoogle) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 							ButtonList struct {
 								Buttons []struct {
 									Text    string
-									OnClick struct{ OpenLink struct{ URL string } }
+									OnClick struct {
+										OpenLink struct{ URL string }
+										Action   struct{ Parameters []struct{ Key, Value string } }
+									}
 								}
 							}
 						}
@@ -87,7 +90,13 @@ func (f *fakeGoogle) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			for _, s := range c.Card.Sections {
 				for _, w := range s.Widgets {
 					for _, b := range w.ButtonList.Buttons {
-						got += " [" + b.Text + "](" + b.OnClick.OpenLink.URL + ")"
+						target := b.OnClick.OpenLink.URL
+						for _, p := range b.OnClick.Action.Parameters { // an action button reads as "[label](do=…)"
+							if p.Key == "do" {
+								target = "do=" + p.Value
+							}
+						}
+						got += " [" + b.Text + "](" + target + ")"
 					}
 				}
 			}
@@ -266,7 +275,7 @@ func TestChatApp(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := google.take("spaces/DMAVA")
-	if len(got) != 1 || got[0] != "*Sam Lee* assigned you TL-12: Fix login [Open in TrackLin.es](https://tracklin.es/tickets/6a3ec0a8-9946-4ae6-85a5-4c34b95cd572)" {
+	if len(got) != 1 || got[0] != "*Sam Lee* assigned you TL-12: Fix login [Start](do=start) [Add comment](do=comment) [Make urgent](do=urgent) [Open in TrackLin.es](https://tracklin.es/tickets/6a3ec0a8-9946-4ae6-85a5-4c34b95cd572)" {
 		t.Fatalf("assigned: %q", got)
 	}
 	google.mu.Lock()

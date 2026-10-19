@@ -1,7 +1,9 @@
 package internal
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"github.com/clerk/clerk-sdk-go/v2"
 	"github.com/clerk/clerk-sdk-go/v2/organization"
@@ -9,6 +11,7 @@ import (
 	"github.com/clerk/clerk-sdk-go/v2/user"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os/signal"
 	"strings"
 	"sync"
@@ -263,6 +266,8 @@ func (s *Service) Handler() http.Handler {
 	}
 	if chatApp != nil {
 		chatApp.People = t.People // and the Chat app's personal messages
+		// their buttons (TL-455) act as the linked person through these same routes, if still in the org
+		chatApp.Act, chatApp.Member = actAs(mux), keyMember
 	}
 	mux.Handle("POST /api/columns/{id}/tickets", signedIn(t.Create))
 	mux.Handle("GET /api/tickets/{id}", signedIn(t.Get))                // one ticket + where it lives (deep links)
@@ -512,6 +517,24 @@ func serveOn(ctx context.Context, ln net.Listener, h http.Handler, drain time.Du
 		return nil
 	}
 	return err
+}
+
+// actAs runs an API call on h as user, signed in to org, in-process (Google Chat buttons, TL-455): the
+// caller has already checked who they are, so the route applies that person's own permissions.
+func actAs(h http.Handler) func(ctx context.Context, user, org, method, path string, body any) (int, []byte) {
+	return func(ctx context.Context, user, org, method, path string, body any) (int, []byte) {
+		var in bytes.Buffer
+		if body != nil {
+			_ = json.NewEncoder(&in).Encode(body)
+		}
+		claims := &clerk.SessionClaims{RegisteredClaims: clerk.RegisteredClaims{Subject: user}}
+		claims.ActiveOrganizationID = org
+		req := httptest.NewRequestWithContext(clerk.ContextWithSessionClaims(ctx, claims), method, path, &in)
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec.Code, rec.Body.Bytes()
+	}
 }
 
 // stillMember asks Clerk (through the minute-long membership cache) whether user is still in org,

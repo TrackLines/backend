@@ -56,6 +56,10 @@ type ChatApp struct {
 	API           string // Chat API base; tests point it at a fake
 	CertsURL      string // Google's signing keys
 	Wait          bool   // tests: send before returning
+	// Act runs an API call as user in org (the routes in-process, with that person's permissions), and
+	// Member says whether user is still in org: both set by the service, for message buttons (TL-455)
+	Act    func(ctx context.Context, user, org, method, path string, body any) (int, []byte)
+	Member func(ctx context.Context, org, user string) (bool, error)
 
 	email, keyID, tokenURL string
 	key                    *rsa.PrivateKey
@@ -180,11 +184,20 @@ func (u chatUser) label() string {
 // chatRequest is either of Chat's formats: Chat app events ({type, space, user}) or, for an app
 // built as a Workspace add-on, {chat: {user, messagePayload | addedToSpacePayload | …}}.
 type chatRequest struct {
-	Type  string    `json:"type"` // MESSAGE | ADDED_TO_SPACE | REMOVED_FROM_SPACE | APP_HOME | …
+	Type  string    `json:"type"` // MESSAGE | ADDED_TO_SPACE | REMOVED_FROM_SPACE | APP_HOME | CARD_CLICKED | …
 	Space chatSpace `json:"space"`
 	User  chatUser  `json:"user"`
-	Chat  *struct {
+	// a button press (TL-455): the button's parameters and a dialog's inputs, in common (Chat app) or
+	// commonEventObject (add-on)
+	DialogEventType   string     `json:"dialogEventType"`
+	Common            chatCommon `json:"common"`
+	CommonEventObject chatCommon `json:"commonEventObject"`
+	Chat              *struct {
 		User    chatUser `json:"user"`
+		Clicked *struct {
+			Space           chatSpace `json:"space"`
+			DialogEventType string    `json:"dialogEventType"`
+		} `json:"buttonClickedPayload"`
 		Message *struct {
 			Space chatSpace `json:"space"`
 		} `json:"messagePayload"`
@@ -197,10 +210,12 @@ type chatRequest struct {
 	} `json:"chat"`
 }
 
-// event is what happened: "message", "added", "removed" or "home", by whom, where; addon says how to answer.
+// event is what happened: "message", "added", "removed", "home" or "click", by whom, where; addon says how to answer.
 func (q chatRequest) event() (kind string, user chatUser, space chatSpace, addon bool) {
 	if c := q.Chat; c != nil {
 		switch {
+		case c.Clicked != nil:
+			return "click", c.User, c.Clicked.Space, true
 		case c.Removed != nil:
 			return "removed", c.User, c.Removed.Space, true
 		case c.Added != nil:
@@ -217,6 +232,8 @@ func (q chatRequest) event() (kind string, user chatUser, space chatSpace, addon
 		return "added", q.User, q.Space, false
 	case "APP_HOME":
 		return "home", q.User, q.Space, false
+	case "CARD_CLICKED":
+		return "click", q.User, q.Space, false
 	}
 	return "message", q.User, q.Space, false
 }
@@ -249,6 +266,10 @@ func (c *ChatApp) Events(w http.ResponseWriter, r *http.Request) {
 	}
 	if user.Name == "" {
 		httpx.JSON(w, http.StatusOK, map[string]any{})
+		return
+	}
+	if kind == "click" {
+		httpx.JSON(w, http.StatusOK, c.clicked(ctx, user.Name, q.click(), addon))
 		return
 	}
 	var text, button, buttonURL string
@@ -421,7 +442,7 @@ func (c *ChatApp) Link(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	c.background(r.Context(), func(ctx context.Context) {
-		if err := c.sendTo(ctx, user, google, space, "You’re linked to TrackLin.es. I’ll message you here when something needs you.", ""); err != nil {
+		if err := c.sendTo(ctx, user, google, space, chatCard("You’re linked to TrackLin.es. I’ll message you here when something needs you.", nil)); err != nil {
 			logs.Warnf("google chat app: linked message: %v", err)
 		}
 	})
@@ -474,10 +495,9 @@ func (c *ChatApp) Notify(ctx context.Context, org string, to []string, e notific
 		if len(dms) == 0 {
 			return
 		}
-		text := "*" + chatNamer(ctx, c.DB, c.People, org)(e.Actor) + "* " + e.Text
-		link := eventLink(c.Site, e)
+		message := chatCard("*"+chatNamer(ctx, c.DB, c.People, org)(e.Actor)+"* "+e.Text, c.chatButtons(org, e, eventLink(c.Site, e)))
 		for _, d := range dms {
-			if err := c.sendTo(ctx, d.user, d.google, d.space, text, link); err != nil {
+			if err := c.sendTo(ctx, d.user, d.google, d.space, message); err != nil {
 				logs.Warnf("google chat app: %s: %v", e.Kind, err)
 			}
 		}
@@ -498,9 +518,9 @@ func (c *ChatApp) background(ctx context.Context, f func(context.Context)) {
 	}()
 }
 
-// sendTo posts text into the person's chat with the app, with an "Open in Tracklines" button for link,
-// finding that chat first if we don't know it. When the app was removed from it (403/404), the link is dropped: nothing more can arrive.
-func (c *ChatApp) sendTo(ctx context.Context, user, google, space, text, link string) error {
+// sendTo posts message into the person's chat with the app, finding that chat first if we don't know
+// it. When the app was removed from it (403/404), the link is dropped: nothing more can arrive.
+func (c *ChatApp) sendTo(ctx context.Context, user, google, space string, message map[string]any) error {
 	if space == "" {
 		var found struct {
 			Name string `json:"name"`
@@ -518,17 +538,25 @@ func (c *ChatApp) sendTo(ctx context.Context, user, google, space, text, link st
 	if err != nil {
 		return err
 	}
-	body, _ := json.Marshal(chatMessage(text, link))
+	body, _ := json.Marshal(message)
 	return c.gone(ctx, user, c.call(ctx, http.MethodPost, c.API+"/v1/"+space+"/messages", token, body, nil))
 }
 
 // chatMessage is a Chat message: text, and an "Open in Tracklines" button when there's a link. Chat
 // shows <url|label> links in app and webhook messages as typed, so the link is a button.
 func chatMessage(text, link string) map[string]any {
+	if link == "" {
+		return chatCard(text, nil)
+	}
+	return chatCard(text, []any{map[string]any{"text": "Open in TrackLin.es", "onClick": map[string]any{"openLink": map[string]any{"url": link}}}})
+}
+
+// chatCard is text with a row of buttons under it (none: just the text).
+func chatCard(text string, buttons []any) map[string]any {
 	message := map[string]any{"text": text}
-	if link != "" {
+	if len(buttons) > 0 {
 		message["cardsV2"] = []any{map[string]any{"cardId": "open", "card": map[string]any{"sections": []any{map[string]any{"widgets": []any{
-			map[string]any{"buttonList": map[string]any{"buttons": []any{map[string]any{"text": "Open in TrackLin.es", "onClick": map[string]any{"openLink": map[string]any{"url": link}}}}}},
+			map[string]any{"buttonList": map[string]any{"buttons": buttons}},
 		}}}}}}
 	}
 	return message
