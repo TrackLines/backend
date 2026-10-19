@@ -545,6 +545,9 @@ func writeStoreErr(w http.ResponseWriter, r *http.Request, err error) {
 }
 
 func writeClerkErr(w http.ResponseWriter, action string, err error) {
+	if httpx.Canceled(err) {
+		return // the client left: nobody to answer, nothing to report
+	}
 	logs.Errorf("invitations: %s: %v", action, err)
 	if w == nil {
 		return
