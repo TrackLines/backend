@@ -3282,6 +3282,34 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /openapi.yaml:
+    get:
+      tags: [System]
+      operationId: getOpenAPIYAML
+      summary: This API description, as YAML
+      description: Public; no key needed. Built into the API, so it always matches what's running.
+      security: []
+      responses:
+        '200':
+          description: The OpenAPI document.
+          content:
+            application/yaml:
+              schema: { type: string }
+
+  /openapi.json:
+    get:
+      tags: [System]
+      operationId: getOpenAPIJSON
+      summary: This API description, as JSON
+      description: Public; no key needed. The same document as /openapi.yaml.
+      security: []
+      responses:
+        '200':
+          description: The OpenAPI document.
+          content:
+            application/json:
+              schema: { type: object }
+
   /live/sessions:
     get:
       tags: [Live]

@@ -5,10 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"github.com/clerk/clerk-sdk-go/v2"
-	"github.com/clerk/clerk-sdk-go/v2/organization"
-	"github.com/clerk/clerk-sdk-go/v2/organizationmembership"
-	"github.com/clerk/clerk-sdk-go/v2/user"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -18,11 +14,19 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/clerk/clerk-sdk-go/v2"
+	"github.com/clerk/clerk-sdk-go/v2/organization"
+	"github.com/clerk/clerk-sdk-go/v2/organizationmembership"
+	"github.com/clerk/clerk-sdk-go/v2/user"
+
 	"github.com/bugfixes/go-bugfixes/logs"
 	bm "github.com/bugfixes/go-bugfixes/middleware"
 	goFlags "github.com/flags-gg/go-flags"
 	"github.com/jackc/pgx/v5/pgxpool"
 	ConfigBuilder "github.com/keloran/go-config"
+	"github.com/valkey-io/valkey-go"
+
+	"github.com/tracklines/backend"
 	"github.com/tracklines/backend/internal/apikeys"
 	"github.com/tracklines/backend/internal/attachments"
 	"github.com/tracklines/backend/internal/auth"
@@ -52,7 +56,6 @@ import (
 	"github.com/tracklines/backend/internal/teams"
 	"github.com/tracklines/backend/internal/tickets"
 	"github.com/tracklines/backend/internal/users"
-	"github.com/valkey-io/valkey-go"
 )
 
 // Service owns the HTTP lifecycle and route composition.
@@ -406,6 +409,24 @@ func (s *Service) Handler() http.Handler {
 
 	// Request intake: a project's unlisted public form (no account) and the team's triage inbox
 	ik := intake.NewSystem(s.DB).WithNotifier(notify).WithAdmins(o.AdminModel()) // a promoted request is announced to the project's spaces (TL-288)
+	// the API's own description, public, built into the binary so it matches what's running (TL-484):
+	// YAML for tools, JSON for the website's API reference
+	specJSON, err := backend.OpenAPIJSON()
+	if err != nil {
+		logs.Warnf("openapi: %v", err)
+	}
+	mux.Handle("GET /api/openapi.yaml", public("openapi", 60, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/yaml")
+		_, _ = w.Write(backend.OpenAPIYAML)
+	}))
+	mux.Handle("GET /api/openapi.json", public("openapi", 60, func(w http.ResponseWriter, _ *http.Request) {
+		if specJSON == nil {
+			http.Error(w, "the API description is unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(specJSON)
+	}))
 	mux.Handle("GET /api/intake/{token}", public("intake-form", 60, ik.Form))
 	mux.Handle("POST /api/intake/{token}", public("intake-submit", 10, ik.Submit)) // on top of the per-sender hourly cap
 	mux.Handle("GET /api/projects/{id}/intake", signedIn(ik.Settings))
