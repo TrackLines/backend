@@ -237,7 +237,8 @@ func (s *Service) Handler() http.Handler {
 	c := columns.NewSystem(s.DB, o.AdminModel())
 	mux.Handle("POST /api/boards/{boardID}/columns", signedIn(c.Create))
 	mux.Handle("PUT /api/boards/{boardID}/columns/order", signedIn(c.Reorder))
-	mux.Handle("PATCH /api/columns/{id}", signedIn(c.Update)) // name and/or wip_limit
+	mux.Handle("PUT /api/boards/{boardID}/columns", signedIn(c.Layout)) // the edit page saves them all at once (TL-470)
+	mux.Handle("PATCH /api/columns/{id}", signedIn(c.Update))           // name and/or wip_limit
 	mux.Handle("DELETE /api/columns/{id}", signedIn(c.Delete))
 
 	// Tickets

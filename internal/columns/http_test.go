@@ -87,6 +87,7 @@ func TestColumnHandlers(t *testing.T) {
 		return
 	}
 	start, _, _ := columns()
+	list2 := func(xs []string) string { return `{"column_ids":["` + strings.Join(xs, `","`) + `"]}` }
 
 	// add: managers only, a name is required, another org can't
 	expect(403, "create", org, "member-u", b.ID, `{"name":"QA"}`)
@@ -97,11 +98,15 @@ func TestColumnHandlers(t *testing.T) {
 	if len(ids) != len(start)+1 {
 		t.Fatalf("added: %v", names)
 	}
-	qa := ids[len(ids)-1]
+	// it goes before Done, which stays last, so what's in Done stays done (TL-469)
+	if ids[len(ids)-1] != start[len(start)-1] || names[len(names)-2] != "QA" {
+		t.Fatalf("added after Done: %v", names)
+	}
+	qa := ids[len(ids)-2]
 
 	// rename and WIP limit (0 removes it); bounds; another org can't
 	expect(204, "update", org, "admin-u", qa, `{"name":"Testing","wip_limit":3}`)
-	if _, names, wip := columns(); names[len(names)-1] != "Testing" || wip["Testing"] == nil || *wip["Testing"] != 3 {
+	if _, names, wip := columns(); names[len(names)-2] != "Testing" || wip["Testing"] == nil || *wip["Testing"] != 3 {
 		t.Fatalf("renamed with limit: %v %v", names, wip)
 	}
 	expect(204, "update", org, "admin-u", qa, `{"wip_limit":0}`)
@@ -114,13 +119,15 @@ func TestColumnHandlers(t *testing.T) {
 	expect(403, "update", org, "member-u", qa, `{"name":"x"}`)
 	expect(404, "update", other, "admin-x", qa, `{"name":"x"}`)
 
-	// reorder: an exact permutation only
+	// reorder: an exact permutation only, with Done staying last (TL-469)
 	ids, _, _ = columns()
-	reversed := make([]string, len(ids))
+	everything := make([]string, len(ids)) // Done first: refused
 	for i, id := range ids {
-		reversed[len(ids)-1-i] = id
+		everything[len(ids)-1-i] = id
 	}
-	list := func(xs []string) string { return `{"column_ids":["` + strings.Join(xs, `","`) + `"]}` }
+	reversed := append(append([]string{}, everything[1:]...), ids[len(ids)-1]) // the rest reversed, Done still last
+	expect(400, "reorder", org, "admin-u", b.ID, list2(everything))
+	list := list2
 	expect(400, "reorder", org, "admin-u", b.ID, list(ids[1:]))
 	expect(400, "reorder", org, "admin-u", b.ID, list(append(ids[1:], ids[1])))
 	expect(403, "reorder", org, "member-u", b.ID, list(reversed))
@@ -149,7 +156,7 @@ func TestColumnHandlers(t *testing.T) {
 	// with an open sprint, only the sprint's tickets hold a column (TL-200: no sprint used to 500)
 	expect(201, "create", org, "admin-u", b.ID, `{"name":"Review"}`)
 	ids, _, _ = columns()
-	review := ids[len(ids)-1]
+	review := ids[len(ids)-2]
 	var sprint string
 	if err := db.QueryRow(ctx, `INSERT INTO sprints (board_id, number, length_days, ends_at) VALUES ($1, 1, 14, now() + interval '14 days') RETURNING id`, b.ID).Scan(&sprint); err != nil {
 		t.Fatal(err)
@@ -162,4 +169,73 @@ func TestColumnHandlers(t *testing.T) {
 		t.Fatal(err)
 	}
 	expect(204, "delete", org, "admin-u", review, "")
+}
+
+// Adding a column never un-finishes work: a ticket is done when it's in the board's last column, and
+// the new column goes before it (TL-469: it used to go after Done).
+func TestAddingAColumnKeepsDoneDone(t *testing.T) {
+	ctx := context.Background()
+	url := os.Getenv("TEST_DATABASE_URL")
+	m, err := migrate.New("file://../migrations", "pgx5"+url[len("postgres"):])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Up(); err != nil && !errors.Is(err, migrate.ErrNoChange) {
+		t.Fatal(err)
+	}
+	db, err := pgxpool.New(ctx, url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var pid string
+	if err := db.QueryRow(ctx, `INSERT INTO projects (owner_clerk_id, name) VALUES ('org_done469', 'Done stays') RETURNING id`).Scan(&pid); err != nil {
+		t.Fatal(err)
+	}
+	b, err := boards.Store{DB: db}.Create(ctx, "org_done469", pid, "Board", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var done, ticket string
+	if err := db.QueryRow(ctx, `SELECT id FROM columns WHERE board_id = $1 ORDER BY position DESC LIMIT 1`, b.ID).Scan(&done); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(ctx, `INSERT INTO tickets (project_id, board_id, column_id, title, position) VALUES ($1, $2, $3, 'shipped', 0) RETURNING id`, pid, b.ID, done).Scan(&ticket); err != nil {
+		t.Fatal(err)
+	}
+	isDone := func() (d bool) {
+		if err := db.QueryRow(ctx, `SELECT `+boards.TicketDoneSQL+` FROM tickets t WHERE t.id = $1`, ticket).Scan(&d); err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
+	if !isDone() {
+		t.Fatal("a ticket in Done isn't done")
+	}
+	for _, name := range []string{"QA", "Review"} {
+		c, err := (Store{DB: db}).Create(ctx, "org_done469", b.ID, name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var last string
+		db.QueryRow(ctx, `SELECT id FROM columns WHERE board_id = $1 ORDER BY position DESC LIMIT 1`, b.ID).Scan(&last)
+		if last != done || c.ID == done {
+			t.Fatalf("after adding %s, the last column is %s, not Done %s", name, last, done)
+		}
+		if !isDone() {
+			t.Fatalf("adding %s un-finished the ticket in Done", name)
+		}
+	}
+	// the columns' positions are still a clean run, in the order they were added before Done
+	rows, _ := db.Query(ctx, `SELECT name, position FROM columns WHERE board_id = $1 ORDER BY position`, b.ID)
+	var got []string
+	for rows.Next() {
+		var n string
+		var p int
+		rows.Scan(&n, &p)
+		got = append(got, n)
+	}
+	if n := len(got); n < 3 || got[n-3] != "QA" || got[n-2] != "Review" {
+		t.Fatalf("columns: %v", got)
+	}
 }

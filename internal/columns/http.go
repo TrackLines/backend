@@ -31,6 +31,8 @@ func writeErr(w http.ResponseWriter, err error) {
 		http.Error(w, "not found", http.StatusNotFound)
 	case errors.Is(err, ErrNotEmpty):
 		http.Error(w, "move or delete tickets before deleting this column", http.StatusConflict)
+	case errors.Is(err, ErrDoneMoved):
+		http.Error(w, err.Error(), http.StatusBadRequest)
 	case errors.Is(err, ErrInvalidOrder):
 		http.Error(w, "invalid column order", http.StatusBadRequest)
 	default:

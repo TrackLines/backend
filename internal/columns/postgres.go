@@ -13,6 +13,8 @@ var (
 	ErrNotFound     = errors.New("column not found")
 	ErrNotEmpty     = errors.New("column contains tickets")
 	ErrInvalidOrder = errors.New("column order must contain every board column exactly once")
+	// ErrDoneMoved: the last column is Done (what makes a ticket done), so it stays last (TL-469)
+	ErrDoneMoved = errors.New("the last column is Done and stays last: move the other columns around it")
 )
 
 type Column struct {
@@ -39,9 +41,18 @@ func (s Store) Create(ctx context.Context, owner, boardID, name string) (*Column
 		if err := tx.QueryRow(ctx, `SELECT id FROM boards WHERE id = $1 AND owner_clerk_id = $2 FOR UPDATE`, boardID, owner).Scan(&column.BoardID); err != nil {
 			return notFound(err)
 		}
+		// a new column goes before the last one, Done: a ticket is done when it's in the board's
+		// last column (boards.DoneSQL), so a column after Done would un-finish everything in it (TL-469)
 		var position int
-		if err := tx.QueryRow(ctx, `SELECT COALESCE(max(position) + 1, 0) FROM columns WHERE board_id = $1`, boardID).Scan(&position); err != nil {
+		var last *int
+		if err := tx.QueryRow(ctx, `SELECT max(position) FROM columns WHERE board_id = $1`, boardID).Scan(&last); err != nil {
 			return err
+		}
+		if last != nil {
+			position = *last
+			if _, err := tx.Exec(ctx, `UPDATE columns SET position = position + 1 WHERE board_id = $1 AND position = $2`, boardID, *last); err != nil {
+				return err
+			}
 		}
 		return tx.QueryRow(ctx, `INSERT INTO columns (board_id, name, position) VALUES ($1, $2, $3)
 			RETURNING id, name, position`, boardID, name, position).Scan(&column.ID, &column.Name, &column.Position)
@@ -131,6 +142,9 @@ func (s Store) Reorder(ctx context.Context, owner, boardID string, ids []string)
 		}
 		if len(allowed) != 0 {
 			return ErrInvalidOrder
+		}
+		if len(ids) > 0 && ids[len(ids)-1] != existing[len(existing)-1] {
+			return ErrDoneMoved
 		}
 		if _, err := tx.Exec(ctx, `UPDATE columns SET position = position + 1000000 WHERE board_id = $1`, boardID); err != nil {
 			return err

@@ -736,10 +736,44 @@ paths:
   /boards/{boardId}/columns:
     parameters:
       - $ref: '#/components/parameters/BoardId'
+    put:
+      tags: [Columns]
+      operationId: setColumnLayout
+      summary: Set a board's whole column layout at once
+      description: >-
+        The edit board page's save. Columns in order, each an existing column (id) or a new one (no id), with its
+        name and WIP limit. The first (To do) and last (Done) stay first and last, and take no WIP limit. Columns
+        left out are deleted, refused (409) while they hold tickets in the current sprint. All or nothing. Board
+        managers only.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [columns]
+              properties:
+                columns:
+                  type: array
+                  minItems: 2
+                  items:
+                    type: object
+                    required: [name]
+                    properties:
+                      id: { type: string, format: uuid, description: Left out for a new column. }
+                      name: { type: string, maxLength: 80 }
+                      wip_limit: { type: integer, minimum: 0, maximum: 999, nullable: true, description: 0 or null for none. }
+      responses:
+        '204': { description: Saved. }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { description: Only organization admins and the board's team leaders can change its columns. }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: A column left out still has tickets in the current sprint. }
     post:
       tags: [Columns]
       operationId: createColumn
       summary: Add a column to a board
+      description: The new column goes just before the last column (Done), which stays last. A ticket is done when it's in the board's last column.
       requestBody:
         required: true
         content:
@@ -761,6 +795,7 @@ paths:
       tags: [Columns]
       operationId: reorderColumns
       summary: Replace a board's column order
+      description: Every column exactly once, with the last column (Done) still last; moving it is a 400, since a ticket is done when it's in the last column.
       parameters:
         - $ref: '#/components/parameters/BoardId'
       requestBody:
