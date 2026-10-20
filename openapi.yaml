@@ -17,9 +17,11 @@ info:
     or BugFixes (`bf_…`) agent API key as a Bearer token. Projects, boards and
     roadmaps belong to a Clerk organization: a session sees its active
     organization's data, and a request without an active organization gets
-    403. API keys act inside the organization they were created in, as their
-    creator, and attribute writes to the key's name; a personal key is its creator, so
-    its writes are theirs. A read-only key gets 403 for anything but GET. API-key management
+    403. API keys act inside the organization they were created in. Personal and
+    agent keys belong to the person who made them: a personal key is them, so its
+    writes are theirs; an agent key is their AI agent, so its writes are the agent's
+    (shown with its owner's name to everyone else). Service keys belong to the
+    organization, are made by its admins, and attribute writes to the key's name. A read-only key gets 403 for anything but GET. API-key management
     requires a Clerk session. Stripe webhooks use Stripe-Signature.
 
     Timestamps are stored and returned in UTC. Day-based rules (a sprint's last
@@ -3576,7 +3578,7 @@ components:
       type: http
       scheme: bearer
       bearerFormat: JWT or TrackLin.es API key
-      description: Clerk session token, TrackLin.es key (`tl_ai_…`, `tl_s_…`, or an older `tl_…`), or BugFixes `bf_` key, depending on the route.
+      description: Clerk session token, TrackLin.es key (`tl_p_…`, `tl_ai_…`, `tl_s_…`, or an older `tl_…`), or BugFixes `bf_` key, depending on the route.
     bugfixesBearer:
       type: http
       scheme: bearer
