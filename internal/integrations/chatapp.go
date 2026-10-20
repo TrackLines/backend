@@ -24,9 +24,11 @@ import (
 	"github.com/go-jose/go-jose/v4/jwt"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/tracklines/backend/internal/auth"
 	"github.com/tracklines/backend/internal/httpx"
 	"github.com/tracklines/backend/internal/notifications"
+	"github.com/tracklines/backend/retention"
 )
 
 // Google Chat app (TL-289): personal notifications ("Ava assigned you TL-12") sent by the Tracklines
@@ -341,10 +343,9 @@ func (c *ChatApp) newLinkCode(ctx context.Context, google chatUser, space string
 	return code, err
 }
 
-// PurgeLinkCodes deletes link codes that expired unused (the nightly purge job).
+// PurgeLinkCodes deletes link codes that expired unused (retention.PurgeLinkCodes, the nightly purge).
 func PurgeLinkCodes(ctx context.Context, db *pgxpool.Pool, now time.Time) (int64, error) {
-	tag, err := db.Exec(ctx, `DELETE FROM chat_link_codes WHERE expires_at < $1`, now)
-	return tag.RowsAffected(), err
+	return retention.PurgeLinkCodes(ctx, db, now)
 }
 
 func hashCode(code string) string {

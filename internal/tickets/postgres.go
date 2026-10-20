@@ -10,7 +10,9 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/tracklines/backend/internal/boards"
+	"github.com/tracklines/backend/retention"
 )
 
 var (
@@ -958,11 +960,9 @@ func deref(s *string) string {
 }
 
 // Retention is how long a deleted ticket stays in the bin before it's purged for good (TL-256).
-const Retention = 30 * 24 * time.Hour
+const Retention = retention.Retention
 
-// PurgeBin permanently deletes tickets binned more than Retention before now. Their comments,
-// labels, links and attachments go with them (cascade); their files were queued when binned.
+// PurgeBin permanently deletes tickets binned more than Retention before now (retention.PurgeBin).
 func PurgeBin(ctx context.Context, db *pgxpool.Pool, now time.Time) (int64, error) {
-	tag, err := db.Exec(ctx, `DELETE FROM tickets_all WHERE deleted_at < $1`, now.Add(-Retention))
-	return tag.RowsAffected(), err
+	return retention.PurgeBin(ctx, db, now)
 }

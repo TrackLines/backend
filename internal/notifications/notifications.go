@@ -11,6 +11,8 @@ import (
 
 	"github.com/bugfixes/go-bugfixes/logs"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/tracklines/backend/inbox"
 )
 
 // Event is one thing that happened. Text reads after the actor's name, e.g. "assigned you TL-12: Fix login".
@@ -53,21 +55,7 @@ type Store struct{ DB *pgxpool.Pool }
 
 // Notify writes one row per recipient: people only (user_… ids), once each, never the actor.
 func (s Store) Notify(ctx context.Context, org string, to []string, e Event) error {
-	seen := map[string]bool{e.Actor: true}
-	var users []string
-	for _, u := range to {
-		if strings.HasPrefix(u, "user_") && !seen[u] {
-			seen[u] = true
-			users = append(users, u)
-		}
-	}
-	if len(users) == 0 {
-		return nil
-	}
-	_, err := s.DB.Exec(ctx, `INSERT INTO notifications (org_id, user_id, kind, text, actor, ticket_id, board_id)
-		SELECT $1, u, $3, $4, $5, NULLIF($6, '')::uuid, NULLIF($7, '')::uuid FROM unnest($2::text[]) AS u`,
-		org, users, e.Kind, e.Text, e.Actor, e.TicketID, e.BoardID)
-	return err
+	return inbox.Add(ctx, s.DB, org, to, inbox.Notice{Kind: e.Kind, Text: e.Text, Actor: e.Actor, TicketID: e.TicketID, BoardID: e.BoardID})
 }
 
 // BoardManagers are who approve and review on a board: the org's admins and the board team's leaders.

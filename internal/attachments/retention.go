@@ -2,86 +2,38 @@ package attachments
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/tracklines/backend/inbox"
 	"github.com/tracklines/backend/internal/notifications"
+	"github.com/tracklines/backend/retention"
 )
 
-// Old attachments (TL-259): a year after a file was added, or last kept, it's warned about; the org's
-// admins and its uploader are told, and either can keep it (another year). Unkept, it's deleted at 13
-// months, and never sooner than NoticeDays after the warning (a missed run mustn't cut the notice
-// short: 28 days). Deleting it puts its file in that day's deleted batch, gone from storage 30 days later.
+// Old attachments (TL-259): warned about a year after they were added or last kept, deleted at 13
+// months unless someone keeps them. The rules live in package retention, which the automation service
+// runs nightly (TL-431); these are the backend's names for them.
 const (
-	WarnAfter = "1 year"
-	DeleteAt  = "13 months"
+	WarnAfter   = retention.WarnAfter
+	DeleteAt    = retention.DeleteAt
+	Actor       = retention.Actor
+	deleteOnSQL = retention.DeleteOnSQL
 )
 
-// clockSQL is when a file's year started: when it was added, or last kept.
-const clockSQL = `GREATEST(a.created_at, COALESCE(a.kept_at, a.created_at))`
-
-// deleteOnSQL is the day a warned file goes.
-const deleteOnSQL = `GREATEST(` + clockSQL + ` + interval '` + DeleteAt + `', a.warned_at + interval '28 days')`
-
-// Actor is who retention notifications come from: "Tracklines will delete …".
-const Actor = "TrackLin.es"
-
-// WarnOld marks files whose year is up and tells the org's admins and each file's uploader, one
-// notification per ticket. Returns how many files were newly warned about.
+// WarnOld marks files whose year is up and tells the org's admins and each file's uploader through n,
+// one notification per ticket. Returns how many files were newly warned about.
 func WarnOld(ctx context.Context, db *pgxpool.Pool, n notifications.Notifier, now time.Time) (int, error) {
-	rows, err := db.Query(ctx, `WITH due AS (
-			UPDATE ticket_attachments a SET warned_at = $1
-			WHERE a.warned_at IS NULL AND `+clockSQL+` <= $1::timestamptz - interval '`+WarnAfter+`'
-			RETURNING a.id, a.ticket_id, a.created_by, `+deleteOnSQL+` AS delete_on
-		)
-		SELECT p.owner_clerk_id, t.id, p.key_prefix || '-' || t.number, t.title, count(*), array_agg(DISTINCT due.created_by),
-			ARRAY(SELECT user_clerk_id FROM org_admins WHERE org_id = p.owner_clerk_id),
-			to_char(min(due.delete_on) AT TIME ZONE 'UTC', 'FMDD Mon YYYY')
-		FROM due JOIN tickets t ON t.id = due.ticket_id JOIN projects p ON p.id = t.project_id
-		GROUP BY p.owner_clerk_id, t.id, p.key_prefix, t.number, t.title`, now)
-	if err != nil {
-		return 0, err
-	}
-	type warning struct {
-		org, ticket, key, title, on string
-		files                       int
-		uploaders, admins           []string
-	}
-	list, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (warning, error) {
-		var w warning
-		return w, r.Scan(&w.org, &w.ticket, &w.key, &w.title, &w.files, &w.uploaders, &w.admins, &w.on)
-	})
-	if err != nil {
-		return 0, err
-	}
-	total := 0
-	for _, w := range list {
-		total += w.files
-		what, it := "a year-old file", "it"
-		if w.files > 1 {
-			what, it = fmt.Sprintf("%d year-old files", w.files), "them"
-		}
-		notifications.Send(ctx, n, w.org, append(w.admins, w.uploaders...), notifications.Event{
-			Kind: "retention", Actor: Actor, TicketID: w.ticket,
-			Text: fmt.Sprintf("will delete %s from %s: %s on %s unless someone keeps %s", what, w.key, w.title, w.on, it),
-		})
-	}
-	return total, nil
+	return retention.WarnOld(ctx, db, func(ctx context.Context, org string, to []string, w inbox.Notice) error {
+		notifications.Send(ctx, n, org, to, notifications.Event{Kind: w.Kind, Actor: w.Actor, TicketID: w.TicketID, Text: w.Text})
+		return nil // Send logs a failure itself
+	}, now)
 }
 
-// DeleteExpired deletes warned files nobody kept, once they're 13 months old and their notice is up.
-// Each one is logged in expired_attachments for the org's file clean-up page (TL-260).
+// DeleteExpired deletes warned files nobody kept (retention.DeleteExpired).
 func DeleteExpired(ctx context.Context, db *pgxpool.Pool, now time.Time) (int64, error) {
-	tag, err := db.Exec(ctx, `WITH gone AS (
-			DELETE FROM ticket_attachments a WHERE a.warned_at IS NOT NULL AND `+deleteOnSQL+` <= $1
-			RETURNING a.ticket_id, a.name, a.size_bytes, a.created_by
-		)
-		INSERT INTO expired_attachments (org_id, ticket_id, ticket_key, ticket_title, name, size_bytes, created_by, deleted_at)
-		SELECT p.owner_clerk_id, t.id, p.key_prefix || '-' || t.number, t.title, gone.name, gone.size_bytes, gone.created_by, $1
-		FROM gone JOIN tickets_all t ON t.id = gone.ticket_id JOIN projects p ON p.id = t.project_id`, now)
-	return tag.RowsAffected(), err
+	return retention.DeleteExpired(ctx, db, now)
 }
 
 // DueFile is a warned file: deleted on DeleteOn unless someone keeps it.
