@@ -1,0 +1,16 @@
+name: Release Drafter
+
+# Keeps the draft release up to date as pull requests merge into main (config: .github/release-drafter.yml).
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: read
+
+jobs:
+  update_release_draft:
+    runs-on: ubuntu-slim
+    steps:
+      - uses: release-drafter/release-drafter@v7

@@ -1,0 +1,38 @@
+# Release Drafter: a draft release, kept up to date as pull requests merge into main. Publishing it
+# creates the tag. Changes are grouped by label; the autolabeler (workflows/autolabeler.yml) labels pull
+# requests from their title or branch, and Dependabot labels its own "dependencies".
+name-template: 'v$RESOLVED_VERSION'
+tag-template: 'v$RESOLVED_VERSION'
+categories:
+  - title: 'Features'
+    labels: [feature]
+  - title: 'Fixes'
+    labels: [fix]
+  - title: 'Dependencies'
+    labels: [dependencies]
+  - title: 'Maintenance'
+    labels: [chore]
+change-template: '- $TITLE (#$NUMBER) @$AUTHOR'
+change-title-escapes: '\<*_&'
+version-resolver:
+  major:
+    labels: [breaking]
+  minor:
+    labels: [feature]
+  default: patch
+template: |
+  ## What's changed
+
+  $CHANGES
+autolabeler:
+  - labels: [breaking]
+    title: ['/^[a-z]+(\(.+\))?!:/i', '/breaking/i']
+  - labels: [feature]
+    title: ['/^feat/i']
+    branch: ['/^feat(ure)?[\/-]/i']
+  - labels: [fix]
+    title: ['/^fix/i', '/^bug/i']
+    branch: ['/^(fix|bug|hotfix)[\/-]/i']
+  - labels: [chore]
+    title: ['/^(chore|ci|build|docs|refactor|test|style)/i']
+    branch: ['/^(chore|ci|docs|refactor)[\/-]/i']
