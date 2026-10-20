@@ -3,6 +3,7 @@ package sprints
 import (
 	"context"
 	"errors"
+	"math"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/tracklines/backend/internal/boards"
@@ -14,6 +15,9 @@ type Velocity struct {
 	Unit    string           `json:"unit"`
 	Sprints []SprintVelocity `json:"sprints"` // closed, oldest first
 	Current *Burn            `json:"current"` // the open sprint, if any
+	// Cap is a sprint's capacity, velocity (last 3 closed sprints) + 10%, the limit refinement plans to;
+	// null without history. Moving a ticket into the open sprint past it asks first (TL-464).
+	Cap *float64 `json:"cap"`
 }
 
 type SprintVelocity struct {
@@ -77,6 +81,15 @@ func (s Store) Velocity(ctx context.Context, owner, boardID string) (*Velocity, 
 		return nil
 	}); err != nil {
 		return nil, err
+	}
+
+	avg, err := velocity(ctx, s.DB, boardID, v.Unit)
+	if err != nil {
+		return nil, err
+	}
+	if avg != nil {
+		limit := math.Round(*avg*1.1*100) / 100
+		v.Cap = &limit
 	}
 
 	var open string

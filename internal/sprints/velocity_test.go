@@ -58,7 +58,7 @@ func TestVelocity(t *testing.T) {
 		return at != nil
 	}
 
-	if v, err := s.Velocity(ctx, "v1", b.ID); err != nil || v.Unit != "points" || len(v.Sprints) != 0 || v.Current != nil {
+	if v, err := s.Velocity(ctx, "v1", b.ID); err != nil || v.Unit != "points" || len(v.Sprints) != 0 || v.Current != nil || v.Cap != nil { // no history: no limit
 		t.Fatalf("no sprints yet: %+v %v", v, err)
 	}
 	five, three := add("5"), add("3")
@@ -77,6 +77,9 @@ func TestVelocity(t *testing.T) {
 	// planned: what sprint 1 held at close (5 + 3), beside what it finished, for the past sprints list
 	if p := v.Sprints[0].Planned; p == nil || *p != 8 {
 		t.Fatalf("planned: %v", p)
+	}
+	if v.Cap == nil || *v.Cap != 5.5 { // one closed sprint of 5 points, + 10% (TL-464)
+		t.Fatalf("cap: %v", v.Cap)
 	}
 	if c := v.Current; c == nil || c.Number != 2 || c.Total != 3 || c.Unestimated != 1 || len(c.Done) != 0 {
 		t.Fatalf("burn: %+v", c)

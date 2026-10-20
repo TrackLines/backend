@@ -3802,6 +3802,7 @@ components:
       required: [unit, sprints, current]
       properties:
         unit: { type: string, enum: [points, tickets] }
+        cap: { type: number, nullable: true, description: "A sprint's capacity: velocity (last 3 closed sprints) + 10%. Null without closed sprints." }
         sprints:
           type: array
           description: Closed sprints, oldest first.
