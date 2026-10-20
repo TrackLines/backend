@@ -366,6 +366,7 @@ func (s *Service) Handler() http.Handler {
 	sp := sprints.NewSystem(s.DB, o.AdminModel()).WithLive(s.Valkey).WithNotifier(notify)
 	lv := live.New(s.Valkey, boards.Store{DB: s.DB})
 	lv.IsAdmin = o.AdminModel().IsAdmin
+	mux.Handle("GET /api/live/sessions", signedIn(lv.RunningHandler)) // every running standup and refinement in the org (TL-466)
 	mux.Handle("POST /api/boards/{id}/live/standup", signedIn(lv.Start))
 	mux.Handle("GET /api/boards/{id}/live/standup", signedIn(lv.Get))
 	mux.Handle("POST /api/boards/{id}/live/standup/action", signedIn(lv.Act))

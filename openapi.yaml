@@ -60,6 +60,8 @@ tags:
     description: UploadThing attachment metadata.
   - name: Sprints
     description: Board sprints.
+  - name: Live
+    description: Hosted standups and refinements that people join and follow.
   - name: Roadmaps
     description: Project roadmaps and linked ticket progress.
   - name: API keys
@@ -3244,6 +3246,31 @@ paths:
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+
+  /live/sessions:
+    get:
+      tags: [Live]
+      operationId: listRunningSessions
+      summary: The organization's running standups and refinements
+      description: Every hosted standup (on a board) and refinement (on a project) running in the caller's organization, in one request. Archived boards are left out. Empty when live sessions are off.
+      responses:
+        '200':
+          description: Running sessions, by project.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    kind: { type: string, enum: [standup, refinement] }
+                    id: { type: string, format: uuid, description: The board's (standup) or project's (refinement). }
+                    name: { type: string }
+                    project_id: { type: string, format: uuid }
+                    project_name: { type: string }
+                    host: { type: string }
+                    people: { type: array, items: { type: string } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
 
   /keys:
     get:
