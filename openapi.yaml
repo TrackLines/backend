@@ -3564,13 +3564,21 @@ paths:
         - url: http://localhost:8080
           description: Use the deployed backend origin directly in production; the frontend API proxy does not expose /health.
       security: []
+      description: |
+        Healthy only when what the API depends on is (go-healthcheck): PostgreSQL answering and usable
+        through the API's own connection pool, and Valkey answering with the API connected to it.
       responses:
         '200':
-          description: API, PostgreSQL, and Valkey are healthy.
+          description: The API and every dependency are healthy.
           content:
-            text/plain:
-              schema: { type: string, example: ok }
-        '503': { description: Database or Valkey is unavailable. }
+            application/health+json:
+              schema: { $ref: '#/components/schemas/Health' }
+              example: { name: backend, url: '', status: pass, dependencies: [{ name: postgres, url: '', status: pass }, { name: valkey, url: '', status: pass }] }
+        '503':
+          description: A dependency failed; its status is fail.
+          content:
+            application/health+json:
+              schema: { $ref: '#/components/schemas/Health' }
 
 components:
   securitySchemes:
@@ -3612,6 +3620,16 @@ components:
         type: string
         format: uuid
   schemas:
+    Health:
+      type: object
+      description: go-healthcheck's status. Addresses are left out of the public response.
+      properties:
+        name: { type: string }
+        url: { type: string }
+        status: { type: string, enum: [pass, fail] }
+        dependencies:
+          type: array
+          items: { $ref: '#/components/schemas/Health' }
     EpicProgress:
       type: object
       description: "An epic's progress and size, from its direct sub-tickets (duplicates left out)."

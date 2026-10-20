@@ -130,6 +130,8 @@ github.com/joho/godotenv v1.5.1 h1:7eLL/+HRGLY0ldzfGMeQkb7vMd0as4CfYvUVzLqw0N0=
 github.com/joho/godotenv v1.5.1/go.mod h1:f4LDr5Voq0i2e/R5DDNOoa2zzDfwtkZa6DnEwAbqwq4=
 github.com/keloran/go-config v1.9.0 h1:EQAC4hDz/kS3yinezklcxyFBGeMEjzVZgJD9qeUPfoA=
 github.com/keloran/go-config v1.9.0/go.mod h1:567ghZra/pYCPMSaNLIyPIFqMjNapBahfKoeEWthHjY=
+github.com/keloran/go-healthcheck v1.3.0 h1:w6N05gi2qqK7ZDKsX/t1mj148mohU+gLjuOfFnHaphY=
+github.com/keloran/go-healthcheck v1.3.0/go.mod h1:3I84hg5fp0zfvINXxW7LcGhgLmqX3FJg7i+UCoaBW+Y=
 github.com/keloran/vault-helper v1.1.0 h1:77TMcDLOqzDsGno1dMTdDzrX2ObWaoAIPlsNha1Fop0=
 github.com/keloran/vault-helper v1.1.0/go.mod h1:rfQHiF+iS2CdANtgtfAe7fsXaIqKEHp9mHT1jfp5IXE=
 github.com/klauspost/compress v1.20.3 h1:zWNoFqq/lSuYQRim3dUXlXeA0IqwuZGicdG5ZTfY5j4=
@@ -191,6 +193,8 @@ github.com/pkg/errors v0.9.1/go.mod h1:bwawxfHBFNV+L2hUp1rHADufV3IMtnDRdf1r5NINE
 github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
 github.com/power-devops/perfstat v0.0.0-20260916203055-22a1a467d9f0 h1:XA01Vk/wv9YikCi1V51yRzIHPMT5of9+cMpZoZvDn/M=
 github.com/power-devops/perfstat v0.0.0-20260916203055-22a1a467d9f0/go.mod h1:OmDBASR4679mdNQnz2pUhc2G8CO2JrUAVFDRBDP/hJE=
+github.com/prometheus-community/pro-bing v0.9.1 h1:kpuAr6AU2oRtzGihJSUcetHtjc7ku7h6PxeuW9RVrQw=
+github.com/prometheus-community/pro-bing v0.9.1/go.mod h1:z79wYTxAOf6FpTng0QdIhZ3j/Nd5l3+gnFSCIT+SiSQ=
 github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec h1:W09IVJc94icq4NjY3clb7Lk8O1qJ8BdBEF8z0ibU0rE=
 github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec/go.mod h1:qqbHyh8v60DhA7CoWK5oRCqLrMHRGoxYCSS9EjAz6Eo=
 github.com/ryanuber/go-glob v1.0.0 h1:iQh3xXAumdQ+4Ufa5b25cRpC5TYKlno6hsv6Cb3pkBk=

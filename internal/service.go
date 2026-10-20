@@ -5,10 +5,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"os/signal"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -24,6 +26,7 @@ import (
 	goFlags "github.com/flags-gg/go-flags"
 	"github.com/jackc/pgx/v5/pgxpool"
 	ConfigBuilder "github.com/keloran/go-config"
+	"github.com/keloran/go-healthcheck"
 	"github.com/valkey-io/valkey-go"
 
 	"github.com/tracklines/backend"
@@ -493,13 +496,64 @@ func (s *Service) Handler() http.Handler {
 	return httpx.SecurityHeaders(outer)
 }
 
+// health is healthy only when what the API depends on is: Postgres and Valkey, checked with
+// go-healthcheck (they answer on their wire protocol), plus a query through our own pool (go-healthcheck
+// doesn't log in, so a wrong password would still pass it) and a connected Valkey client (it's only
+// connected at startup, so a Valkey that came back later isn't in use). 503 when anything fails, so
+// Railway holds a deploy back; go-healthcheck's own handler always answers 200.
 func (s *Service) health(w http.ResponseWriter, r *http.Request) {
-	if err := s.DB.Ping(r.Context()); err != nil {
-		http.Error(w, "db down", http.StatusServiceUnavailable)
-		return
+	h, err := s.checkHealth(r.Context())
+	if err != nil {
+		logs.Warnf("health: %v", err)
 	}
-	// Valkey only caches; the API works without it, so it doesn't fail the health check
-	_, _ = w.Write([]byte("ok"))
+	for i := range h.Dependencies {
+		h.Dependencies[i].URL = "" // ponytail: public route, keep internal hostnames out of it (they're in the log)
+	}
+	h.URL = ""
+	w.Header().Set("Content-Type", "application/health+json")
+	if h.Status != healthcheck.HealthPass {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}
+	_ = json.NewEncoder(w).Encode(h)
+}
+
+func (s *Service) checkHealth(ctx context.Context) (healthcheck.Health, error) {
+	deps := healthcheck.Dependencies{Dependencies: []healthcheck.Dependency{{Name: "postgres", Type: "postgres", URL: s.postgresAddr()}}}
+	if pc := config.Get(s.Config); pc.ValkeyURL != "" {
+		deps.Dependencies = append(deps.Dependencies, healthcheck.Dependency{Name: "valkey", Type: "valkey", URL: pc.ValkeyURL})
+	}
+	list, _ := json.Marshal(deps)
+	h, err := healthcheck.HealthCheck{Name: "backend", Dependencies: string(list)}.Check()
+	if err != nil { // a dependency that can't be reached at all: Check stops there
+		h.Status = healthcheck.HealthFail
+		return h, err
+	}
+	fail := func(name string, why error) {
+		h.Status = healthcheck.HealthFail
+		for i := range h.Dependencies {
+			if h.Dependencies[i].Name == name {
+				h.Dependencies[i].Status = healthcheck.HealthFail
+			}
+		}
+		err = errors.Join(err, fmt.Errorf("%s: %w", name, why))
+	}
+	if perr := s.DB.Ping(ctx); perr != nil {
+		fail("postgres", perr)
+	}
+	if s.Valkey == nil {
+		fail("valkey", errors.New("not connected (unreachable at startup): restart the API"))
+	}
+	return h, err
+}
+
+// postgresAddr is the database's host:port, for go-healthcheck (never the DSN, with its password).
+func (s *Service) postgresAddr() string {
+	if s.Config == nil || s.Config.Database.Details.Host == "" {
+		c := s.DB.Config().ConnConfig
+		return net.JoinHostPort(c.Host, strconv.Itoa(int(c.Port)))
+	}
+	d := s.Config.Database.Details
+	return net.JoinHostPort(d.Host, strconv.Itoa(d.Port))
 }
 
 // serve runs until SIGINT/SIGTERM, then drains in-flight requests before returning: returning is
