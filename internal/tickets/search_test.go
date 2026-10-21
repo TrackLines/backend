@@ -173,4 +173,26 @@ func TestSearch(t *testing.T) {
 			t.Errorf("%s: %d", bad, rec.Code)
 		}
 	}
+
+	// creator: tickets raised by a given actor ("created by me", TL-490). Added last so it doesn't
+	// disturb the counts above; everything else in this test was created by the owner "se1".
+	mine, err := s.CreateBacklogAs(ctx, "se1", "claude", pid, "task", "Idea I raised", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := search(SearchQuery{Creator: "claude"}); len(got) != 1 || got[0].ID != mine.ID {
+		t.Fatalf("creator=claude: %v", ids(got))
+	}
+	se1Owned := search(SearchQuery{Creator: "se1"})
+	if len(se1Owned) == 0 {
+		t.Fatal("creator=se1 returned nothing")
+	}
+	for _, r := range se1Owned {
+		if r.ID == mine.ID {
+			t.Fatal("creator=se1 returned a claude ticket")
+		}
+	}
+	if rec := call("creator=me"); rec.Code != 200 || !strings.Contains(rec.Body.String(), mine.ID) || strings.Contains(rec.Body.String(), titleHit.ID) {
+		t.Fatalf("creator=me: %d %s", rec.Code, rec.Body)
+	}
 }
