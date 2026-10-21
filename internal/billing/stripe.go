@@ -147,10 +147,25 @@ func (s Stripe) sessionURL(ctx context.Context, path string, form url.Values) (s
 	if err := s.call(ctx, http.MethodPost, path, form, "", &session); err != nil {
 		return "", err
 	}
-	if !strings.HasPrefix(session.URL, "https://") {
-		return "", errors.New("stripe returned no session url")
+	// Pin the redirect to Stripe's own hosted pages. We send the customer's browser straight to this
+	// URL, so a tampered or unexpected response must not be able to point it at a lookalike payment
+	// page (PCI DSS: the redirect is only ever to the payment provider).
+	if !stripeHostedURL(session.URL) {
+		return "", errors.New("stripe returned a non-Stripe session url")
 	}
 	return session.URL, nil
+}
+
+// stripeHostedURL is true only for an https URL on Stripe's own domain (checkout.stripe.com,
+// billing.stripe.com, or any other *.stripe.com host). A custom Checkout domain, if one is ever set
+// up, would be added here.
+func stripeHostedURL(raw string) bool {
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme != "https" {
+		return false
+	}
+	host := u.Hostname()
+	return host == "stripe.com" || strings.HasSuffix(host, ".stripe.com")
 }
 
 // Subscription is the part of a Stripe subscription billing stores.

@@ -72,3 +72,52 @@ func TestStripeErrorKeepsTheReason(t *testing.T) {
 		t.Fatalf("error: %v", err)
 	}
 }
+
+func TestStripeHostedURL(t *testing.T) {
+	ok := []string{
+		"https://checkout.stripe.com/c/pay/cs_test_123",
+		"https://billing.stripe.com/p/session/abc",
+		"https://stripe.com/anything",
+	}
+	for _, u := range ok {
+		if !stripeHostedURL(u) {
+			t.Errorf("should accept Stripe URL: %q", u)
+		}
+	}
+	bad := []string{
+		"https://checkout.stripe.com.evil.com/pay", // lookalike suffix
+		"https://evil-stripe.com/pay",              // not a stripe.com host
+		"https://evil.com/checkout.stripe.com",     // stripe in the path, not the host
+		"https://checkout.stripe.com@evil.com/pay", // userinfo trick: host is evil.com
+		"http://checkout.stripe.com/pay",           // not https
+		"javascript:alert(1)",                      // not even a web URL
+		"",
+	}
+	for _, u := range bad {
+		if stripeHostedURL(u) {
+			t.Errorf("should reject non-Stripe URL: %q", u)
+		}
+	}
+}
+
+// sessionURL (so CheckoutURL and PortalURL) must refuse a session URL that isn't on Stripe's domain,
+// since the browser is redirected straight to it (PCI DSS: pinned redirect).
+func TestSessionURLRejectsNonStripeHost(t *testing.T) {
+	serve := func(body string) *httptest.Server {
+		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write([]byte(body))
+		}))
+	}
+	good := serve(`{"url":"https://checkout.stripe.com/c/pay/cs_1"}`)
+	defer good.Close()
+	url, err := Stripe{SecretKey: "sk", BaseURL: good.URL}.CheckoutURL(context.Background(), "org_1", "cus_1", "price_1", "https://x/ok", "https://x/no")
+	if err != nil || url != "https://checkout.stripe.com/c/pay/cs_1" {
+		t.Fatalf("Stripe-hosted URL should pass: %q, %v", url, err)
+	}
+
+	evil := serve(`{"url":"https://checkout.stripe.com.evil.example/pay"}`)
+	defer evil.Close()
+	if _, err := (Stripe{SecretKey: "sk", BaseURL: evil.URL}).PortalURL(context.Background(), "cus_1", "https://x/back"); err == nil {
+		t.Fatal("a non-Stripe session URL must be refused")
+	}
+}
