@@ -23,7 +23,6 @@ import (
 	bm "github.com/bugfixes/go-bugfixes/middleware"
 	goFlags "github.com/flags-gg/go-flags"
 	"github.com/jackc/pgx/v5/pgxpool"
-	ConfigBuilder "github.com/keloran/go-config"
 	"github.com/valkey-io/valkey-go"
 
 	"github.com/tracklines/backend"
@@ -61,7 +60,7 @@ import (
 // Service owns the HTTP lifecycle and route composition.
 // cmd/server is limited to configuration, migrations and dependency construction.
 type Service struct {
-	Config  *ConfigBuilder.Config
+	Config  *config.Config
 	DB      *pgxpool.Pool
 	Valkey  valkey.Client   // optional (nil when unreachable at startup): caching only
 	Flags   *goFlags.Client // s.Flags.Is("name").Enabled()
@@ -74,7 +73,7 @@ type Service struct {
 	gcal         *integrations.GoogleCalendar // Google Calendar (TL-404); nil without a service account
 }
 
-func New(cfg *ConfigBuilder.Config, db *pgxpool.Pool, vk valkey.Client, fl *goFlags.Client, bill billing.Service, port string) *Service {
+func New(cfg *config.Config, db *pgxpool.Pool, vk valkey.Client, fl *goFlags.Client, bill billing.Service, port string) *Service {
 	return &Service{Config: cfg, DB: db, Valkey: vk, Flags: fl, Billing: bill, Port: port}
 }
 
