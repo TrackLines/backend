@@ -166,6 +166,9 @@ func (s *Service) Start() error {
 // Handler is the whole API: routes plus the auth, logging and CORS middleware.
 func (s *Service) Handler() http.Handler {
 	mux := http.NewServeMux()
+	// how many forwarding hops to trust for the client address, so rate limits can't be dodged with a
+	// made-up X-Forwarded-For (TL finding: direct-origin spoofing). Set once, before serving.
+	httpx.SetTrustedProxyHops(config.Get(s.Config).TrustedProxyHops)
 	parties := config.Get(s.Config).AuthorizedParties()
 	optional := auth.OptionalWithAuthorizedParties(parties...)
 	required := auth.RequiredWith(optional)

@@ -64,6 +64,10 @@ type Project struct {
 	SecretKey              string   `env:"TRACKLINES_SECRET_KEY"`                // 32 bytes base64: seals integration tokens; integrations stay off without it
 	Git                    Git
 	RateLimit              int    `env:"API_KEY_RATE_LIMIT" envDefault:"300"`                        // requests per minute per API key; 0 turns it off
+	// how many right-most X-Forwarded-For hops our infrastructure writes, so we don't trust a
+	// caller-supplied address (httpx.ClientIP). 1 = a single trusted edge (default). 0 = the origin is
+	// reachable directly (local Compose), so ignore X-Forwarded-For and use the connection address.
+	TrustedProxyHops int `env:"TRUSTED_PROXY_HOPS" envDefault:"1"`
 	ChewedFeedURL          string `env:"CHEWEDFEED_API_URL" envDefault:"https://api.chewedfeed.com"` // ChewedFeed HQ (customer sync, enquiries)
 	ChewedFeedKey          string `env:"CHEWEDFEED_ENQUIRY_KEY"`                                     // tracklines' enquiry key in ChewedFeed; sync and enquiries are off without it
 	// short links for "Copy link" (TL-277), through 1tn
