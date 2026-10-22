@@ -8,4 +8,4 @@ coverage.*
 .vscode/
 *.swp
 .DS_Store
-server
+/server
