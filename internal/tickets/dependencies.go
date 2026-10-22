@@ -12,6 +12,7 @@ var (
 	ErrBlocked   = errors.New("ticket is blocked by tickets that aren't done yet")
 	ErrSelfBlock = errors.New("a ticket can't block itself")
 	ErrCycle     = errors.New("that would make tickets block each other in a loop")
+	ErrDoneBlock = errors.New("a done ticket can't get new blockers; move it out of Done first")
 )
 
 // Dep is a linked ticket shown under "blocked by" / "blocks".
@@ -27,8 +28,9 @@ type Dep struct {
 func (s Store) SetBlockedBy(ctx context.Context, owner, id string, blockers []string) error {
 	return pgx.BeginFunc(ctx, s.DB, func(tx pgx.Tx) error {
 		var projectID string
-		if err := tx.QueryRow(ctx, `SELECT t.project_id FROM tickets t JOIN projects p ON p.id = t.project_id
-			WHERE t.id = $1 AND p.owner_clerk_id = $2`, id, owner).Scan(&projectID); err != nil {
+		var done bool
+		if err := tx.QueryRow(ctx, `SELECT t.project_id, `+boards.TicketDoneSQL+` FROM tickets t JOIN projects p ON p.id = t.project_id
+			WHERE t.id = $1 AND p.owner_clerk_id = $2`, id, owner).Scan(&projectID, &done); err != nil {
 			return notFound(err)
 		}
 		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext('ticket-deps:' || $1))`, projectID); err != nil {
@@ -52,6 +54,11 @@ func (s Store) SetBlockedBy(ctx context.Context, owner, id string, blockers []st
 		if inProject != len(uniq) {
 			return ErrOtherProject
 		}
+		var adds bool
+		if err := tx.QueryRow(ctx, `SELECT $3 AND EXISTS (SELECT unnest($2::uuid[]) EXCEPT SELECT blocked_by_id FROM ticket_dependencies WHERE ticket_id = $1)`,
+			id, uniq, done).Scan(&adds); err != nil {
+			return err
+		}
 		if _, err := tx.Exec(ctx, `DELETE FROM ticket_dependencies WHERE ticket_id = $1`, id); err != nil {
 			return err
 		}
@@ -65,6 +72,9 @@ func (s Store) SetBlockedBy(ctx context.Context, owner, id string, blockers []st
 		}
 		if loops {
 			return ErrCycle
+		}
+		if adds { // TL-528: a done ticket can lose blockers, not gain them
+			return ErrDoneBlock
 		}
 		_, err := tx.Exec(ctx, `INSERT INTO ticket_dependencies (ticket_id, blocked_by_id) SELECT $1, unnest($2::uuid[])`, id, uniq)
 		return err

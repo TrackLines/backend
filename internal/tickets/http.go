@@ -197,7 +197,7 @@ func writeErr(w http.ResponseWriter, err error) {
 	case errors.Is(err, ErrAlreadyAssigned):
 		http.Error(w, err.Error(), http.StatusConflict)
 		return
-	case errors.Is(err, ErrNotAssignedToCaller), errors.Is(err, ErrBlocked):
+	case errors.Is(err, ErrNotAssignedToCaller), errors.Is(err, ErrBlocked), errors.Is(err, ErrDoneBlock), errors.Is(err, ErrDoneParent):
 		http.Error(w, err.Error(), http.StatusConflict)
 		return
 	case errors.Is(err, ErrSelfBlock), errors.Is(err, ErrOtherProject), errors.Is(err, ErrCycle), errors.Is(err, ErrUnknownAssignee), errors.Is(err, ErrBadLabels),

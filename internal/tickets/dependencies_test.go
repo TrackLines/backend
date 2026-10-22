@@ -103,6 +103,20 @@ func TestDependencies(t *testing.T) {
 	if err := s.SetBlockedBy(ctx, "dp2", c, nil); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("non-owner: %v", err)
 	}
+	// a done ticket (TL-528) keeps or loses its blockers, but can't gain one
+	e := mk("E")
+	if err := s.SetBlockedBy(ctx, "dp1", bb, []string{e}); !errors.Is(err, ErrDoneBlock) {
+		t.Fatalf("new blocker on a done ticket: %v", err)
+	}
+	if _, err := db.Exec(ctx, `INSERT INTO ticket_dependencies (ticket_id, blocked_by_id) VALUES ($1, $2)`, bb, e); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetBlockedBy(ctx, "dp1", bb, []string{e}); err != nil {
+		t.Fatalf("keeping a done ticket's blocker: %v", err)
+	}
+	if err := s.SetBlockedBy(ctx, "dp1", bb, nil); err != nil {
+		t.Fatalf("clearing a done ticket's blockers: %v", err)
+	}
 
 	// clearing and cascading
 	if err := s.SetBlockedBy(ctx, "dp1", c, []string{}); err != nil {
