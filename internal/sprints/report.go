@@ -49,6 +49,7 @@ type Report struct {
 	Sprints   []SprintReport `json:"sprints"` // oldest first; the open sprint last, if it's in the period
 	Totals    ReportTotals   `json:"totals"`
 	Previous  ReportTotals   `json:"previous"` // the same length of time just before, for trends
+	Spikes    Spikes         `json:"spikes"`   // timeboxed spikes finished in the period, within or over (TL-508)
 	Summary   string         `json:"summary"`
 }
 
@@ -136,6 +137,9 @@ func (s Store) BoardReport(ctx context.Context, owner, boardID string, from, to 
 		}
 	}
 	r.Totals, r.Previous = totals(r.Sprints), totals(previous)
+	if r.Spikes, err = s.spikeOutcomes(ctx, boardID, from, to); err != nil {
+		return nil, err
+	}
 	r.Summary = summary(r.Totals, r.Previous, unit)
 	return r, nil
 }
@@ -305,7 +309,7 @@ func sprintReport(sp sprintRow, unit string, value func(*string) float64, list [
 		p := done / rep.Planned
 		rep.Predictability = &p
 	}
-	for _, typ := range []string{"bug", "feature", "task", "epic"} {
+	for _, typ := range []string{"bug", "feature", "task", "spike", "epic"} { // spike: TL-508 (they were dropped)
 		if m := mix[typ]; m != nil {
 			rep.Mix = append(rep.Mix, *m)
 		}
@@ -375,7 +379,7 @@ func totals(list []SprintReport) ReportTotals {
 	if recorded {
 		t.Added = &added
 	}
-	for _, typ := range []string{"bug", "feature", "task", "epic"} {
+	for _, typ := range []string{"bug", "feature", "task", "spike", "epic"} { // spike: TL-508 (they were dropped)
 		if m := mix[typ]; m != nil {
 			t.Mix = append(t.Mix, *m)
 		}

@@ -119,8 +119,9 @@ func (s *Service) calendarSync(members clerkcache.Memberships) integrations.Cale
 }
 
 // clerkHooks: Clerk's webhooks, which also give a new organization its member cap (TL-418).
-func clerkHooks(db *pgxpool.Pool, secret string, uncapped []string) clerkhooks.System {
+func clerkHooks(db *pgxpool.Pool, secret string, uncapped []string, invites invitations.System) clerkhooks.System {
 	h := clerkhooks.NewSystem(db, secret)
+	h.Invites = invites // a new member's invitations complete on joining (TL-518)
 	h.ClerkOrgs = billing.Skip{OrgUpdater: organization.NewClient(&clerk.ClientConfig{}), Orgs: uncapped}
 	return h
 }
@@ -484,7 +485,7 @@ func (s *Service) Handler() http.Handler {
 	// Clerk (via Svix) authenticates by signature: org/user removals clean up admins, team members and API keys
 	// Contact form: files enquiries in ChewedFeed HQ's inbox; a few per address per minute, and 20 a minute in all
 	mux.Handle("POST /api/enquiries", ratelimit.Total(limits, "enquiry-all", 20, time.Now)(public("enquiry", 3, enquiries.NewSystem(config.Get(s.Config).ChewedFeedURL, config.Get(s.Config).ChewedFeedKey).Create)))
-	mux.Handle("POST /api/webhooks/clerk", public("webhook-clerk", 600, clerkHooks(s.DB, config.Get(s.Config).ClerkWebhookSecret, config.Get(s.Config).ClerkUncappedOrgs).Webhook(time.Now)))
+	mux.Handle("POST /api/webhooks/clerk", public("webhook-clerk", 600, clerkHooks(s.DB, config.Get(s.Config).ClerkWebhookSecret, config.Get(s.Config).ClerkUncappedOrgs, iv).Webhook(time.Now)))
 
 	// Every request: API key (tl_…) or optional Clerk auth + users row for signed-in callers, then
 	// recovery/request id/logging (bugfixes) and CORS.

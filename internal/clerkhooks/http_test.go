@@ -232,3 +232,40 @@ func TestNewOrganizationGetsTheMemberCap(t *testing.T) {
 		t.Errorf("new organization: %d, cap %d", rec.Code, orgs["org_new"])
 	}
 }
+
+type joins struct {
+	got []string
+	err error
+}
+
+func (j *joins) CompleteFor(_ context.Context, org, user string) (int, error) {
+	j.got = append(j.got, org+"/"+user)
+	return 1, j.err
+}
+
+// TL-518: someone joining an org has their invitations completed; a failure is a 503 so Svix retries.
+func TestMembershipCreatedCompletesInvitations(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	invites := &joins{}
+	h := System{Secret: secret, Invites: invites}.Webhook(func() time.Time { return now })
+	send := func(body string) int {
+		req := httptest.NewRequest("POST", "/api/webhooks/clerk", strings.NewReader(body))
+		req.Header.Set("svix-id", "msg_join")
+		req.Header.Set("svix-timestamp", fmt.Sprint(now.Unix()))
+		req.Header.Set("svix-signature", sign(key, "msg_join", now, body))
+		rec := httptest.NewRecorder()
+		h(rec, req)
+		return rec.Code
+	}
+	join := `{"type":"organizationMembership.created","data":{"organization":{"id":"org_a"},"public_user_data":{"user_id":"dana"}}}`
+	if code := send(join); code != http.StatusNoContent || len(invites.got) != 1 || invites.got[0] != "org_a/dana" {
+		t.Fatalf("join: %d %v", code, invites.got)
+	}
+	if code := send(`{"type":"organizationMembership.created","data":{"organization":{"id":""},"public_user_data":{"user_id":"dana"}}}`); code != http.StatusNoContent || len(invites.got) != 1 {
+		t.Fatalf("no org: %d %v", code, invites.got)
+	}
+	invites.err = errors.New("clerk down")
+	if code := send(join); code != http.StatusServiceUnavailable {
+		t.Fatalf("failure should be retried: %d", code)
+	}
+}

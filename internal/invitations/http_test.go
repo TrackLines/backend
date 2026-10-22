@@ -201,3 +201,76 @@ func TestInvitationCreationRejectsAPIKeys(t *testing.T) {
 		t.Fatalf("API key list status=%d, want 403", w.Code)
 	}
 }
+
+// joinedUser is someone with a verified and an unverified email.
+type joinedUser struct{}
+
+func (joinedUser) Get(context.Context, string) (*clerk.User, error) {
+	return &clerk.User{EmailAddresses: []*clerk.EmailAddress{
+		{EmailAddress: "Dana@Example.test", Verification: &clerk.Verification{Status: "verified"}},
+		{EmailAddress: "dana-old@example.test", Verification: &clerk.Verification{Status: "unverified"}},
+	}}, nil
+}
+
+// TL-518: joining an org (Clerk's webhook) completes the newcomer's pending invitations to it, with
+// their access, and nothing else; a redelivered event changes nothing.
+func TestCompleteForJoiningMember(t *testing.T) {
+	ctx := context.Background()
+	url := os.Getenv("TEST_DATABASE_URL")
+	m, err := migrate.New("file://../migrations", "pgx5"+url[len("postgres"):])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Up(); err != nil && err != migrate.ErrNoChange {
+		t.Fatal(err)
+	}
+	db, err := pgxpool.New(ctx, url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(ctx, `DELETE FROM invitations WHERE org_id IN ('join-org','join-other'); DELETE FROM teams WHERE org_id='join-org'; DELETE FROM projects WHERE owner_clerk_id='join-org'`); err != nil {
+		t.Fatal(err)
+	}
+	var team, project string
+	db.QueryRow(ctx, `INSERT INTO teams(org_id,name) VALUES('join-org','Eng') RETURNING id`).Scan(&team)
+	db.QueryRow(ctx, `INSERT INTO projects(owner_clerk_id,name) VALUES('join-org','P') RETURNING id`).Scan(&project)
+	if _, err := db.Exec(ctx, `INSERT INTO invitations (org_id, clerk_invitation_id, email_address, scope, target_id, invited_by, accept_url, expires_at, status) VALUES
+		('join-org', 'j_team', 'dana@example.test', 'team', $1, 'admin', 'https://x', now() + interval '3 days', 'pending'),
+		('join-org', 'j_project', 'dana@example.test', 'project', $2, 'admin', 'https://x', now() + interval '3 days', 'pending'),
+		('join-org', 'j_expired', 'dana@example.test', 'organization', NULL, 'admin', 'https://x', now() - interval '1 day', 'pending'),
+		('join-org', 'j_revoked', 'dana@example.test', 'organization', NULL, 'admin', 'https://x', now() + interval '3 days', 'revoked'),
+		('join-org', 'j_unverified', 'dana-old@example.test', 'organization', NULL, 'admin', 'https://x', now() + interval '3 days', 'pending'),
+		('join-org', 'j_someone', 'someone@example.test', 'organization', NULL, 'admin', 'https://x', now() + interval '3 days', 'pending'),
+		('join-other', 'j_other', 'dana@example.test', 'organization', NULL, 'admin', 'https://x', now() + interval '3 days', 'pending')`, team, project); err != nil {
+		t.Fatal(err)
+	}
+	h := NewSystem(db, organizations.Admins{DB: db})
+	h.users = joinedUser{}
+	for i, want := range []int{2, 0} { // the second is Svix redelivering it
+		n, err := h.CompleteFor(ctx, "join-org", "dana")
+		if err != nil || n != want {
+			t.Fatalf("delivery %d: completed %d (%v), want %d", i+1, n, err, want)
+		}
+	}
+	status := map[string]string{}
+	rows, _ := db.Query(ctx, `SELECT clerk_invitation_id, status || COALESCE('/' || accepted_user_clerk_id, '') FROM invitations WHERE org_id IN ('join-org','join-other')`)
+	for rows.Next() {
+		var id, s string
+		rows.Scan(&id, &s)
+		status[id] = s
+	}
+	want := map[string]string{"j_team": "accepted/dana", "j_project": "accepted/dana", "j_expired": "pending", "j_revoked": "revoked",
+		"j_unverified": "pending", "j_someone": "pending", "j_other": "pending"}
+	for id, w := range want {
+		if status[id] != w {
+			t.Errorf("%s: %q, want %q", id, status[id], w)
+		}
+	}
+	var inTeam, inProject bool
+	db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM team_members WHERE team_id=$1 AND user_clerk_id='dana')`, team).Scan(&inTeam)
+	db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM project_members WHERE project_id=$1 AND user_clerk_id='dana')`, project).Scan(&inProject)
+	if !inTeam || !inProject {
+		t.Fatalf("access not granted: team=%v project=%v", inTeam, inProject)
+	}
+}

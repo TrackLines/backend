@@ -2485,6 +2485,14 @@ paths:
                   from: { type: string, format: date-time }
                   to: { type: string, format: date-time }
                   summary: { type: string, example: Delivered 84% of planned work across 6 sprints, up from 71%. }
+                  spikes:
+                    type: object
+                    description: "Timeboxed spikes started and finished on this board in the period (TL-508), compared with their timebox in business hours (Mon–Fri 09:00–17:00, 8h a day) in the caller's Tracklines-Timezone. Spikes without a timebox, or never started, are left out."
+                    properties:
+                      done: { type: integer }
+                      within: { type: integer }
+                      over: { type: integer }
+                      over_hours: { type: number, description: Business hours over, summed across the spikes that went over. }
                   sprints:
                     type: array
                     items:
@@ -3537,6 +3545,7 @@ paths:
       summary: Receive a Clerk webhook event (delivered by Svix)
       description: >-
         Authenticates the raw payload with the Svix headers and CLERK_WEBHOOK_SECRET (timestamps more than 5 minutes off are rejected).
+        organizationMembership.created completes the new member's pending TrackLin.es invitations to that org (team and project access included) for their verified emails (TL-518);
         organizationMembership.deleted removes the user's admin and team rows in that org and revokes their API keys for it;
         user.deleted does the same across every org; organization.deleted removes the org's admins and teams and revokes its API keys
         (projects, boards and tickets are kept). Other event types are acknowledged and ignored. Safe to replay.

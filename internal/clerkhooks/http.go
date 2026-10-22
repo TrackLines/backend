@@ -1,6 +1,7 @@
 // Package clerkhooks keeps stored org data in step with Clerk: when someone leaves an org, is
 // deleted, or the org is deleted, their admin and team rows go and their API keys are revoked.
-// Access checks still ask Clerk directly (webhooks can be missed); this is cleanup.
+// Access checks still ask Clerk directly (webhooks can be missed); this is cleanup. Joining also
+// completes the newcomer's TrackLin.es invitations (TL-518).
 package clerkhooks
 
 import (
@@ -21,6 +22,10 @@ type System struct {
 	Secret string // CLERK_WEBHOOK_SECRET (whsec_…); empty = endpoint answers 503
 	// ClerkOrgs sets a new organization's member cap (TL-418); nil: left to the startup sync
 	ClerkOrgs billing.OrgUpdater
+	// Invites completes someone's pending invitations once they've joined the org (TL-518); nil: skipped
+	Invites interface {
+		CompleteFor(ctx context.Context, org, userID string) (int, error)
+	}
 }
 
 func NewSystem(db *pgxpool.Pool, secret string) System { return System{DB: db, Secret: secret} }
@@ -75,6 +80,14 @@ func (s System) Webhook(now func() time.Time) http.HandlerFunc {
 func (s System) apply(ctx context.Context, e event) error {
 	if e.Type == "organization.created" { // a new organization starts on Free: up to 20 members (TL-418)
 		return billing.SyncMemberCap(ctx, s.DB, s.ClerkOrgs, e.Data.ID)
+	}
+	if e.Type == "organizationMembership.created" { // they joined: finish their invitations (TL-518)
+		org, user := e.Data.Organization.ID, e.Data.PublicUserData.UserID
+		if s.Invites == nil || org == "" || user == "" {
+			return nil
+		}
+		_, err := s.Invites.CompleteFor(ctx, org, user)
+		return err
 	}
 	var stmts []string
 	var args []any

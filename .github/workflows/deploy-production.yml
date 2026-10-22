@@ -1,0 +1,30 @@
+name: Deploy Production
+
+# Everything merges into main; only tagged releases reach Railway (as policies does). Publishing Release
+# Drafter's draft creates the v* tag, and this uploads that tag's code to each Railway service. Railway's
+# own GitHub auto-deploy from main must be off, or main would still go out on every push.
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    strategy:
+      matrix:
+        # the API, and the cron jobs built from the same code (railway.purge.json, railway.sweep-files.json);
+        # names as they are in the Railway project
+        service: [backend, purge, sweep-files]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+      - name: Install Railway CLI
+        run: npm install -g @railway/cli
+      - name: Link Railway project
+        run: RAILWAY_API_TOKEN=${{ secrets.RAILWAY_TOKEN }} railway link --project ${{ vars.RAILWAY_PROJECT_ID }} --environment production --service ${{ matrix.service }}
+      - name: Deploy to production
+        run: RAILWAY_API_TOKEN=${{ secrets.RAILWAY_TOKEN }} railway up --detach

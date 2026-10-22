@@ -381,8 +381,28 @@ func (h System) Accept(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "organization membership is not active yet", http.StatusConflict)
 		return
 	}
-	err = pgx.BeginFunc(r.Context(), h.db, func(tx pgx.Tx) error {
-		locked, err := h.getTx(r.Context(), tx, inv.ID)
+	err = h.complete(r.Context(), inv.ID, userID)
+	if errors.Is(err, errInvitationConsumed) {
+		http.Error(w, "invitation has already been accepted", http.StatusGone)
+		return
+	}
+	if errors.Is(err, errInvitationUnavailable) || errors.Is(err, pgx.ErrNoRows) {
+		http.Error(w, "invitation is no longer available", http.StatusGone)
+		return
+	}
+	if err != nil {
+		http.Error(w, "could not accept invitation", http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// complete accepts invitation id for userID in one transaction: grants the team or project access it
+// carries, then marks it accepted. Accepting again by the same person is a no-op; Accept and Clerk's
+// membership webhook (TL-518) both come through here, so the rules live in one place.
+func (h System) complete(ctx context.Context, id, userID string) error {
+	return pgx.BeginFunc(ctx, h.db, func(tx pgx.Tx) error {
+		locked, err := h.getTx(ctx, tx, id)
 		if err != nil {
 			return err
 		}
@@ -397,13 +417,13 @@ func (h System) Accept(w http.ResponseWriter, r *http.Request) {
 		}
 		switch locked.Scope {
 		case "team":
-			tag, err := tx.Exec(r.Context(), `INSERT INTO team_members(team_id,user_clerk_id) SELECT $1,$2 WHERE EXISTS(SELECT 1 FROM teams WHERE id=$1 AND org_id=$3) ON CONFLICT DO NOTHING`, locked.targetID, userID, locked.OrgID)
+			tag, err := tx.Exec(ctx, `INSERT INTO team_members(team_id,user_clerk_id) SELECT $1,$2 WHERE EXISTS(SELECT 1 FROM teams WHERE id=$1 AND org_id=$3) ON CONFLICT DO NOTHING`, locked.targetID, userID, locked.OrgID)
 			if err != nil {
 				return err
 			}
 			if tag.RowsAffected() == 0 {
 				var exists bool
-				if err := tx.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM teams WHERE id=$1 AND org_id=$2)`, locked.targetID, locked.OrgID).Scan(&exists); err != nil {
+				if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM teams WHERE id=$1 AND org_id=$2)`, locked.targetID, locked.OrgID).Scan(&exists); err != nil {
 					return err
 				}
 				if !exists {
@@ -411,14 +431,14 @@ func (h System) Accept(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		case "project":
-			tag, err := tx.Exec(r.Context(), `INSERT INTO project_members(project_id,user_clerk_id,invited_by)
+			tag, err := tx.Exec(ctx, `INSERT INTO project_members(project_id,user_clerk_id,invited_by)
 				SELECT $1,$2,$3 WHERE EXISTS(SELECT 1 FROM projects WHERE id=$1 AND owner_clerk_id=$4) ON CONFLICT DO NOTHING`, locked.targetID, userID, locked.InvitedBy, locked.OrgID)
 			if err != nil {
 				return err
 			}
 			if tag.RowsAffected() == 0 {
 				var exists bool
-				if err := tx.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM projects WHERE id::text=$1 AND owner_clerk_id=$2)`, locked.targetID, locked.OrgID).Scan(&exists); err != nil {
+				if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM projects WHERE id::text=$1 AND owner_clerk_id=$2)`, locked.targetID, locked.OrgID).Scan(&exists); err != nil {
 					return err
 				}
 				if !exists {
@@ -426,22 +446,41 @@ func (h System) Accept(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
-		_, err = tx.Exec(r.Context(), `UPDATE invitations SET status='accepted',accepted_user_clerk_id=$2,accepted_at=now() WHERE id=$1`, locked.ID, userID)
+		_, err = tx.Exec(ctx, `UPDATE invitations SET status='accepted',accepted_user_clerk_id=$2,accepted_at=now() WHERE id=$1`, locked.ID, userID)
 		return err
 	})
-	if errors.Is(err, errInvitationConsumed) {
-		http.Error(w, "invitation has already been accepted", http.StatusGone)
-		return
+}
+
+// CompleteFor completes userID's pending invitations to org, addressed to their verified emails:
+// Clerk's organizationMembership.created says they've joined, so nothing waits for their browser
+// (TL-518). It returns how many it completed; one that can't be (its team or project is gone) is
+// left as it is rather than failing the rest.
+func (h System) CompleteFor(ctx context.Context, org, userID string) (int, error) {
+	emails, err := h.verifiedEmails(ctx, userID)
+	if err != nil || len(emails) == 0 {
+		return 0, err
 	}
-	if errors.Is(err, errInvitationUnavailable) || errors.Is(err, pgx.ErrNoRows) {
-		http.Error(w, "invitation is no longer available", http.StatusGone)
-		return
-	}
+	rows, err := h.db.Query(ctx, `SELECT id::text FROM invitations
+		WHERE org_id=$1 AND lower(email_address)=ANY($2) AND status='pending' AND expires_at>now()`, org, emails)
 	if err != nil {
-		http.Error(w, "could not accept invitation", http.StatusInternalServerError)
-		return
+		return 0, err
 	}
-	w.WriteHeader(http.StatusNoContent)
+	ids, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		return 0, err
+	}
+	done := 0
+	for _, id := range ids {
+		switch err := h.complete(ctx, id, userID); {
+		case err == nil:
+			done++
+		case errors.Is(err, errInvitationConsumed), errors.Is(err, errInvitationUnavailable), errors.Is(err, pgx.ErrNoRows):
+			logs.Infof("invitations: %s not completed for %s: %v", id, userID, err)
+		default:
+			return done, err
+		}
+	}
+	return done, nil
 }
 
 type dbInvitation struct {
