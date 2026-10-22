@@ -629,7 +629,7 @@ paths:
       parameters:
         - name: type
           in: query
-          schema: { type: string, enum: [bug, feature, task, epic] }
+          schema: { type: string, enum: [bug, feature, task, epic, spike] }
       responses:
         '200':
           description: Backlog tickets, ordered by position.
@@ -903,7 +903,7 @@ paths:
         - { name: q, in: query, schema: { type: string } }
         - { name: project, in: query, schema: { type: string, format: uuid } }
         - { name: board, in: query, schema: { type: string, format: uuid } }
-        - { name: type, in: query, schema: { type: array, items: { type: string, enum: [bug, feature, task, epic] } }, style: form, explode: true, description: Any of. }
+        - { name: type, in: query, schema: { type: array, items: { type: string, enum: [bug, feature, task, epic, spike] } }, style: form, explode: true, description: Any of. }
         - { name: priority, in: query, schema: { type: array, items: { type: string, enum: [low, medium, high, urgent] } }, style: form, explode: true, description: Any of. }
         - { name: label, in: query, schema: { type: array, items: { type: string } }, style: form, explode: true, description: Any of (case-insensitive). }
         - { name: assignee, in: query, schema: { type: string }, description: "me (the caller), unassigned, or a user id / agent name." }
@@ -1922,7 +1922,7 @@ paths:
                   properties:
                     id: { type: string, format: uuid }
                     title: { type: string }
-                    type: { type: string, enum: [bug, feature, task, epic] }
+                    type: { type: string, enum: [bug, feature, task, epic, spike] }
                     priority: { type: string, enum: [low, medium, high, urgent] }
                     estimate: { type: [string, 'null'] }
                     labels: { type: array, items: { type: string } }
@@ -1946,7 +1946,7 @@ paths:
         - { name: epic, in: query, schema: { type: string, format: uuid }, description: "Only this epic's sub-tickets, at any depth." }
         - { name: priority, in: query, schema: { type: array, items: { type: string, enum: [low, medium, high, urgent] } }, style: form, explode: true, description: Any of these priorities; counts follow it. }
         - $ref: '#/components/parameters/ProjectId'
-        - { name: type, in: query, schema: { type: string, enum: [bug, feature, task, epic] } }
+        - { name: type, in: query, schema: { type: string, enum: [bug, feature, task, epic, spike] } }
         - { name: sort, in: query, description: Order tickets globally before pagination. Defaults to the manual backlog order., schema: { type: string, enum: [manual, newest, oldest], default: manual } }
         - name: label
           in: query
@@ -3743,7 +3743,7 @@ components:
       properties:
         type:
           type: string
-          enum: [bug, feature, task, epic]
+          enum: [bug, feature, task, epic, spike]
           default: task
         title: { type: string, minLength: 1 }
         description: { type: string }
@@ -3757,6 +3757,18 @@ components:
           description: >-
             A value on the board's estimate_scale (400 otherwise). Required when creating on a board with an estimate scale;
             omitted = unchanged on update, and it can't be cleared there. Not allowed on backlog tickets.
+        timebox_days:
+          type: integer
+          minimum: 0
+          maximum: 60
+          description: >-
+            A spike's timebox days (TL-502). Send with timebox_hours; both 0 clears the timebox, both omitted = unchanged.
+            Only meaningful on spikes (set via update).
+        timebox_hours:
+          type: integer
+          minimum: 0
+          maximum: 23
+          description: A spike's timebox hours (0–23). Send with timebox_days.
     CreateBugfixTicket:
       type: object
       required: [board_id, column_id, title]
@@ -3784,7 +3796,7 @@ components:
       properties:
         type:
           type: string
-          enum: [bug, feature, task, epic]
+          enum: [bug, feature, task, epic, spike]
           default: task
         title:
           type: string
@@ -3855,7 +3867,7 @@ components:
         project_id: { type: string, format: uuid }
         column_id: { type: [string, 'null'], format: uuid, description: Null while in the backlog. }
         sprint_id: { type: [string, 'null'], format: uuid }
-        type: { type: string, enum: [bug, feature, task, epic] }
+        type: { type: string, enum: [bug, feature, task, epic, spike] }
         title: { type: string }
         description: { type: string }
         created_by: { type: string }
@@ -4112,7 +4124,7 @@ components:
         description: { type: string }
         created_by: { type: string }
         assigned_to: { type: [string, 'null'] }
-        type: { type: string, enum: [bug, feature, task, epic] }
+        type: { type: string, enum: [bug, feature, task, epic, spike] }
         priority: { type: string, enum: [low, medium, high, urgent] }
         board_id: { type: [string, 'null'], format: uuid }
         board_name: { type: [string, 'null'] }
@@ -4140,6 +4152,8 @@ components:
         duplicate_of_key: { type: [string, 'null'] }
         duplicate_of_title: { type: [string, 'null'] }
         epic_id: { type: [string, 'null'], description: "The epic this ticket is part of, at any depth (epics don't nest)." }
+        timebox_days: { type: [integer, 'null'], description: "A spike's timebox, in days (with timebox_hours). Null when not a spike or not yet timed." }
+        timebox_hours: { type: [integer, 'null'], description: "A spike's timebox hours (0–23)." }
         epic: { $ref: '#/components/schemas/EpicProgress' }
         duplicates:
           type: array
@@ -4163,7 +4177,7 @@ components:
         id: { type: string, format: uuid }
         title: { type: string }
         done: { type: boolean }
-        type: { type: string, enum: [bug, feature, task, epic] }
+        type: { type: string, enum: [bug, feature, task, epic, spike] }
         assigned_to: { type: [string, 'null'] }
         key: { type: [string, 'null'] }
         estimate: { type: [string, 'null'] }
@@ -4251,7 +4265,7 @@ components:
     ReportMix:
       type: object
       properties:
-        type: { type: string, enum: [bug, feature, task, epic] }
+        type: { type: string, enum: [bug, feature, task, epic, spike] }
         count: { type: integer }
         value: { type: number }
     ReportTotals:
@@ -4310,7 +4324,7 @@ components:
                   id: { type: string, format: uuid }
                   title: { type: string }
                   done: { type: boolean }
-                  type: { type: string, enum: [bug, feature, task, epic], description: "An epic counts its sub-tickets towards progress." }
+                  type: { type: string, enum: [bug, feature, task, epic, spike], description: "An epic counts its sub-tickets towards progress." }
     Progress:
       type: object
       properties:
