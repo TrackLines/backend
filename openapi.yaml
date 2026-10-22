@@ -4006,7 +4006,7 @@ components:
           properties:
             unit: { type: string, enum: [points, tickets] }
             velocity: { type: [number, 'null'], description: Average completed over the last 3 closed sprints; null without history. }
-            cap: { type: [number, 'null'], description: velocity + 10%; null = no limit yet. }
+            cap: { type: [number, 'null'], description: "velocity + 10%, times availability.percent when that's set; null = no limit yet." }
             used: { type: number }
             unestimated: { type: integer }
             over: { type: boolean }
@@ -4014,6 +4014,14 @@ components:
             approved_by: { type: [string, 'null'] }
             approved_at: { type: [string, 'null'], format: date-time }
             needs_approval: { type: boolean, description: Over capacity and not covered by an approval; it won't start until approved or trimmed. }
+            availability:
+              type: [object, 'null']
+              description: >-
+                The board team's time away over the sprint, from Google Calendar (weekends and company days off aren't
+                working days). A team figure, never per person. Null without Google Calendar or a board team.
+              properties:
+                percent: { type: number, description: Share of the team's working days not away, 0–100. }
+                person_days_away: { type: number }
     HostedFocus:
       type: object
       description: What the host has open, shown to followers.
