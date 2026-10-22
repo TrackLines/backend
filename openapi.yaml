@@ -2139,7 +2139,9 @@ paths:
       tags: [Tickets]
       operationId: setTicketDependencies
       summary: Replace the tickets blocking this ticket
-      description: Use an empty `ticket_ids` array to clear dependencies. Dependencies must be in the same project and cannot form a cycle.
+      description: >-
+        Use an empty `ticket_ids` array to clear dependencies. Dependencies must be in the same project and cannot form a cycle.
+        A done ticket can keep or drop its blockers but not gain new ones (409).
       parameters:
         - $ref: '#/components/parameters/TicketId'
       requestBody:
@@ -2156,6 +2158,7 @@ paths:
       responses:
         '204': { description: Dependencies replaced. }
         '400': { $ref: '#/components/responses/BadRequest' }
+        '409': { description: The ticket is done and the list adds a blocker. }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
 

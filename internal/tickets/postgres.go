@@ -23,6 +23,7 @@ var (
 	ErrNotAssignedToCaller = errors.New("ticket is not assigned to caller")
 	ErrSelfParent          = errors.New("a ticket can't be its own parent")
 	ErrParentLoop          = errors.New("that parent is already a sub-ticket of this ticket")
+	ErrDoneParent          = errors.New("a done ticket can't get new sub-tickets; move it out of Done first")
 	ErrOtherProject        = errors.New("tickets must belong to the same project")
 	ErrIsDuplicate         = errors.New("a duplicate ticket is already closed")
 )
@@ -794,14 +795,14 @@ func (s Store) SetParent(ctx context.Context, owner, id string, parentID *string
 		}
 		if parentID != nil {
 			var parentProject string
-			var loop bool
+			var loop, done bool
 			// walk up from the proposed parent; reaching id means id is its ancestor (UNION stops on any old loop)
 			if err := tx.QueryRow(ctx, `WITH RECURSIVE up AS (
 					SELECT id, parent_id FROM tickets WHERE id = $1
 					UNION SELECT t.id, t.parent_id FROM tickets t JOIN up ON t.id = up.parent_id)
-				SELECT t.project_id, EXISTS (SELECT 1 FROM up WHERE up.id = $2)
+				SELECT t.project_id, EXISTS (SELECT 1 FROM up WHERE up.id = $2), `+boards.TicketDoneSQL+`
 				FROM tickets t JOIN projects p ON p.id = t.project_id WHERE t.id = $1 AND p.owner_clerk_id = $3`,
-				*parentID, id, owner).Scan(&parentProject, &loop); err != nil {
+				*parentID, id, owner).Scan(&parentProject, &loop, &done); err != nil {
 				return notFound(err)
 			}
 			if parentProject != project {
@@ -809,6 +810,9 @@ func (s Store) SetParent(ctx context.Context, owner, id string, parentID *string
 			}
 			if loop {
 				return ErrParentLoop
+			}
+			if done && (old == nil || *old != *parentID) { // TL-528: no new sub-tickets under a done ticket
+				return ErrDoneParent
 			}
 			if err := epicNesting(ctx, tx, id, *parentID); err != nil {
 				return err

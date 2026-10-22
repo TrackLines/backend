@@ -102,6 +102,10 @@ func TestParent(t *testing.T) {
 	if err := s.SetParent(ctx, "pa1", a, str("00000000-0000-0000-0000-000000000000")); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("missing parent: %v", err)
 	}
+	// a done ticket (b) can't get new sub-tickets (TL-528)
+	if err := s.SetParent(ctx, "pa1", grand, str(b)); !errors.Is(err, ErrDoneParent) {
+		t.Fatalf("sub-ticket of a done ticket: %v", err)
+	}
 
 	// handler: detach with null, 400 on a loop
 	h := NewSystem(db)
@@ -114,6 +118,9 @@ func TestParent(t *testing.T) {
 	}
 	if code := put(epic, `{"parent_id":"`+grand+`"}`); code != http.StatusBadRequest {
 		t.Fatalf("loop via handler: %d", code)
+	}
+	if code := put(grand, `{"parent_id":"`+b+`"}`); code != http.StatusConflict {
+		t.Fatalf("done parent via handler: %d", code)
 	}
 	if code := put(b, `{"parent_id":null}`); code != http.StatusNoContent {
 		t.Fatalf("detach: %d", code)
