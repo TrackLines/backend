@@ -1487,8 +1487,8 @@ paths:
       operationId: getTicketPRs
       summary: Pull requests linked to the ticket, newest first
       description: >-
-        A PR in a repo linked to the ticket's project is linked when its branch, title or description mentions the ticket's
-        key (TL-123; only the project's own prefix counts). Kept up to date by the provider webhooks. When a linked PR is
+        A PR in a repo linked to the ticket's project is linked when its branch, title, description or commit messages
+        mention the ticket's key (TL-123; only the project's own prefix counts). Kept up to date by the provider webhooks. When a linked PR is
         merged, the ticket moves to its board's Done column (or is resolved in the backlog) with a "Closed by" comment.
       responses:
         '200':
@@ -1516,7 +1516,7 @@ paths:
       operationId: githubWebhook
       summary: GitHub App webhook (X-Hub-Signature-256 with GITHUB_WEBHOOK_SECRET)
       description: >-
-        pull_request events link PRs to the tickets whose keys they mention (in repos linked to a project of an org connected
+        pull_request events link PRs to the tickets whose keys they (or their commits) mention (in repos linked to a project of an org connected
         through that installation); merging closes them, once. An uninstalled app disconnects the org. A 5xx makes GitHub redeliver.
       security: []
       responses:
