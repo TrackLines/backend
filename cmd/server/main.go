@@ -4,28 +4,29 @@ import (
 	"cmp"
 	"context"
 	"fmt"
-	"github.com/clerk/clerk-sdk-go/v2"
-	"github.com/clerk/clerk-sdk-go/v2/organization"
 	"os"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/clerk/clerk-sdk-go/v2"
+	"github.com/clerk/clerk-sdk-go/v2/organization"
+
 	"github.com/bugfixes/go-bugfixes/logs"
 	goFlags "github.com/flags-gg/go-flags"
+	"github.com/valkey-io/valkey-go"
+
+	"github.com/tracklines/backend/inbox"
 	service "github.com/tracklines/backend/internal"
-	"github.com/tracklines/backend/internal/attachments"
 	"github.com/tracklines/backend/internal/auth"
 	"github.com/tracklines/backend/internal/billing"
-	"github.com/tracklines/backend/internal/clerkhooks"
 	"github.com/tracklines/backend/internal/config"
 	"github.com/tracklines/backend/internal/integrations"
 	"github.com/tracklines/backend/internal/live"
 	"github.com/tracklines/backend/internal/migrations"
 	"github.com/tracklines/backend/internal/notifications"
 	"github.com/tracklines/backend/internal/secrets"
-	"github.com/tracklines/backend/internal/tickets"
-	"github.com/valkey-io/valkey-go"
+	"github.com/tracklines/backend/retention"
 )
 
 var (
@@ -117,32 +118,16 @@ func job(name string) error {
 	defer db.Close()
 	now := time.Now()
 	switch name {
-	case "purge":
-		tk, err := tickets.PurgeBin(ctx, db, now)
+	case "purge": // retention.Purge: the automation service runs the same nightly (TL-431)
+		r, err := retention.Purge(ctx, db, func(ctx context.Context, org string, to []string, n inbox.Notice) error {
+			return notifications.Store{DB: db}.Notify(ctx, org, to, notifications.Event{Kind: n.Kind, Actor: n.Actor, TicketID: n.TicketID, Text: n.Text})
+		}, now)
 		if err != nil {
-			return fmt.Errorf("purge the ticket bin: %w", err)
+			return err
 		}
-		orgs, err := clerkhooks.Purge(ctx, db, now)
-		if err != nil {
-			return fmt.Errorf("purge deleted organizations: %w", err)
-		}
-		// year-old attachments: warn (admins and uploaders), and delete the ones nobody kept (TL-259)
-		warned, err := attachments.WarnOld(ctx, db, notifications.Store{DB: db}, now)
-		if err != nil {
-			return fmt.Errorf("warn about old attachments: %w", err)
-		}
-		expired, err := attachments.DeleteExpired(ctx, db, now)
-		if err != nil {
-			return fmt.Errorf("delete expired attachments: %w", err)
-		}
-		// Google Chat link codes nobody used: the privacy policy says they go once expired (TL-289)
-		codes, err := integrations.PurgeLinkCodes(ctx, db, now)
-		if err != nil {
-			return fmt.Errorf("purge expired chat link codes: %w", err)
-		}
-		logs.Logf("purge: %d ticket(s) from the bin, %d deleted organization(s), %d attachment(s) warned about, %d expired, %d chat link code(s)", tk, orgs, warned, expired, codes)
+		logs.Logf("purge: %s", r)
 	case "sweep-files":
-		n, err := attachments.Sweeper{DB: db, Files: attachments.UploadThing{Token: config.Get(c).UploadThingToken}}.SweepAll(ctx)
+		n, err := retention.Sweeper{DB: db, Files: retention.UploadThing{Token: config.Get(c).UploadThingToken}}.SweepAll(ctx)
 		logs.Logf("sweep-files: deleted %d file(s) from UploadThing", n)
 		if err != nil {
 			return fmt.Errorf("delete files from UploadThing: %w", err)

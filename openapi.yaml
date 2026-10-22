@@ -17,9 +17,11 @@ info:
     or BugFixes (`bf_…`) agent API key as a Bearer token. Projects, boards and
     roadmaps belong to a Clerk organization: a session sees its active
     organization's data, and a request without an active organization gets
-    403. API keys act inside the organization they were created in, as their
-    creator, and attribute writes to the key's name; a personal key is its creator, so
-    its writes are theirs. A read-only key gets 403 for anything but GET. API-key management
+    403. API keys act inside the organization they were created in. Personal and
+    agent keys belong to the person who made them: a personal key is them, so its
+    writes are theirs; an agent key is their AI agent, so its writes are the agent's
+    (shown with its owner's name to everyone else). Service keys belong to the
+    organization, are made by its admins, and attribute writes to the key's name. A read-only key gets 403 for anything but GET. API-key management
     requires a Clerk session. Stripe webhooks use Stripe-Signature.
 
     Timestamps are stored and returned in UTC. Day-based rules (a sprint's last
@@ -627,7 +629,7 @@ paths:
       parameters:
         - name: type
           in: query
-          schema: { type: string, enum: [bug, feature, task, epic] }
+          schema: { type: string, enum: [bug, feature, task, epic, spike] }
       responses:
         '200':
           description: Backlog tickets, ordered by position.
@@ -901,7 +903,7 @@ paths:
         - { name: q, in: query, schema: { type: string } }
         - { name: project, in: query, schema: { type: string, format: uuid } }
         - { name: board, in: query, schema: { type: string, format: uuid } }
-        - { name: type, in: query, schema: { type: array, items: { type: string, enum: [bug, feature, task, epic] } }, style: form, explode: true, description: Any of. }
+        - { name: type, in: query, schema: { type: array, items: { type: string, enum: [bug, feature, task, epic, spike] } }, style: form, explode: true, description: Any of. }
         - { name: priority, in: query, schema: { type: array, items: { type: string, enum: [low, medium, high, urgent] } }, style: form, explode: true, description: Any of. }
         - { name: label, in: query, schema: { type: array, items: { type: string } }, style: form, explode: true, description: Any of (case-insensitive). }
         - { name: assignee, in: query, schema: { type: string }, description: "me (the caller), unassigned, or a user id / agent name." }
@@ -1920,7 +1922,7 @@ paths:
                   properties:
                     id: { type: string, format: uuid }
                     title: { type: string }
-                    type: { type: string, enum: [bug, feature, task, epic] }
+                    type: { type: string, enum: [bug, feature, task, epic, spike] }
                     priority: { type: string, enum: [low, medium, high, urgent] }
                     estimate: { type: [string, 'null'] }
                     labels: { type: array, items: { type: string } }
@@ -1944,7 +1946,7 @@ paths:
         - { name: epic, in: query, schema: { type: string, format: uuid }, description: "Only this epic's sub-tickets, at any depth." }
         - { name: priority, in: query, schema: { type: array, items: { type: string, enum: [low, medium, high, urgent] } }, style: form, explode: true, description: Any of these priorities; counts follow it. }
         - $ref: '#/components/parameters/ProjectId'
-        - { name: type, in: query, schema: { type: string, enum: [bug, feature, task, epic] } }
+        - { name: type, in: query, schema: { type: string, enum: [bug, feature, task, epic, spike] } }
         - { name: sort, in: query, description: Order tickets globally before pagination. Defaults to the manual backlog order., schema: { type: string, enum: [manual, newest, oldest], default: manual } }
         - name: label
           in: query
@@ -3282,6 +3284,34 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /openapi.yaml:
+    get:
+      tags: [System]
+      operationId: getOpenAPIYAML
+      summary: This API description, as YAML
+      description: Public; no key needed. Built into the API, so it always matches what's running.
+      security: []
+      responses:
+        '200':
+          description: The OpenAPI document.
+          content:
+            application/yaml:
+              schema: { type: string }
+
+  /openapi.json:
+    get:
+      tags: [System]
+      operationId: getOpenAPIJSON
+      summary: This API description, as JSON
+      description: Public; no key needed. The same document as /openapi.yaml.
+      security: []
+      responses:
+        '200':
+          description: The OpenAPI document.
+          content:
+            application/json:
+              schema: { type: object }
+
   /live/sessions:
     get:
       tags: [Live]
@@ -3548,7 +3578,7 @@ components:
       type: http
       scheme: bearer
       bearerFormat: JWT or TrackLin.es API key
-      description: Clerk session token, TrackLin.es key (`tl_ai_…`, `tl_s_…`, or an older `tl_…`), or BugFixes `bf_` key, depending on the route.
+      description: Clerk session token, TrackLin.es key (`tl_p_…`, `tl_ai_…`, `tl_s_…`, or an older `tl_…`), or BugFixes `bf_` key, depending on the route.
     bugfixesBearer:
       type: http
       scheme: bearer
@@ -3713,7 +3743,7 @@ components:
       properties:
         type:
           type: string
-          enum: [bug, feature, task, epic]
+          enum: [bug, feature, task, epic, spike]
           default: task
         title: { type: string, minLength: 1 }
         description: { type: string }
@@ -3727,6 +3757,18 @@ components:
           description: >-
             A value on the board's estimate_scale (400 otherwise). Required when creating on a board with an estimate scale;
             omitted = unchanged on update, and it can't be cleared there. Not allowed on backlog tickets.
+        timebox_days:
+          type: integer
+          minimum: 0
+          maximum: 60
+          description: >-
+            A spike's timebox days (TL-502). Send with timebox_hours; both 0 clears the timebox, both omitted = unchanged.
+            Only meaningful on spikes (set via update).
+        timebox_hours:
+          type: integer
+          minimum: 0
+          maximum: 23
+          description: A spike's timebox hours (0–23). Send with timebox_days.
     CreateBugfixTicket:
       type: object
       required: [board_id, column_id, title]
@@ -3754,7 +3796,7 @@ components:
       properties:
         type:
           type: string
-          enum: [bug, feature, task, epic]
+          enum: [bug, feature, task, epic, spike]
           default: task
         title:
           type: string
@@ -3825,7 +3867,7 @@ components:
         project_id: { type: string, format: uuid }
         column_id: { type: [string, 'null'], format: uuid, description: Null while in the backlog. }
         sprint_id: { type: [string, 'null'], format: uuid }
-        type: { type: string, enum: [bug, feature, task, epic] }
+        type: { type: string, enum: [bug, feature, task, epic, spike] }
         title: { type: string }
         description: { type: string }
         created_by: { type: string }
@@ -4082,7 +4124,7 @@ components:
         description: { type: string }
         created_by: { type: string }
         assigned_to: { type: [string, 'null'] }
-        type: { type: string, enum: [bug, feature, task, epic] }
+        type: { type: string, enum: [bug, feature, task, epic, spike] }
         priority: { type: string, enum: [low, medium, high, urgent] }
         board_id: { type: [string, 'null'], format: uuid }
         board_name: { type: [string, 'null'] }
@@ -4110,6 +4152,8 @@ components:
         duplicate_of_key: { type: [string, 'null'] }
         duplicate_of_title: { type: [string, 'null'] }
         epic_id: { type: [string, 'null'], description: "The epic this ticket is part of, at any depth (epics don't nest)." }
+        timebox_days: { type: [integer, 'null'], description: "A spike's timebox, in days (with timebox_hours). Null when not a spike or not yet timed." }
+        timebox_hours: { type: [integer, 'null'], description: "A spike's timebox hours (0–23)." }
         epic: { $ref: '#/components/schemas/EpicProgress' }
         duplicates:
           type: array
@@ -4133,7 +4177,7 @@ components:
         id: { type: string, format: uuid }
         title: { type: string }
         done: { type: boolean }
-        type: { type: string, enum: [bug, feature, task, epic] }
+        type: { type: string, enum: [bug, feature, task, epic, spike] }
         assigned_to: { type: [string, 'null'] }
         key: { type: [string, 'null'] }
         estimate: { type: [string, 'null'] }
@@ -4221,7 +4265,7 @@ components:
     ReportMix:
       type: object
       properties:
-        type: { type: string, enum: [bug, feature, task, epic] }
+        type: { type: string, enum: [bug, feature, task, epic, spike] }
         count: { type: integer }
         value: { type: number }
     ReportTotals:
@@ -4280,7 +4324,7 @@ components:
                   id: { type: string, format: uuid }
                   title: { type: string }
                   done: { type: boolean }
-                  type: { type: string, enum: [bug, feature, task, epic], description: "An epic counts its sub-tickets towards progress." }
+                  type: { type: string, enum: [bug, feature, task, epic, spike], description: "An epic counts its sub-tickets towards progress." }
     Progress:
       type: object
       properties:

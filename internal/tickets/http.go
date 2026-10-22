@@ -63,6 +63,17 @@ type ticketInput struct {
 	Labels      *[]string `json:"labels"`   // optional; omitted = unchanged, [] clears
 	Estimate    *string   `json:"estimate"` // on the board's scale; omitted = unchanged, "" clears
 	External    *External `json:"external"` // backlog create from an API key (e.g. Bugfixes): where it came from
+	// a spike's timebox (TL-502): set together; both 0 clears; both omitted = unchanged
+	TimeboxDays  *int `json:"timebox_days"`
+	TimeboxHours *int `json:"timebox_hours"`
+}
+
+// intOr0 reads a *int sent on the input, treating "not sent" as 0.
+func intOr0(p *int) int {
+	if p == nil {
+		return 0
+	}
+	return *p
 }
 
 func (in ticketInput) createType() string {
@@ -98,6 +109,12 @@ func (in *ticketInput) valid(w http.ResponseWriter) bool {
 		}
 		in.Labels = &labels
 	}
+	if in.TimeboxDays != nil || in.TimeboxHours != nil {
+		if d, h := intOr0(in.TimeboxDays), intOr0(in.TimeboxHours); d < 0 || d > 60 || h < 0 || h > 23 {
+			http.Error(w, "timebox days must be 0–60 and hours 0–23", http.StatusBadRequest)
+			return false
+		}
+	}
 	return true
 }
 
@@ -120,6 +137,25 @@ func (h System) applyEstimate(r *http.Request, user, id string, in ticketInput, 
 	}
 	if t != nil && *in.Estimate != "" {
 		t.Estimate = in.Estimate
+	}
+	return nil
+}
+
+// applyTimebox stores a spike's timebox sent with an update (TL-502); t may be nil.
+func (h System) applyTimebox(r *http.Request, user, id string, in ticketInput, t *Ticket) error {
+	if in.TimeboxDays == nil && in.TimeboxHours == nil {
+		return nil
+	}
+	days, hours := intOr0(in.TimeboxDays), intOr0(in.TimeboxHours)
+	if err := h.store.SetTimebox(r.Context(), user, id, days, hours); err != nil {
+		return err
+	}
+	if t != nil {
+		if days == 0 && hours == 0 {
+			t.TimeboxDays, t.TimeboxHours = nil, nil
+		} else {
+			t.TimeboxDays, t.TimeboxHours = &days, &hours
+		}
 	}
 	return nil
 }
@@ -191,6 +227,9 @@ func (h System) Create(w http.ResponseWriter, r *http.Request) {
 	if err == nil {
 		err = h.applyPriority(r, org, in, t)
 	}
+	if err == nil {
+		err = h.applyTimebox(r, org, t.ID, in, t)
+	}
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -218,6 +257,9 @@ func (h System) Update(w http.ResponseWriter, r *http.Request) {
 	}
 	if err == nil {
 		err = h.applyEstimate(r, org, r.PathValue("id"), in, nil)
+	}
+	if err == nil {
+		err = h.applyTimebox(r, org, r.PathValue("id"), in, nil)
 	}
 	if err != nil {
 		writeErr(w, err)
@@ -355,6 +397,9 @@ func (h System) CreateBacklog(w http.ResponseWriter, r *http.Request) {
 	}
 	if err == nil {
 		err = h.applyPriority(r, org, in, t)
+	}
+	if err == nil {
+		err = h.applyTimebox(r, org, t.ID, in, t)
 	}
 	if err != nil {
 		writeErr(w, err)

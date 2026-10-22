@@ -16,7 +16,7 @@ func id(what string) map[string]any {
 }
 
 var (
-	ticketType = map[string]any{"type": "string", "enum": []string{"bug", "feature", "task", "epic"}}
+	ticketType = map[string]any{"type": "string", "enum": []string{"bug", "feature", "task", "epic", "spike"}}
 	priority   = map[string]any{"type": "string", "enum": []string{"low", "medium", "high", "urgent"}}
 	labels     = map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Free-form labels; [] clears"}
 	estimate   = str("Estimate on the board's scale (see the board's estimate_scale); \"\" clears")
@@ -145,9 +145,11 @@ var tools = []tool{
 		method: "POST", path: "/api/projects/{project_id}/backlog", body: []string{"title", "description", "type", "priority", "labels"},
 		props:    map[string]any{"project_id": id("Project"), "title": str("Title"), "description": str("Details (markdown)"), "type": ticketType, "priority": priority, "labels": labels},
 		required: []string{"project_id", "title"}},
-	{name: "update_ticket", title: "Update ticket", description: "Change a ticket's title, description, type, priority, labels or estimate. Omitted fields stay as they are.",
-		method: "PATCH", path: "/api/tickets/{ticket_id}", body: []string{"title", "description", "type", "priority", "labels", "estimate"},
-		props:    map[string]any{"ticket_id": id("Ticket"), "title": str("New title"), "description": str("New description (markdown)"), "type": ticketType, "priority": priority, "labels": labels, "estimate": estimate},
+	{name: "update_ticket", title: "Update ticket", description: "Change a ticket's title, description, type, priority, labels, estimate or (spikes only) timebox. Omitted fields stay as they are. For a spike's timebox, send timebox_days and timebox_hours together; 0 and 0 clears it.",
+		method: "PATCH", path: "/api/tickets/{ticket_id}", body: []string{"title", "description", "type", "priority", "labels", "estimate", "timebox_days", "timebox_hours"},
+		props: map[string]any{"ticket_id": id("Ticket"), "title": str("New title"), "description": str("New description (markdown)"), "type": ticketType, "priority": priority, "labels": labels, "estimate": estimate,
+			"timebox_days":  map[string]any{"type": "integer", "minimum": 0, "maximum": 60, "description": "Spike timebox days (with timebox_hours)"},
+			"timebox_hours": map[string]any{"type": "integer", "minimum": 0, "maximum": 23, "description": "Spike timebox hours (with timebox_days)"}},
 		required: []string{"ticket_id"}, prepare: keepTitleAndDescription},
 	{name: "claim_ticket", title: "Claim ticket", description: "Assign an unassigned, unblocked ticket to the caller, atomically. Fails if it's already assigned or blocked. Then follow the chain in the server instructions: read it in full, move it to the in-progress column, do the work with tests, run them, comment, and move it to the last column (review or Done).",
 		method: "POST", path: "/api/tickets/{ticket_id}/claim", props: map[string]any{"ticket_id": id("Ticket")}, required: []string{"ticket_id"}},

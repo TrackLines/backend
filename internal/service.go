@@ -5,10 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"github.com/clerk/clerk-sdk-go/v2"
-	"github.com/clerk/clerk-sdk-go/v2/organization"
-	"github.com/clerk/clerk-sdk-go/v2/organizationmembership"
-	"github.com/clerk/clerk-sdk-go/v2/user"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -18,11 +14,18 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/clerk/clerk-sdk-go/v2"
+	"github.com/clerk/clerk-sdk-go/v2/organization"
+	"github.com/clerk/clerk-sdk-go/v2/organizationmembership"
+	"github.com/clerk/clerk-sdk-go/v2/user"
+
 	"github.com/bugfixes/go-bugfixes/logs"
 	bm "github.com/bugfixes/go-bugfixes/middleware"
 	goFlags "github.com/flags-gg/go-flags"
 	"github.com/jackc/pgx/v5/pgxpool"
-	ConfigBuilder "github.com/keloran/go-config"
+	"github.com/valkey-io/valkey-go"
+
+	"github.com/tracklines/backend"
 	"github.com/tracklines/backend/internal/apikeys"
 	"github.com/tracklines/backend/internal/attachments"
 	"github.com/tracklines/backend/internal/auth"
@@ -33,6 +36,7 @@ import (
 	"github.com/tracklines/backend/internal/columns"
 	"github.com/tracklines/backend/internal/comments"
 	"github.com/tracklines/backend/internal/config"
+	"github.com/tracklines/backend/internal/embed"
 	"github.com/tracklines/backend/internal/enquiries"
 	"github.com/tracklines/backend/internal/httpx"
 	"github.com/tracklines/backend/internal/intake"
@@ -52,13 +56,12 @@ import (
 	"github.com/tracklines/backend/internal/teams"
 	"github.com/tracklines/backend/internal/tickets"
 	"github.com/tracklines/backend/internal/users"
-	"github.com/valkey-io/valkey-go"
 )
 
 // Service owns the HTTP lifecycle and route composition.
 // cmd/server is limited to configuration, migrations and dependency construction.
 type Service struct {
-	Config  *ConfigBuilder.Config
+	Config  *config.Config
 	DB      *pgxpool.Pool
 	Valkey  valkey.Client   // optional (nil when unreachable at startup): caching only
 	Flags   *goFlags.Client // s.Flags.Is("name").Enabled()
@@ -71,7 +74,7 @@ type Service struct {
 	gcal         *integrations.GoogleCalendar // Google Calendar (TL-404); nil without a service account
 }
 
-func New(cfg *ConfigBuilder.Config, db *pgxpool.Pool, vk valkey.Client, fl *goFlags.Client, bill billing.Service, port string) *Service {
+func New(cfg *config.Config, db *pgxpool.Pool, vk valkey.Client, fl *goFlags.Client, bill billing.Service, port string) *Service {
 	return &Service{Config: cfg, DB: db, Valkey: vk, Flags: fl, Billing: bill, Port: port}
 }
 
@@ -164,6 +167,9 @@ func (s *Service) Start() error {
 // Handler is the whole API: routes plus the auth, logging and CORS middleware.
 func (s *Service) Handler() http.Handler {
 	mux := http.NewServeMux()
+	// how many forwarding hops to trust for the client address, so rate limits can't be dodged with a
+	// made-up X-Forwarded-For (TL finding: direct-origin spoofing). Set once, before serving.
+	httpx.SetTrustedProxyHops(config.Get(s.Config).TrustedProxyHops)
 	parties := config.Get(s.Config).AuthorizedParties()
 	optional := auth.OptionalWithAuthorizedParties(parties...)
 	required := auth.RequiredWith(optional)
@@ -406,6 +412,24 @@ func (s *Service) Handler() http.Handler {
 
 	// Request intake: a project's unlisted public form (no account) and the team's triage inbox
 	ik := intake.NewSystem(s.DB).WithNotifier(notify).WithAdmins(o.AdminModel()) // a promoted request is announced to the project's spaces (TL-288)
+	// the API's own description, public, built into the binary so it matches what's running (TL-484):
+	// YAML for tools, JSON for the website's API reference
+	specJSON, err := backend.OpenAPIJSON()
+	if err != nil {
+		logs.Warnf("openapi: %v", err)
+	}
+	mux.Handle("GET /api/openapi.yaml", public("openapi", 60, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/yaml")
+		_, _ = w.Write(backend.OpenAPIYAML)
+	}))
+	mux.Handle("GET /api/openapi.json", public("openapi", 60, func(w http.ResponseWriter, _ *http.Request) {
+		if specJSON == nil {
+			http.Error(w, "the API description is unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(specJSON)
+	}))
 	mux.Handle("GET /api/intake/{token}", public("intake-form", 60, ik.Form))
 	mux.Handle("POST /api/intake/{token}", public("intake-submit", 10, ik.Submit)) // on top of the per-sender hourly cap
 	mux.Handle("GET /api/projects/{id}/intake", signedIn(ik.Settings))
@@ -426,6 +450,18 @@ func (s *Service) Handler() http.Handler {
 	mux.Handle("PUT /api/roadmaps/{id}/items/{item}/tickets", signedIn(r.SetItemTickets))       // item progress = linked tickets done
 	mux.Handle("GET /api/roadmaps/{id}/updates", public("roadmap-updates", 120, r.ListUpdates)) // public according to roadmap visibility
 	mux.Handle("POST /api/roadmaps/{id}/updates", signedIn(r.PublishUpdate))
+
+	// Embedding (TL-494): an org's admins list the origins its public roadmap/request-form widgets may
+	// be loaded on; those origins get dynamic CORS on the public routes above (wired at the bottom).
+	em := embed.NewSystem(s.DB).WithAdmins(o.AdminModel())
+	mux.Handle("GET /api/embed/origins", signedIn(em.List))
+	mux.Handle("POST /api/embed/origins", signedIn(em.Add))
+	mux.Handle("DELETE /api/embed/origins/{id}", signedIn(em.Remove))
+	// embed keys: public identifiers in the widget snippet, for usage stats (TL-497)
+	mux.Handle("GET /api/embed/keys", signedIn(em.ListKeys))
+	mux.Handle("POST /api/embed/keys", signedIn(em.CreateKey))
+	mux.Handle("DELETE /api/embed/keys/{id}", signedIn(em.DeleteKey))
+	mux.Handle("GET /api/embed/keys/{id}/usage", signedIn(em.KeyUsage))
 
 	// API keys — AI agent or server/service; managing keys needs a signed-in session
 	k := apikeys.NewSystem(s.DB)
@@ -460,9 +496,20 @@ func (s *Service) Handler() http.Handler {
 	// MCP (Streamable HTTP) for bots: same auth as REST (tl_ key or Clerk session); each tool calls a REST route
 	// in-process through handler, so MCP and REST can't drift apart
 	mux.Handle("/mcp", required(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { mcpHandler.ServeHTTP(w, r) })))
+	// CORS: the app's own origins go through the strict middleware above; a third-party origin an org
+	// has allowed for embedding (TL-494) gets Access-Control-Allow-Origin reflected on the public
+	// roadmap/intake routes, gated by the flags.gg "embedding" flag, and otherwise falls through to it.
+	muxZoned := httpx.WithZone(mux)
+	res := embed.Resolver{DB: s.DB}
+	store := embed.Store{DB: s.DB}
+	// a widget hit is counted off the request path (best-effort, non-blocking) for embed usage stats
+	recordUsage := func(org, origin, path, key string) {
+		go store.RecordUsage(context.Background(), org, origin, path, key)
+	}
+	corsHandler := embed.CORS(parties, s.flag("embedding"), res.OrgFor, store.Allowed, recordUsage, "GET, POST, OPTIONS", "Content-Type")(cors.CORS(muxZoned), muxZoned)
 	// BadKeys first: an address that keeps presenting invalid keys is refused before more key lookups
 	handler = ratelimit.BadKeys(limits, 20, time.Now)(apikeys.Middleware(s.DB, keyMember)(ratelimit.Middleware(s.Valkey, config.Get(s.Config).RateLimit, time.Now)(optional(users.Ensure(s.DB)(
-		bm.Recoverer(bm.RequestID(bm.Logger(cors.CORS(httpx.WithZone(mux))))))))))
+		bm.Recoverer(bm.RequestID(bm.Logger(corsHandler))))))))
 	mcpHandler = mcp.Handler(handler, "1.0.0")
 	// Google Chat signs its requests with a Google bearer token (TL-289), which the Clerk middleware
 	// above would refuse as a bad session: that one route goes round it and checks Google's signature itself

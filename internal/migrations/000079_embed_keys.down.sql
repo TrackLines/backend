@@ -1,0 +1,2 @@
+DROP TABLE IF EXISTS embed_usage;
+DROP TABLE IF EXISTS embed_keys;

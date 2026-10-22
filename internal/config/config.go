@@ -1,13 +1,33 @@
 package config
 
 import (
+	"errors"
+	"fmt"
+	"io/fs"
+	"os"
 	"strings"
 
 	bugfixes "github.com/bugfixes/go-bugfixes"
 	"github.com/bugfixes/go-bugfixes/logs"
 	"github.com/caarlos0/env/v8"
-	ConfigBuilder "github.com/keloran/go-config"
+	"github.com/joho/godotenv"
+	"github.com/keloran/go-config/v2/auth/clerk"
+	configbugfixes "github.com/keloran/go-config/v2/bugfixes"
+	"github.com/keloran/go-config/v2/database/postgres"
+	"github.com/keloran/go-config/v2/flags"
+	"github.com/keloran/go-config/v2/local"
 )
+
+// Config is the backend's: go-config's packages for what it uses (no all-in-one root package, so
+// Mongo, Keycloak, Rabbit, Influx and Vault stay out of the binary), plus its own settings.
+type Config struct {
+	Local    local.System
+	Database postgres.System
+	Clerk    clerk.System
+	Bugfixes configbugfixes.System
+	Flags    flags.System
+	Project  Project
+}
 
 type Stripe struct {
 	Key           string `env:"STRIPE_KEY"`
@@ -44,6 +64,10 @@ type Project struct {
 	SecretKey              string   `env:"TRACKLINES_SECRET_KEY"`                // 32 bytes base64: seals integration tokens; integrations stay off without it
 	Git                    Git
 	RateLimit              int    `env:"API_KEY_RATE_LIMIT" envDefault:"300"`                        // requests per minute per API key; 0 turns it off
+	// how many right-most X-Forwarded-For hops our infrastructure writes, so we don't trust a
+	// caller-supplied address (httpx.ClientIP). 1 = a single trusted edge (default). 0 = the origin is
+	// reachable directly (local Compose), so ignore X-Forwarded-For and use the connection address.
+	TrustedProxyHops int `env:"TRUSTED_PROXY_HOPS" envDefault:"1"`
 	ChewedFeedURL          string `env:"CHEWEDFEED_API_URL" envDefault:"https://api.chewedfeed.com"` // ChewedFeed HQ (customer sync, enquiries)
 	ChewedFeedKey          string `env:"CHEWEDFEED_ENQUIRY_KEY"`                                     // tracklines' enquiry key in ChewedFeed; sync and enquiries are off without it
 	// short links for "Copy link" (TL-277), through 1tn
@@ -70,34 +94,43 @@ func (p *Project) AuthorizedParties() []string {
 	return parties
 }
 
-type ProjectConfigurator struct{}
-
-func (ProjectConfigurator) Build(cfg *ConfigBuilder.Config) error {
-	p := &Project{}
-	if err := env.Parse(p); err != nil {
-		return logs.Errorf("failed to parse project config: %v", err)
-	}
-	cfg.ProjectConfig = p
-	return nil
-}
-
-func Build() (*ConfigBuilder.Config, error) {
-	c := ConfigBuilder.NewConfigNoVault()
-	if err := c.Build(
-		ConfigBuilder.Local,
-		ConfigBuilder.Postgres,
-		ConfigBuilder.Clerk,
-		ConfigBuilder.Bugfixes,
-		ConfigBuilder.Flags,
-		ConfigBuilder.WithProjectConfigurator(ProjectConfigurator{})); err != nil {
+// Build reads .env (if there is one; the environment wins), then each part's settings, then sends
+// logs and errors to Bugfixes with them.
+func Build() (*Config, error) {
+	if err := loadDotEnv(); err != nil {
 		return nil, err
 	}
+	l, err := local.Build()
+	if err != nil {
+		return nil, fmt.Errorf("config: unable to build local: %w", err)
+	}
+	db := postgres.NewSystem()
+	if _, err := db.Build(); err != nil {
+		return nil, fmt.Errorf("database: unable to build: %w", err)
+	}
+	ck := clerk.NewSystem()
+	if _, err := ck.Build(); err != nil {
+		return nil, fmt.Errorf("clerk: unable to build: %w", err)
+	}
+	bf := configbugfixes.NewSystem()
+	if _, err := bf.Build(); err != nil {
+		return nil, fmt.Errorf("bugfixes: unable to build: %w", err)
+	}
+	fl, err := flags.Build()
+	if err != nil {
+		return nil, fmt.Errorf("flags: unable to build: %w", err)
+	}
+	c := &Config{Local: *l, Database: *db, Clerk: *ck, Bugfixes: *bf, Flags: *fl}
+	if err := env.Parse(&c.Project); err != nil {
+		return nil, fmt.Errorf("failed to parse project config: %w", err)
+	}
+
 	// Share go-config's BugFixes credentials with SDK package-level logging.
 	bugfixesConfig := bugfixes.Config{
 		Server:      c.Bugfixes.Server,
 		AgentKey:    c.Bugfixes.AgentKey,
 		AgentSecret: c.Bugfixes.AgentSecret,
-		LogLevel:    Get(c).BugfixesLogLevel,
+		LogLevel:    c.Project.BugfixesLogLevel,
 		LocalOnly:   c.Local.KeepLocal,
 	}
 	bugfixes.SetDefaultConfig(bugfixesConfig)
@@ -111,11 +144,23 @@ func Build() (*ConfigBuilder.Config, error) {
 	return c, nil
 }
 
-// Get returns the typed project config; Build must have succeeded first.
-func Get(cfg *ConfigBuilder.Config) *Project {
-	p, _ := ConfigBuilder.GetProjectConfig[Project](cfg)
-	if p == nil {
+// loadDotEnv loads .env when there is one, as go-config's root package did; set variables win.
+func loadDotEnv() error {
+	if _, err := os.Stat(".env"); errors.Is(err, fs.ErrNotExist) {
+		return nil
+	} else if err != nil {
+		return fmt.Errorf("failed to stat .env: %w", err)
+	}
+	if err := godotenv.Load(".env"); err != nil {
+		return fmt.Errorf("failed to load .env: %w", err)
+	}
+	return nil
+}
+
+// Get returns the project settings; nil (nothing configured, in tests) is the defaults-off zero value.
+func Get(cfg *Config) *Project {
+	if cfg == nil {
 		return &Project{} // nothing configured: optional integrations stay off
 	}
-	return p
+	return &cfg.Project
 }

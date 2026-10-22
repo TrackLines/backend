@@ -7,10 +7,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
       - run: go vet ./...
       - run: go build ./...
+      # known vulnerabilities in the stdlib and our dependencies that our code actually reaches (PCI DSS 6.3.1)
+      - run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
       # DB tests start their own PostgreSQL/Valkey containers (internal/testdb, Testcontainers) on the runner's Docker
       - run: go test ./...

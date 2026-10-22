@@ -10,7 +10,9 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/tracklines/backend/internal/boards"
+	"github.com/tracklines/backend/retention"
 )
 
 var (
@@ -34,8 +36,13 @@ const scaleSQL = `COALESCE((SELECT estimate_scale FROM boards WHERE id = t.board
 
 type Store struct{ DB *pgxpool.Pool }
 
+// TypeSpike: a timeboxed investigation ticket (TL-502). A normal workable type, unlike epics.
+const TypeSpike = "spike"
+
 // ValidType reports whether t is a ticket type; "" means "unchanged" on update.
-func ValidType(t string) bool { return t == "bug" || t == "feature" || t == "task" || t == TypeEpic }
+func ValidType(t string) bool {
+	return t == "bug" || t == "feature" || t == "task" || t == TypeEpic || t == TypeSpike
+}
 
 // notFound maps "no rows" and malformed uuids (22P02) to ErrNotFound.
 func notFound(err error) error {
@@ -221,7 +228,7 @@ func (s Store) PageBacklogStatus(ctx context.Context, owner, projectID, epic, ty
 		SELECT 1 FROM ticket_labels l WHERE l.ticket_id = t.id AND lower(l.label) = ANY($2)))
 		AND (cardinality($3::text[]) = 0 OR t.priority::text = ANY($3)) AND ` + inEpic("$4::text")
 
-	out := &BacklogPage{Counts: map[string]int{"all": 0, "bug": 0, "feature": 0, "task": 0, "epic": 0}}
+	out := &BacklogPage{Counts: map[string]int{"all": 0, "bug": 0, "feature": 0, "task": 0, "spike": 0, "epic": 0}}
 	rows, err := s.DB.Query(ctx, `SELECT t.type::text, count(*) FROM tickets t WHERE `+where+` GROUP BY 1`, projectID, lower, priorities, epic)
 	if err != nil {
 		return nil, err
@@ -290,6 +297,18 @@ func (s Store) Update(ctx context.Context, owner, id, typ, title, desc, priority
 	return exec(s.DB.Exec(ctx, `UPDATE tickets t SET title = $3, description = $4,
 		type = COALESCE(NULLIF($5, '')::ticket_type, t.type), priority = COALESCE(NULLIF($6, '')::priority, t.priority), updated_at = now()
 		FROM projects p WHERE t.id = $1 AND p.id = t.project_id AND p.owner_clerk_id = $2`, id, owner, title, desc, typ, priority))
+}
+
+// SetTimebox sets a spike's timebox (TL-502). days + hours are stored as given; 0/0 clears it (NULL).
+// It doesn't check the type: the UI only offers it on spikes, and a leftover timebox on another type
+// is simply not shown.
+func (s Store) SetTimebox(ctx context.Context, owner, id string, days, hours int) error {
+	var d, h *int
+	if days != 0 || hours != 0 {
+		d, h = &days, &hours
+	}
+	return exec(s.DB.Exec(ctx, `UPDATE tickets t SET timebox_days = $3, timebox_hours = $4, updated_at = now()
+		FROM projects p WHERE t.id = $1 AND p.id = t.project_id AND p.owner_clerk_id = $2`, id, owner, d, h))
 }
 
 // becomeEpic gets ticket id ready to be an epic (TL-213): no epic above or below it, off its board (to
@@ -958,11 +977,9 @@ func deref(s *string) string {
 }
 
 // Retention is how long a deleted ticket stays in the bin before it's purged for good (TL-256).
-const Retention = 30 * 24 * time.Hour
+const Retention = retention.Retention
 
-// PurgeBin permanently deletes tickets binned more than Retention before now. Their comments,
-// labels, links and attachments go with them (cascade); their files were queued when binned.
+// PurgeBin permanently deletes tickets binned more than Retention before now (retention.PurgeBin).
 func PurgeBin(ctx context.Context, db *pgxpool.Pool, now time.Time) (int64, error) {
-	tag, err := db.Exec(ctx, `DELETE FROM tickets_all WHERE deleted_at < $1`, now.Add(-Retention))
-	return tag.RowsAffected(), err
+	return retention.PurgeBin(ctx, db, now)
 }

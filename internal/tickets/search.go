@@ -37,6 +37,7 @@ type SearchQuery struct {
 	Labels     []string
 	Assignee   string // a user id / agent name; see Unassigned
 	Unassigned bool
+	Creator    string // a user id / agent name of who raised it; empty = any
 	Status     string // open | done | ""
 	Limit      int
 	Page       int    // 1-based; with Limit, for "load more" (stable: rank, then updated, then id)
@@ -113,11 +114,12 @@ func (s Store) Search(ctx context.Context, owner string, q SearchQuery) ([]Searc
 			AND ($9 = '' OR t.assigned_to = $9)
 			AND ($10 = false OR t.assigned_to IS NULL)
 			AND ($11 = '' OR ($11 = 'done') = `+boards.TicketDoneSQL+`)
+			AND ($16 = '' OR t.created_by = $16)
 			AND `+inEpic("$15::text")+`
 		ORDER BY t.number = $14 DESC NULLS LAST, CASE WHEN q.query IS NULL THEN 0 ELSE ts_rank(t.search, q.query) END DESC, t.updated_at DESC, t.id
 		LIMIT $12 OFFSET $13`,
 		owner, query, keyID, q.ProjectID, q.BoardID, nonNil(q.Types), nonNil(q.Priorities), lower(q.Labels),
-		q.Assignee, q.Unassigned, q.Status, q.Limit, (max(q.Page, 1)-1)*q.Limit, number, q.Epic)
+		q.Assignee, q.Unassigned, q.Status, q.Limit, (max(q.Page, 1)-1)*q.Limit, number, q.Epic, q.Creator)
 	if err != nil {
 		return nil, notFound(err)
 	}
@@ -158,7 +160,7 @@ func lower(v []string) []string {
 	return out
 }
 
-// Search: GET /api/search?q=&project=&board=&type=&priority=&label=&assignee=me|unassigned|<id>&status=open|done&limit=&page=
+// Search: GET /api/search?q=&project=&board=&type=&priority=&label=&assignee=me|unassigned|<id>&creator=me|<id>&status=open|done&limit=&page=
 // "My work" is assignee=me&status=open (newest change first) across every board and project.
 // type, priority and label repeat (any of).
 func (h System) Search(w http.ResponseWriter, r *http.Request) {
@@ -187,6 +189,11 @@ func (h System) Search(w http.ResponseWriter, r *http.Request) {
 		q.Assignee = auth.ActorID(r.Context())
 	default:
 		q.Assignee = a
+	}
+	if c := v.Get("creator"); c == "me" {
+		q.Creator = auth.ActorID(r.Context())
+	} else {
+		q.Creator = c
 	}
 	if p := v.Get("page"); p != "" {
 		n, err := strconv.Atoi(p)
