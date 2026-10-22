@@ -275,6 +275,30 @@ func (g Git) githubToken(ctx context.Context, installation string) (string, erro
 	return tok.Token, nil
 }
 
+// githubCommits is a PR's commit messages.
+// ponytail: first 100 commits; a PR with more is rare, and its branch and title still link it.
+func (g Git) githubCommits(ctx context.Context, token, repo string, number int) ([]string, error) {
+	owner, name, _ := strings.Cut(repo, "/")
+	req, err := g.githubRequest(ctx, http.MethodGet, fmt.Sprintf("/repos/%s/%s/pulls/%d/commits?per_page=100",
+		url.PathEscape(owner), url.PathEscape(name), number), token, nil)
+	if err != nil {
+		return nil, err
+	}
+	var out []struct {
+		Commit struct {
+			Message string `json:"message"`
+		} `json:"commit"`
+	}
+	if err := g.do(req, &out); err != nil {
+		return nil, err
+	}
+	msgs := make([]string, 0, len(out))
+	for _, c := range out {
+		msgs = append(msgs, c.Commit.Message)
+	}
+	return msgs, nil
+}
+
 // Repo is a repository a connection can see.
 type Repo struct {
 	FullName      string `json:"full_name"` // owner/repo or workspace/repo
@@ -519,6 +543,21 @@ func (g Git) bitbucketPages(ctx context.Context, path, token string, out any) er
 	}
 	raw, _ := json.Marshal(all)
 	return json.Unmarshal(raw, out)
+}
+
+// bitbucketCommits is a PR's commit messages, every page.
+func (g Git) bitbucketCommits(ctx context.Context, token, repo string, id int) ([]string, error) {
+	var out []struct {
+		Message string `json:"message"`
+	}
+	if err := g.bitbucketPages(ctx, fmt.Sprintf("%s/pullrequests/%d/commits?pagelen=100", bitbucketRepoPath(repo), id), token, &out); err != nil {
+		return nil, err
+	}
+	msgs := make([]string, 0, len(out))
+	for _, c := range out {
+		msgs = append(msgs, c.Message)
+	}
+	return msgs, nil
 }
 
 // providerMessage is the error a provider gave, briefly: Bitbucket's {"error": {"message"}}, GitHub's {"message"}.

@@ -30,6 +30,8 @@ type PullRequest struct {
 	Author   string `json:"author"`
 	Branch   string `json:"branch"`
 	body     string
+	// installation: the GitHub App installation the event came through, for fetching its commits
+	installation string
 }
 
 // LinkedPR is a PR linked to a ticket.
@@ -113,8 +115,11 @@ func (h System) WithShortLinks(base string) System {
 }
 
 // linkPR records pr on the tickets it mentions in each project its repo is linked to (in the
-// orgs that link it), and finishes those tickets when the PR has just been merged.
+// orgs that link it), and finishes those tickets when the PR has just been merged. Its commit
+// messages count as mentions too (TL-513), fetched once a linked repo needs them.
 func (h System) linkPR(ctx context.Context, orgs []string, pr PullRequest) error {
+	var commits []string
+	fetched := false
 	for _, org := range orgs {
 		var project, prefix string
 		err := h.store.DB.QueryRow(ctx, `SELECT r.project_id, p.key_prefix FROM project_repos r JOIN projects p ON p.id = r.project_id
@@ -125,7 +130,10 @@ func (h System) linkPR(ctx context.Context, orgs []string, pr PullRequest) error
 		if err != nil {
 			return err
 		}
-		mentioned, err := h.mentioned(ctx, project, prefix, pr.Branch, pr.Title, pr.body)
+		if !fetched {
+			commits, fetched = h.commitMessages(ctx, org, pr), true
+		}
+		mentioned, err := h.mentioned(ctx, project, prefix, append([]string{pr.Branch, pr.Title, pr.body}, commits...)...)
 		if err != nil {
 			return err
 		}
@@ -147,6 +155,28 @@ func (h System) linkPR(ctx context.Context, orgs []string, pr PullRequest) error
 		}
 	}
 	return nil
+}
+
+// commitMessages is the PR's commit messages. A failed fetch is logged and gives none: the PR still
+// links from its branch, title and description.
+func (h System) commitMessages(ctx context.Context, org string, pr PullRequest) []string {
+	var msgs []string
+	var token string
+	var err error
+	switch pr.Provider {
+	case GitHub:
+		if token, err = h.git.githubToken(ctx, pr.installation); err == nil {
+			msgs, err = h.git.githubCommits(ctx, token, pr.Repo, pr.Number)
+		}
+	case Bitbucket:
+		if token, err = h.bitbucketAccess(ctx, org); err == nil {
+			msgs, err = h.git.bitbucketCommits(ctx, token, pr.Repo, pr.Number)
+		}
+	}
+	if err != nil {
+		logs.Warnf("integrations: commits of %s %s#%d: %v", pr.Provider, pr.Repo, pr.Number, err)
+	}
+	return msgs
 }
 
 // finishByPR closes a ticket whose PR merged: to its board's Done column, or resolved in the
@@ -215,7 +245,7 @@ func githubPR(event string, body []byte) (pr PullRequest, installation string, o
 		state = "draft"
 	}
 	return PullRequest{Provider: GitHub, Repo: e.Repository.FullName, Number: p.Number, URL: p.HTMLURL, Title: p.Title,
-		State: state, Author: p.User.Login, Branch: p.Head.Ref, body: p.Body}, e.Installation.ID.String(), true
+		State: state, Author: p.User.Login, Branch: p.Head.Ref, body: p.Body, installation: e.Installation.ID.String()}, e.Installation.ID.String(), true
 }
 
 // bitbucketPR reads a pullrequest:* event; ok false for other events.
