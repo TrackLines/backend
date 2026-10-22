@@ -16,6 +16,7 @@ import (
 	"github.com/keloran/go-config/v2/database/postgres"
 	"github.com/keloran/go-config/v2/flags"
 	"github.com/keloran/go-config/v2/local"
+	"github.com/keloran/go-config/v2/onepassword"
 )
 
 // Config is the backend's: go-config's packages for what it uses (no all-in-one root package, so
@@ -63,13 +64,13 @@ type Project struct {
 	UploadThingToken       string   `env:"UPLOADTHING_TOKEN"`                    // ticket attachments; used to delete stored files
 	SecretKey              string   `env:"TRACKLINES_SECRET_KEY"`                // 32 bytes base64: seals integration tokens; integrations stay off without it
 	Git                    Git
-	RateLimit              int    `env:"API_KEY_RATE_LIMIT" envDefault:"300"`                        // requests per minute per API key; 0 turns it off
+	RateLimit              int `env:"API_KEY_RATE_LIMIT" envDefault:"300"` // requests per minute per API key; 0 turns it off
 	// how many right-most X-Forwarded-For hops our infrastructure writes, so we don't trust a
 	// caller-supplied address (httpx.ClientIP). 1 = a single trusted edge (default). 0 = the origin is
 	// reachable directly (local Compose), so ignore X-Forwarded-For and use the connection address.
-	TrustedProxyHops int `env:"TRUSTED_PROXY_HOPS" envDefault:"1"`
-	ChewedFeedURL          string `env:"CHEWEDFEED_API_URL" envDefault:"https://api.chewedfeed.com"` // ChewedFeed HQ (customer sync, enquiries)
-	ChewedFeedKey          string `env:"CHEWEDFEED_ENQUIRY_KEY"`                                     // tracklines' enquiry key in ChewedFeed; sync and enquiries are off without it
+	TrustedProxyHops int    `env:"TRUSTED_PROXY_HOPS" envDefault:"1"`
+	ChewedFeedURL    string `env:"CHEWEDFEED_API_URL" envDefault:"https://api.chewedfeed.com"` // ChewedFeed HQ (customer sync, enquiries)
+	ChewedFeedKey    string `env:"CHEWEDFEED_ENQUIRY_KEY"`                                     // tracklines' enquiry key in ChewedFeed; sync and enquiries are off without it
 	// short links for "Copy link" (TL-277), through 1tn
 	ShortLinkAPI  string `env:"SHORT_LINK_API" envDefault:"https://api.1tn.pw"`
 	ShortLinkBase string `env:"SHORT_LINK_BASE" envDefault:"https://1tn.pw"`
@@ -94,11 +95,46 @@ func (p *Project) AuthorizedParties() []string {
 	return parties
 }
 
+// secrets are the env vars loaded from 1Password's tracklines vault at boot (TL-526), "<item>.<field>"
+// with an item per service. Nothing without OP_SERVICE_ACCOUNT_TOKEN, and a set variable wins.
+var secrets = map[string]string{
+	"bitbucket_backend.username":   "BITBUCKET_CLIENT_ID",
+	"bitbucket_backend.credential": "BITBUCKET_CLIENT_SECRET",
+	"bugfixes_backend.username":    "BUGFIXES_AGENT_KEY",
+	"bugfixes_backend.credential":  "BUGFIXES_AGENT_SECRET",
+	"bugfixes_backend.service":     "BUGFIXES_SERVICE", // read by go-config's bugfixes from its next release
+	"chewedfeed_backend.username":  "CHEWEDFEED_ENQUIRY_KEY",
+	"clerk_backend.username":       "CLERK_SECRET_KEY",
+	"clerk_backend.credential":     "CLERK_WEBHOOK_SECRET",
+	"flags_backend.username":       "FLAGS_AGENT_ID",
+	"flags_backend.credential":     "FLAGS_ENVIRONMENT_ID",
+	"flags_backend.project":        "FLAGS_PROJECT_ID",
+	"github_backend.username":      "GITHUB_APP_ID",
+	"github_backend.credential":    "GITHUB_APP_PRIVATE_KEY",
+	"github_backend.slug":          "GITHUB_APP_SLUG",
+	"github_backend.client_id":     "GITHUB_CLIENT_ID",
+	"github_backend.client_secret": "GITHUB_CLIENT_SECRET",
+	"github_backend.webhook":       "GITHUB_WEBHOOK_SECRET",
+	"google_backend.username":      "GOOGLE_CHAT_PROJECT_NUMBER",
+	"google_backend.credential":    "GOOGLE_CHAT_CREDENTIALS",
+	"stripe_backend.credential":    "STRIPE_KEY",
+	"stripe_backend.webhook":       "STRIPE_WEBHOOK_SECRET",
+	"stripe_backend.enterprise":    "STRIPE_ENTERPRISE_ID",
+	"stripe_backend.pro":           "STRIPE_PRO_ID",
+	"tracklines_backend.username":  "TRACKLINES_SECRET_KEY",
+	"vapid_backend.username":       "VAPID_PUBLIC_KEY",
+	"vapid_backend.credential":     "VAPID_PRIVATE_KEY",
+	"uploadthing_backend.username": "UPLOADTHING_TOKEN",
+}
+
 // Build reads .env (if there is one; the environment wins), then each part's settings, then sends
 // logs and errors to Bugfixes with them.
 func Build() (*Config, error) {
 	if err := loadDotEnv(); err != nil {
 		return nil, err
+	}
+	if err := onepassword.Load("tracklines", secrets); err != nil {
+		return nil, fmt.Errorf("1password: %w", err)
 	}
 	l, err := local.Build()
 	if err != nil {
