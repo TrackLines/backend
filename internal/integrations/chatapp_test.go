@@ -216,6 +216,33 @@ func TestChatApp(t *testing.T) {
 		t.Fatalf("room: %s", room.Body)
 	}
 
+	// help (TL-529, Marketplace review): "help", "@app help" and /help, in a DM or a space, in either
+	// format, answer with how to get started; it makes no link code. Anything else points at help.
+	isHelp := func(body string) bool { return strings.Contains(body, "TrackLin.es for Google Chat") && strings.Contains(body, "/help") }
+	for name, body := range map[string]string{
+		"dm help":         `{"type":"MESSAGE","user":{"name":"users/hal"},"space":{"name":"spaces/DMHAL","spaceType":"DIRECT_MESSAGE"},"message":{"text":"Help","argumentText":" Help "}}`,
+		"space @app help": `{"type":"MESSAGE","user":{"name":"users/hal"},"space":{"name":"spaces/ROOM","spaceType":"SPACE"},"message":{"text":"@TrackLin.es help"}}`,
+		"slash command":   `{"type":"MESSAGE","user":{"name":"users/hal"},"space":{"name":"spaces/ROOM","spaceType":"SPACE"},"message":{"text":"/help","slashCommand":{"commandId":"1"}}}`,
+		"app command":     `{"type":"MESSAGE","user":{"name":"users/hal"},"space":{"name":"spaces/DMHAL","spaceType":"DIRECT_MESSAGE"},"appCommandMetadata":{"appCommandId":1,"appCommandType":"SLASH_COMMAND"}}`,
+		"add-on message":  `{"chat":{"user":{"name":"users/hal"},"messagePayload":{"space":{"name":"spaces/DMHAL","spaceType":"DIRECT_MESSAGE"},"message":{"argumentText":"help"}}}}`,
+		"add-on command":  `{"chat":{"user":{"name":"users/hal"},"appCommandPayload":{"space":{"name":"spaces/ROOM","spaceType":"SPACE"},"appCommandMetadata":{"appCommandId":1}}}}`,
+	} {
+		rec := event(chatToken, body)
+		if rec.Code != 200 || !isHelp(rec.Body.String()) || strings.Contains(rec.Body.String(), "code=") {
+			t.Errorf("%s: %d %s", name, rec.Code, rec.Body)
+		}
+		if strings.HasPrefix(name, "add-on") && !strings.Contains(rec.Body.String(), "createMessageAction") {
+			t.Errorf("%s: not an add-on reply: %s", name, rec.Body)
+		}
+	}
+	other := event(chatToken, `{"type":"MESSAGE","user":{"name":"users/hal"},"space":{"name":"spaces/DMHAL","spaceType":"DIRECT_MESSAGE"},"message":{"text":"is help coming?","slashCommand":{"commandId":"2"}}}`)
+	if isHelp(other.Body.String()) || !strings.Contains(other.Body.String(), "Type help to see what I can do") {
+		t.Fatalf("not help: %s", other.Body)
+	}
+	if !strings.Contains(room.Body.String(), "Type help") {
+		t.Fatalf("room reply doesn't point at help: %s", room.Body)
+	}
+
 	// linking: signed in, once, before it expires; API keys can't
 	session := func(user string) context.Context {
 		return clerk.ContextWithSessionClaims(ctx, &clerk.SessionClaims{RegisteredClaims: clerk.RegisteredClaims{Subject: user}})
