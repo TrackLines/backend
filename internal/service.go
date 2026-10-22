@@ -36,6 +36,7 @@ import (
 	"github.com/tracklines/backend/internal/columns"
 	"github.com/tracklines/backend/internal/comments"
 	"github.com/tracklines/backend/internal/config"
+	"github.com/tracklines/backend/internal/embed"
 	"github.com/tracklines/backend/internal/enquiries"
 	"github.com/tracklines/backend/internal/httpx"
 	"github.com/tracklines/backend/internal/intake"
@@ -450,6 +451,18 @@ func (s *Service) Handler() http.Handler {
 	mux.Handle("GET /api/roadmaps/{id}/updates", public("roadmap-updates", 120, r.ListUpdates)) // public according to roadmap visibility
 	mux.Handle("POST /api/roadmaps/{id}/updates", signedIn(r.PublishUpdate))
 
+	// Embedding (TL-494): an org's admins list the origins its public roadmap/request-form widgets may
+	// be loaded on; those origins get dynamic CORS on the public routes above (wired at the bottom).
+	em := embed.NewSystem(s.DB).WithAdmins(o.AdminModel())
+	mux.Handle("GET /api/embed/origins", signedIn(em.List))
+	mux.Handle("POST /api/embed/origins", signedIn(em.Add))
+	mux.Handle("DELETE /api/embed/origins/{id}", signedIn(em.Remove))
+	// embed keys: public identifiers in the widget snippet, for usage stats (TL-497)
+	mux.Handle("GET /api/embed/keys", signedIn(em.ListKeys))
+	mux.Handle("POST /api/embed/keys", signedIn(em.CreateKey))
+	mux.Handle("DELETE /api/embed/keys/{id}", signedIn(em.DeleteKey))
+	mux.Handle("GET /api/embed/keys/{id}/usage", signedIn(em.KeyUsage))
+
 	// API keys — AI agent or server/service; managing keys needs a signed-in session
 	k := apikeys.NewSystem(s.DB)
 	k.IsAdmin = o.AdminModel().IsAdmin // service keys are the org's: admins make and revoke them (TL-462)
@@ -483,9 +496,20 @@ func (s *Service) Handler() http.Handler {
 	// MCP (Streamable HTTP) for bots: same auth as REST (tl_ key or Clerk session); each tool calls a REST route
 	// in-process through handler, so MCP and REST can't drift apart
 	mux.Handle("/mcp", required(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { mcpHandler.ServeHTTP(w, r) })))
+	// CORS: the app's own origins go through the strict middleware above; a third-party origin an org
+	// has allowed for embedding (TL-494) gets Access-Control-Allow-Origin reflected on the public
+	// roadmap/intake routes, gated by the flags.gg "embedding" flag, and otherwise falls through to it.
+	muxZoned := httpx.WithZone(mux)
+	res := embed.Resolver{DB: s.DB}
+	store := embed.Store{DB: s.DB}
+	// a widget hit is counted off the request path (best-effort, non-blocking) for embed usage stats
+	recordUsage := func(org, origin, path, key string) {
+		go store.RecordUsage(context.Background(), org, origin, path, key)
+	}
+	corsHandler := embed.CORS(parties, s.flag("embedding"), res.OrgFor, store.Allowed, recordUsage, "GET, POST, OPTIONS", "Content-Type")(cors.CORS(muxZoned), muxZoned)
 	// BadKeys first: an address that keeps presenting invalid keys is refused before more key lookups
 	handler = ratelimit.BadKeys(limits, 20, time.Now)(apikeys.Middleware(s.DB, keyMember)(ratelimit.Middleware(s.Valkey, config.Get(s.Config).RateLimit, time.Now)(optional(users.Ensure(s.DB)(
-		bm.Recoverer(bm.RequestID(bm.Logger(cors.CORS(httpx.WithZone(mux))))))))))
+		bm.Recoverer(bm.RequestID(bm.Logger(corsHandler))))))))
 	mcpHandler = mcp.Handler(handler, "1.0.0")
 	// Google Chat signs its requests with a Google bearer token (TL-289), which the Clerk middleware
 	// above would refuse as a bad session: that one route goes round it and checks Google's signature itself
