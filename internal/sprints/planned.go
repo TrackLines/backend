@@ -5,6 +5,7 @@ import (
 	"errors"
 	"math"
 	"net/http"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/tracklines/backend/internal/auth"
@@ -51,6 +52,8 @@ type Capacity struct {
 	ApprovedBy    *string  `json:"approved_by"`
 	ApprovedAt    *string  `json:"approved_at"`
 	NeedsApproval bool     `json:"needs_approval"` // over and the approval doesn't cover today's total
+	// Availability: the team's time away over the sprint scales Cap (TL-408); null without Google Calendar or a team
+	Availability *Availability `json:"availability"`
 }
 
 type querier interface {
@@ -79,8 +82,9 @@ func velocity(ctx context.Context, q querier, boardID, unit string) (*float64, e
 	return &avg, nil
 }
 
-// capacity fills in how full planned sprint p is, from its tickets and the board's velocity.
-func capacity(ctx context.Context, q querier, scale string, p *PlannedSprint, approvedTotal *float64, approvedBy, approvedAt *string) error {
+// capacity fills in how full planned sprint p is, from its tickets, the board's velocity and the
+// team's time away over the sprint (it starts at start).
+func capacity(ctx context.Context, q querier, scale string, p *PlannedSprint, start time.Time, approvedTotal *float64, approvedBy, approvedAt *string) error {
 	c := Capacity{Unit: unitOf(scale), ApprovedTotal: approvedTotal, ApprovedBy: approvedBy, ApprovedAt: approvedAt}
 	value := valueIn(c.Unit)
 	for _, t := range p.Tickets {
@@ -93,8 +97,15 @@ func capacity(ctx context.Context, q querier, scale string, p *PlannedSprint, ap
 	if err != nil {
 		return err
 	}
+	if c.Availability, err = availability(ctx, q, p.BoardID, start, p.LengthDays); err != nil {
+		return err
+	}
 	if v != nil {
-		limit := math.Round(*v*1.1*100) / 100
+		share := 1.0
+		if c.Availability != nil {
+			share = c.Availability.Percent / 100
+		}
+		limit := math.Round(*v*1.1*share*100) / 100
 		c.Velocity, c.Cap = v, &limit
 		c.Over = c.Used > limit
 	}
@@ -106,9 +117,12 @@ func capacity(ctx context.Context, q querier, scale string, p *PlannedSprint, ap
 // planned reads the board's planned sprints with their tickets and capacity, next first.
 func planned(ctx context.Context, q querier, boardID string) ([]PlannedSprint, error) {
 	var scale string
-	var base int // the current (or last) sprint's number; planned sprints follow it
+	var base int        // the current (or last) sprint's number; planned sprints follow it
+	var start time.Time // when planned sprint 1 starts: the current sprint's end, or now
 	if err := q.QueryRow(ctx, `SELECT b.estimate_scale, COALESCE((SELECT number FROM sprints WHERE board_id = b.id AND closed_at IS NULL),
-			(SELECT max(number) FROM sprints WHERE board_id = b.id), 0) FROM boards b WHERE b.id = $1`, boardID).Scan(&scale, &base); err != nil {
+			(SELECT max(number) FROM sprints WHERE board_id = b.id), 0),
+			COALESCE((SELECT ends_at FROM sprints WHERE board_id = b.id AND closed_at IS NULL), now())
+		FROM boards b WHERE b.id = $1`, boardID).Scan(&scale, &base, &start); err != nil {
 		return nil, notFound(err)
 	}
 	rows, err := q.Query(ctx, `SELECT id, board_id, position, length_days, goal, approved_total::float8, approved_by,
@@ -144,9 +158,10 @@ func planned(ctx context.Context, q querier, boardID string) ([]PlannedSprint, e
 		if out[i].Tickets == nil {
 			out[i].Tickets = []boards.Ticket{}
 		}
-		if err := capacity(ctx, q, scale, &out[i], approvals[i].total, approvals[i].by, approvals[i].when); err != nil {
+		if err := capacity(ctx, q, scale, &out[i], start, approvals[i].total, approvals[i].by, approvals[i].when); err != nil {
 			return nil, err
 		}
+		start = start.AddDate(0, 0, out[i].LengthDays)
 	}
 	if out == nil {
 		out = []PlannedSprint{}
