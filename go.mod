@@ -14,7 +14,7 @@ require (
 	github.com/keloran/go-config/v2 v2.0.1
 	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/testcontainers/testcontainers-go/modules/postgres v0.44.0
-	github.com/testcontainers/testcontainers-go/modules/valkey v0.42.0
+	github.com/testcontainers/testcontainers-go/modules/valkey v0.44.0
 	github.com/valkey-io/valkey-go v1.0.79
 	go.yaml.in/yaml/v3 v3.0.5
 )
