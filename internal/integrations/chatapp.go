@@ -194,15 +194,24 @@ type chatRequest struct {
 	DialogEventType   string     `json:"dialogEventType"`
 	Common            chatCommon `json:"common"`
 	CommonEventObject chatCommon `json:"commonEventObject"`
-	Chat              *struct {
+	// what was said, and the slash command used, if any (TL-529)
+	Message            chatMessageIn `json:"message"`
+	AppCommandMetadata chatCommand   `json:"appCommandMetadata"`
+	Chat               *struct {
 		User    chatUser `json:"user"`
 		Clicked *struct {
 			Space           chatSpace `json:"space"`
 			DialogEventType string    `json:"dialogEventType"`
 		} `json:"buttonClickedPayload"`
 		Message *struct {
-			Space chatSpace `json:"space"`
+			Space   chatSpace     `json:"space"`
+			Message chatMessageIn `json:"message"`
 		} `json:"messagePayload"`
+		Command *struct {
+			Space    chatSpace     `json:"space"`
+			Message  chatMessageIn `json:"message"`
+			Metadata chatCommand   `json:"appCommandMetadata"`
+		} `json:"appCommandPayload"`
 		Added *struct {
 			Space chatSpace `json:"space"`
 		} `json:"addedToSpacePayload"`
@@ -210,6 +219,80 @@ type chatRequest struct {
 			Space chatSpace `json:"space"`
 		} `json:"removedFromSpacePayload"`
 	} `json:"chat"`
+}
+
+// chatMessageIn is a message sent to the app: its text, argumentText (the text without the app's
+// @mention) and, from a slash command, which one.
+type chatMessageIn struct {
+	Text         string `json:"text"`
+	ArgumentText string `json:"argumentText"`
+	SlashCommand struct {
+		CommandID chatID `json:"commandId"`
+	} `json:"slashCommand"`
+}
+
+type chatCommand struct {
+	ID chatID `json:"appCommandId"`
+}
+
+// chatID is a command ID, which Chat sends as a number or as a string (int64).
+type chatID string
+
+func (id *chatID) UnmarshalJSON(b []byte) error {
+	*id = chatID(strings.Trim(string(b), `"`))
+	return nil
+}
+
+// helpCommand is the /help slash command's ID, as set in the Chat API's configuration (TL-529).
+const helpCommand = "1"
+
+// help reports whether the person asked for help: "help", "@TrackLin.es help" or /help, in either format.
+func (q chatRequest) help() bool {
+	msgs := []chatMessageIn{q.Message}
+	ids := []chatID{q.AppCommandMetadata.ID, q.Message.SlashCommand.CommandID}
+	if c := q.Chat; c != nil {
+		if c.Message != nil {
+			msgs = append(msgs, c.Message.Message)
+		}
+		if c.Command != nil {
+			msgs = append(msgs, c.Command.Message)
+			ids = append(ids, c.Command.Metadata.ID, c.Command.Message.SlashCommand.CommandID)
+		}
+	}
+	for _, id := range ids {
+		if id == helpCommand {
+			return true
+		}
+	}
+	for _, m := range msgs {
+		for _, t := range []string{m.ArgumentText, m.Text} {
+			words := strings.Fields(strings.ToLower(t))
+			for len(words) > 1 && strings.HasPrefix(words[0], "@") { // the app's @mention, in text
+				words = words[1:]
+			}
+			if len(words) == 1 && (words[0] == "help" || words[0] == "/help") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// helpText is the answer to help: what the app does, how to start and stop, and the commands.
+func (c *ChatApp) helpText() string {
+	return "*TrackLin.es for Google Chat*\n" +
+		"I send you personal messages about your TrackLin.es tickets: when you’re assigned one, mentioned, or something needs your review. " +
+		"Each message has buttons to act on it from here: Start, Add comment, Reply, Make urgent, Approve and Send back.\n\n" +
+		"*Getting started*\n" +
+		"1. Send me any message in a direct message, and I’ll reply with a one-time link.\n" +
+		"2. Open it and sign in to TrackLin.es to link your account. That’s all: I’ll message you from then on.\n\n" +
+		"*Commands*\n" +
+		"• `help` or `/help`: this message.\n\n" +
+		"*Team spaces*\n" +
+		"I only send personal messages. For updates in a team space, add a webhook in TrackLin.es: Settings → Integrations → Google Chat.\n\n" +
+		"*Stopping*\n" +
+		"Unlink in TrackLin.es (Your settings, in your account menu), or remove me from Chat.\n\n" +
+		"More: <" + c.Site + "/docs/google-chat|TrackLin.es Google Chat guide>"
 }
 
 // event is what happened: "message", "added", "removed", "home" or "click", by whom, where; addon says how to answer.
@@ -224,6 +307,8 @@ func (q chatRequest) event() (kind string, user chatUser, space chatSpace, addon
 			return "added", c.User, c.Added.Space, true
 		case c.Message != nil:
 			return "message", c.User, c.Message.Space, true
+		case c.Command != nil:
+			return "message", c.User, c.Command.Space, true
 		}
 		return "home", c.User, chatSpace{}, true
 	}
@@ -276,8 +361,10 @@ func (c *ChatApp) Events(w http.ResponseWriter, r *http.Request) {
 	}
 	var text, button, buttonURL string
 	switch {
+	case kind == "message" && q.help():
+		text = c.helpText()
 	case space.Name != "" && !space.direct():
-		text = "I only send personal messages. Open a direct message with me to get yours. For a team space, add a webhook in TrackLin.es: Settings → Integrations → Google Chat."
+		text = "I only send personal messages. Open a direct message with me to get yours. For a team space, add a webhook in TrackLin.es: Settings → Integrations → Google Chat. Type help to see what I can do."
 	default:
 		linked, err := c.linked(ctx, user.Name, space)
 		if err != nil {
@@ -286,7 +373,7 @@ func (c *ChatApp) Events(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if linked {
-			text = "You’re linked. I’ll message you here when you’re assigned a ticket, mentioned, or something needs your review. To stop, unlink it in TrackLin.es: Your settings, in your account menu."
+			text = "You’re linked. I’ll message you here when you’re assigned a ticket, mentioned, or something needs your review. To stop, unlink it in TrackLin.es: Your settings, in your account menu. Type help to see what I can do."
 			button, buttonURL = "Your settings", c.Site+"/account"
 		} else {
 			code, err := c.newLinkCode(ctx, user, space.Name)
@@ -295,7 +382,7 @@ func (c *ChatApp) Events(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, "unavailable", http.StatusServiceUnavailable)
 				return
 			}
-			text = "Hi! Link your TrackLin.es account and I’ll message you here when you’re assigned a ticket, mentioned, or something needs your review. The link works once, for 30 minutes."
+			text = "Hi! Link your TrackLin.es account and I’ll message you here when you’re assigned a ticket, mentioned, or something needs your review. The link works once, for 30 minutes. Type help to see what I can do."
 			button, buttonURL = "Link your TrackLin.es account", c.Site+"/chat/link?code="+url.QueryEscape(code)
 		}
 	}
