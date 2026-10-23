@@ -32,7 +32,7 @@ type PullRequest struct {
 	body     string
 	// installation: the GitHub App installation the event came through, for fetching its commits
 	installation string
-	mergeSHA string // GitHub's merge commit, once merged: a release that contains it ships the PR (TL-531)
+	mergeSHA     string // GitHub's merge commit, once merged: a release that contains it ships the PR (TL-531)
 }
 
 // LinkedPR is a PR linked to a ticket.
@@ -122,6 +122,9 @@ func (h System) WithShortLinks(base string) System {
 func (h System) linkPR(ctx context.Context, orgs []string, pr PullRequest) error {
 	var commits []string
 	fetched := false
+	if h.releaseDone == nil || !h.releaseDone() {
+		pr.mergeSHA = "" // release-done off: no release ever waits on this merge
+	}
 	for _, org := range orgs {
 		var project, prefix string
 		err := h.store.DB.QueryRow(ctx, `SELECT r.project_id, p.key_prefix FROM project_repos r JOIN projects p ON p.id = r.project_id
@@ -187,14 +190,23 @@ func (h System) commitMessages(ctx context.Context, org string, pr PullRequest) 
 // merge moves it there instead, and the release that ships it finishes it (releasePRs).
 func (h System) finishByPR(ctx context.Context, org, ticket string, pr PullRequest) error {
 	column, msg := "", fmt.Sprintf("Closed by %s#%d, merged: [%s](%s)", pr.Repo, pr.Number, pr.Title, pr.URL)
-	if pr.mergeSHA != "" { // ponytail: GitHub only; Bitbucket has no releases, so its merges still finish tickets
-		var dev *string
-		if err := h.store.DB.QueryRow(ctx, `SELECT b.dev_complete_column_id::text FROM tickets t JOIN boards b ON b.id = t.board_id WHERE t.id = $1`,
-			ticket).Scan(&dev); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+	// ponytail: GitHub only; Bitbucket has no releases, so its merges still finish tickets
+	if pr.mergeSHA != "" { // set only while release-done is on (linkPR)
+		var dev string
+		var ahead bool // already in or past Dev complete: merging never moves a ticket back
+		err := h.store.DB.QueryRow(ctx, `SELECT d.id::text, c.position >= d.position FROM tickets t
+			JOIN boards b ON b.id = t.board_id JOIN columns d ON d.id = b.dev_complete_column_id JOIN columns c ON c.id = t.column_id
+			WHERE t.id = $1`, ticket).Scan(&dev, &ahead)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			return err
 		}
-		if dev != nil {
-			column, msg = *dev, fmt.Sprintf("Merged in %s#%d: [%s](%s). Done when a release ships it.", pr.Repo, pr.Number, pr.Title, pr.URL)
+		if dev != "" {
+			msg = fmt.Sprintf("Merged in %s#%d: [%s](%s). Done when a release ships it.", pr.Repo, pr.Number, pr.Title, pr.URL)
+			if ahead {
+				_, err = comments.Store{DB: h.store.DB}.Create(ctx, org, pr.Provider, ticket, msg, nil)
+				return err
+			}
+			column = dev
 		}
 	}
 	return h.settle(ctx, org, ticket, column, pr.Provider, msg)

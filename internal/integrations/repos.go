@@ -308,7 +308,7 @@ func (h System) GitHubWebhook(secret string) http.HandlerFunc {
 				return
 			}
 		}
-		if rel, installation, ok := githubRelease(r.Header.Get("X-GitHub-Event"), body); ok {
+		if rel, installation, ok := githubRelease(r.Header.Get("X-GitHub-Event"), body); ok && h.releaseDone != nil && h.releaseDone() {
 			orgs, err := h.orgsFor(r.Context(), GitHub, installation, rel.Repo)
 			if err == nil {
 				err = h.releasePRs(r.Context(), orgs, installation, rel)

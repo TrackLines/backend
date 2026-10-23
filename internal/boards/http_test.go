@@ -123,6 +123,7 @@ func TestBoardHandlers(t *testing.T) {
 		t.Fatalf("dev complete saved: %+v", got.DevComplete)
 	}
 	expect(400, "update", org, "admin-u", used.ID, `{"dev_complete_column_id":"`+used.Columns[len(used.Columns)-1].ID+`"}`)
+	expect(400, "update", org, "admin-u", used.ID, `{"dev_complete_column_id":"`+used.Columns[0].ID+`"}`)
 	expect(400, "update", org, "admin-u", used.ID, `{"dev_complete_column_id":"`+led.Columns[1].ID+`"}`)
 	expect(400, "update", org, "admin-u", used.ID, `{"dev_complete_column_id":"nope"}`)
 	expect(404, "update", other, "admin-x", used.ID, `{"dev_complete_column_id":""}`)

@@ -286,6 +286,22 @@ func TestPRWebhooks(t *testing.T) {
 		_ = db.QueryRow(ctx, `SELECT count(*) FROM ticket_comments WHERE ticket_id = $1 AND body LIKE $2`, id, prefix+"%").Scan(&n)
 		return n
 	}
+	// release-done flag off: merging finishes as before, and releases are ignored
+	flagOff, _ := ts.Create(ctx, "org_pr", b.Columns[0].ID, "task", "Flag off", "")
+	merge("6", "fff", flagOff.Key)
+	if !done(flagOff.ID) {
+		t.Fatal("flag off: merge didn't finish the ticket")
+	}
+	if code := release("v0", false); code != 204 || compares != 0 {
+		t.Fatalf("flag off: a release was used: %d %d", code, compares)
+	}
+	h = h.WithReleaseDone(func() bool { return true })
+	// a ticket already in Dev complete (or past it) isn't moved by a merge, only told
+	ahead, _ := ts.Create(ctx, "org_pr", b.Columns[1].ID, "task", "Ahead", "")
+	merge("5", "eee", ahead.Key)
+	if column(ahead.ID) != b.Columns[1].ID || said(ahead.ID, "Merged in acme/shop#5") != 1 {
+		t.Fatalf("ahead: %s", column(ahead.ID))
+	}
 	one, _ := ts.Create(ctx, "org_pr", b.Columns[0].ID, "task", "One PR", "")
 	two, _ := ts.Create(ctx, "org_pr", b.Columns[0].ID, "task", "Two PRs", "")
 	lost, _ := ts.Create(ctx, "org_pr", b.Columns[0].ID, "task", "Force-pushed away", "")
@@ -317,7 +333,7 @@ func TestPRWebhooks(t *testing.T) {
 	if code := release("v2", false); code != 204 || !done(two.ID) || said(two.ID, "Released in acme/shop v2") != 1 {
 		t.Fatalf("release v2: %d", code)
 	}
-	if compares != 2 { // ccc and gone
+	if compares != 3 { // ccc, gone and eee (fff merged with the flag off, so it's never waited on)
 		t.Fatalf("compares: %d", compares)
 	}
 	// a ticket someone reopened after its release isn't touched by a later one

@@ -280,12 +280,13 @@ func (s Store) SetAgentReview(ctx context.Context, id, owner string, on bool) er
 	return nil
 }
 
-// ErrBadDevComplete: the Dev complete column must be one of the board's own, and not Done.
-var ErrBadDevComplete = errors.New("the Dev complete column must be one of this board's columns, other than Done")
+// ErrBadDevComplete: the Dev complete column must be one of the board's own, between To do and Done.
+var ErrBadDevComplete = errors.New("the Dev complete column must be one of this board's columns, other than To do and Done")
 
 // SetDevComplete picks the column merged PRs move tickets to ("" turns it off: merging finishes them).
 func (s Store) SetDevComplete(ctx context.Context, id, owner, column string) error {
 	tag, err := s.DB.Exec(ctx, `WITH pick AS (SELECT c.id FROM columns c WHERE c.board_id = $1 AND c.id::text = $3
+			AND c.position > (SELECT min(position) FROM columns WHERE board_id = $1)
 			AND c.position < (SELECT max(position) FROM columns WHERE board_id = $1))
 		UPDATE boards SET dev_complete_column_id = (SELECT id FROM pick), updated_at = now()
 		WHERE id = $1 AND owner_clerk_id = $2 AND ($3 = '' OR EXISTS (SELECT 1 FROM pick))`,

@@ -297,7 +297,8 @@ func (s *Service) Handler() http.Handler {
 		GitHubClientID: gc.GitHubClientID, GitHubSecret: gc.GitHubClientSecret,
 		BitbucketClientID:                                  gc.BitbucketClientID, BitbucketSecret: gc.BitbucketSecret, PublicAPI: gc.PublicAPIURL}).
 		WithShortLinks(config.Get(s.Config).ShortLinkBase). // PRs can mention tickets by our short links (TL-283)
-		WithChat(chat)                                      // Google Chat test messages (TL-288)
+		WithChat(chat).                                     // Google Chat test messages (TL-288)
+		WithReleaseDone(s.flag("release-done"))             // Dev complete on merge, Done on release (TL-531)
 	// Google Chat (TL-288): a project's space, or the org's (no project_id); members see it, admins set it
 	mux.Handle("GET /api/google-chat", signedIn(in.GetChat))
 	mux.Handle("PUT /api/google-chat", signedIn(in.SetChat))
