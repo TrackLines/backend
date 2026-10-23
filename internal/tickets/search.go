@@ -71,6 +71,12 @@ func tsQuery(text string, any bool) string {
 // Search finds the owner's tickets: an exact key first, then by relevance (title over description
 // over comments), then most recently changed. With no text it lists by recent change, filtered.
 func (s Store) Search(ctx context.Context, owner string, q SearchQuery) ([]SearchResult, error) {
+	out, _, err := s.SearchTotal(ctx, owner, q)
+	return out, err
+}
+
+// SearchTotal is Search plus how many tickets match in all, across every page (0 past the last page).
+func (s Store) SearchTotal(ctx context.Context, owner string, q SearchQuery) ([]SearchResult, int, error) {
 	if q.Limit <= 0 || q.Limit > maxSearchResults {
 		q.Limit = 20
 	}
@@ -97,7 +103,8 @@ func (s Store) Search(ctx context.Context, owner string, q SearchQuery) ([]Searc
 					WHERE t.description <> '' AND to_tsvector('simple', t.description) @@ q.query),
 				(SELECT ts_headline('simple', c.body, q.query, 'StartSel="",StopSel="",MaxWords=18,MinWords=6,MaxFragments=1')
 					FROM ticket_comments c WHERE c.ticket_id = t.id AND c.search @@ q.query ORDER BY c.created_at DESC LIMIT 1),
-				'') END
+				'') END,
+			count(*) OVER ()
 		FROM tickets t
 		CROSS JOIN q
 		JOIN projects p ON p.id = t.project_id AND p.owner_clerk_id = $1
@@ -121,16 +128,17 @@ func (s Store) Search(ctx context.Context, owner string, q SearchQuery) ([]Searc
 		owner, query, keyID, q.ProjectID, q.BoardID, nonNil(q.Types), nonNil(q.Priorities), lower(q.Labels),
 		q.Assignee, q.Unassigned, q.Status, q.Limit, (max(q.Page, 1)-1)*q.Limit, number, q.Epic, q.Creator)
 	if err != nil {
-		return nil, notFound(err)
+		return nil, 0, notFound(err)
 	}
+	total := 0
 	out, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (SearchResult, error) {
 		var r SearchResult
-		return r, row.Scan(append(boards.TicketDest(&r.Ticket), &r.ProjectName, &r.BoardID, &r.BoardName, &r.ColumnName, &r.Done, &r.Snippet)...)
+		return r, row.Scan(append(boards.TicketDest(&r.Ticket), &r.ProjectName, &r.BoardID, &r.BoardName, &r.ColumnName, &r.Done, &r.Snippet, &total)...)
 	})
 	if out == nil {
 		out = []SearchResult{}
 	}
-	return out, err
+	return out, total, err
 }
 
 var ErrBadPriority = errors.New("priority must be low, medium, high or urgent")
@@ -160,7 +168,8 @@ func lower(v []string) []string {
 	return out
 }
 
-// Search: GET /api/search?q=&project=&board=&type=&priority=&label=&assignee=me|unassigned|<id>&creator=me|<id>&status=open|done&limit=&page=
+// Search: GET /api/search?q=&project=&board=&type=&priority=&label=&assignee=me|unassigned|<id>&creator=me|<id>&status=open|done&limit=&page=&total=1
+// total=1 answers {"tickets": [...], "total": n} instead of the bare list.
 // "My work" is assignee=me&status=open (newest change first) across every board and project.
 // type, priority and label repeat (any of).
 func (h System) Search(w http.ResponseWriter, r *http.Request) {
@@ -211,9 +220,13 @@ func (h System) Search(w http.ResponseWriter, r *http.Request) {
 		}
 		q.Limit = n
 	}
-	out, err := h.store.Search(r.Context(), auth.OrgID(r.Context()), q)
+	out, total, err := h.store.SearchTotal(r.Context(), auth.OrgID(r.Context()), q)
 	if err != nil {
 		writeErr(w, err)
+		return
+	}
+	if v.Get("total") == "1" { // "6 of 9" lists: the page and how many match in all
+		httpx.JSON(w, http.StatusOK, map[string]any{"tickets": out, "total": total})
 		return
 	}
 	httpx.JSON(w, http.StatusOK, out)

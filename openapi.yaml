@@ -907,13 +907,15 @@ paths:
         - { name: priority, in: query, schema: { type: array, items: { type: string, enum: [low, medium, high, urgent] } }, style: form, explode: true, description: Any of. }
         - { name: label, in: query, schema: { type: array, items: { type: string } }, style: form, explode: true, description: Any of (case-insensitive). }
         - { name: assignee, in: query, schema: { type: string }, description: "me (the caller), unassigned, or a user id / agent name." }
+        - { name: creator, in: query, schema: { type: string }, description: "me (the caller) or a user id / agent name: tickets they created." }
         - { name: status, in: query, schema: { type: string, enum: [open, done] } }
         - { name: match, in: query, description: 'any: a ticket matching any word (of three letters or more) will do, most matches first, for spotting duplicates despite typos. Default: every word must match.', schema: { type: string, enum: [any] } }
         - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 50, default: 20 } }
         - { name: page, in: query, schema: { type: integer, minimum: 1, default: 1 }, description: '1-based, with limit. "My work" is assignee=me&status=open across every board and project.' }
+        - { name: total, in: query, schema: { type: string, enum: ['1'] }, description: 'Answer {"tickets": [...this list...], "total": n} instead, where total is how many tickets match across every page (0 past the last page).' }
       responses:
         '200':
-          description: Matching tickets, best first.
+          description: Matching tickets, best first (with total=1, wrapped as {tickets, total}).
           content:
             application/json:
               schema:
