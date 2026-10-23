@@ -2,6 +2,7 @@ package tickets
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http/httptest"
 	"os"
@@ -194,5 +195,23 @@ func TestSearch(t *testing.T) {
 	}
 	if rec := call("creator=me"); rec.Code != 200 || !strings.Contains(rec.Body.String(), mine.ID) || strings.Contains(rec.Body.String(), titleHit.ID) {
 		t.Fatalf("creator=me: %d %s", rec.Code, rec.Body)
+	}
+
+	// total=1: the page plus how many match in all, for "5 of 9" (counts tickets, across pages)
+	all := search(SearchQuery{Text: "crash", Limit: 50})
+	page, total, err := s.SearchTotal(ctx, "se1", SearchQuery{Text: "crash", Limit: 1, Page: 2})
+	if err != nil || len(page) != 1 || total != len(all) || len(all) < 2 {
+		t.Fatalf("SearchTotal: %v %d of %d (%d)", err, len(page), total, len(all))
+	}
+	rec := call("q=crash&limit=1&total=1")
+	var env struct {
+		Tickets []SearchResult `json:"tickets"`
+		Total   int            `json:"total"`
+	}
+	if rec.Code != 200 || json.Unmarshal(rec.Body.Bytes(), &env) != nil || len(env.Tickets) != 1 || env.Total != len(all) {
+		t.Fatalf("total=1: %d %s", rec.Code, rec.Body)
+	}
+	if rec := call("q=crash&limit=1"); !strings.HasPrefix(strings.TrimSpace(rec.Body.String()), "[") {
+		t.Fatalf("without total=1 it's still a list: %s", rec.Body)
 	}
 }
