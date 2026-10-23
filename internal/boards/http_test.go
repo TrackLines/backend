@@ -117,6 +117,23 @@ func TestBoardHandlers(t *testing.T) {
 	expect(400, "update", org, "admin-u", used.ID, `{"name":"  "}`)
 	expect(400, "update", org, "admin-u", used.ID, `{"estimate_scale":"bananas"}`)
 	expect(400, "update", org, "admin-u", used.ID, `{"style":"waterfall"}`)
+	// Dev complete (TL-531): one of the board's own columns, not Done; "" turns it off
+	expect(204, "update", org, "admin-u", used.ID, `{"dev_complete_column_id":"`+used.Columns[1].ID+`"}`)
+	if got, _ := s.Get(ctx, used.ID, org); got.DevComplete == nil || *got.DevComplete != used.Columns[1].ID {
+		t.Fatalf("dev complete saved: %+v", got.DevComplete)
+	}
+	expect(400, "update", org, "admin-u", used.ID, `{"dev_complete_column_id":"`+used.Columns[len(used.Columns)-1].ID+`"}`)
+	expect(400, "update", org, "admin-u", used.ID, `{"dev_complete_column_id":"`+used.Columns[0].ID+`"}`)
+	expect(400, "update", org, "admin-u", used.ID, `{"dev_complete_column_id":"`+led.Columns[1].ID+`"}`)
+	expect(400, "update", org, "admin-u", used.ID, `{"dev_complete_column_id":"nope"}`)
+	expect(404, "update", other, "admin-x", used.ID, `{"dev_complete_column_id":""}`)
+	if got, _ := s.Get(ctx, used.ID, org); got.DevComplete == nil {
+		t.Fatal("a refused change cleared Dev complete")
+	}
+	expect(204, "update", org, "admin-u", used.ID, `{"dev_complete_column_id":""}`)
+	if got, _ := s.Get(ctx, used.ID, org); got.DevComplete != nil {
+		t.Fatalf("dev complete cleared: %+v", got.DevComplete)
+	}
 
 	// flow: any member of the org; weeks bounded; another org can't see it
 	if rec := expect(200, "flow?weeks=4", org, "member-u", used.ID, ""); !json.Valid(rec.Body.Bytes()) {

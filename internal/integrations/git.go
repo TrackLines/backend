@@ -299,6 +299,27 @@ func (g Git) githubCommits(ctx context.Context, token, repo string, number int) 
 	return msgs, nil
 }
 
+// githubContains: does tag's history include commit sha in repo? A sha GitHub no longer knows
+// (force-pushed away) isn't in it.
+func (g Git) githubContains(ctx context.Context, token, repo, sha, tag string) (bool, error) {
+	owner, name, _ := strings.Cut(repo, "/")
+	req, err := g.githubRequest(ctx, http.MethodGet, fmt.Sprintf("/repos/%s/%s/compare/%s...%s?per_page=1",
+		url.PathEscape(owner), url.PathEscape(name), url.PathEscape(sha), url.PathEscape(tag)), token, nil)
+	if err != nil {
+		return false, err
+	}
+	var out struct {
+		Status string `json:"status"` // ahead | behind | diverged | identical: of tag compared with sha
+	}
+	if err := g.do(req, &out); err != nil {
+		if strings.Contains(err.Error(), "HTTP 404") {
+			return false, nil
+		}
+		return false, err
+	}
+	return out.Status == "ahead" || out.Status == "identical", nil
+}
+
 // Repo is a repository a connection can see.
 type Repo struct {
 	FullName      string `json:"full_name"` // owner/repo or workspace/repo

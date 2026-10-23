@@ -30,6 +30,8 @@ func writeErr(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, ErrNotFound):
 		http.Error(w, "not found", http.StatusNotFound)
+	case errors.Is(err, ErrBadDevComplete):
+		http.Error(w, err.Error(), http.StatusBadRequest)
 	case errors.Is(err, ErrBoardUsed), errors.Is(err, ErrOpenTickets), errors.Is(err, ErrBoardArchived):
 		http.Error(w, err.Error(), http.StatusConflict)
 	default:
@@ -111,12 +113,13 @@ func (h System) Update(w http.ResponseWriter, r *http.Request) {
 		EstimateScale *string `json:"estimate_scale"`
 		Style         *string `json:"style"` // sprints | kanban
 		AgentReview   *bool   `json:"agent_review"`
+		DevComplete   *string `json:"dev_complete_column_id"` // "" turns finishing on release off
 	}
 	if !httpx.Decode(w, r, &in) {
 		return
 	}
-	if in.Name == nil && in.EstimateScale == nil && in.Style == nil && in.AgentReview == nil {
-		http.Error(w, "name, estimate_scale, style or agent_review is required", http.StatusBadRequest)
+	if in.Name == nil && in.EstimateScale == nil && in.Style == nil && in.AgentReview == nil && in.DevComplete == nil {
+		http.Error(w, "name, estimate_scale, style, agent_review or dev_complete_column_id is required", http.StatusBadRequest)
 		return
 	}
 	name := ""
@@ -145,6 +148,12 @@ func (h System) Update(w http.ResponseWriter, r *http.Request) {
 	}
 	if in.AgentReview != nil {
 		if err := h.store.SetAgentReview(r.Context(), r.PathValue("id"), auth.OrgID(r.Context()), *in.AgentReview); err != nil {
+			writeErr(w, err)
+			return
+		}
+	}
+	if in.DevComplete != nil {
+		if err := h.store.SetDevComplete(r.Context(), r.PathValue("id"), auth.OrgID(r.Context()), *in.DevComplete); err != nil {
 			writeErr(w, err)
 			return
 		}

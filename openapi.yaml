@@ -719,6 +719,12 @@ paths:
                 estimate_scale: { $ref: '#/components/schemas/EstimateScale' }
                 style: { type: string, enum: [sprints, kanban] }
                 agent_review: { type: boolean, description: "Agents' moves into Done wait for a person's review." }
+                dev_complete_column_id:
+                  type: string
+                  description: >-
+                    Finish tickets on release: a merged GitHub PR moves its ticket to this column (one of the board's,
+                    not Done), and a published release that contains the merge moves it to Done. "" turns it off, so
+                    merging finishes tickets.
       responses:
         '204': { description: Board updated. }
         '400': { $ref: '#/components/responses/BadRequest' }
@@ -1491,7 +1497,9 @@ paths:
       description: >-
         A PR in a repo linked to the ticket's project is linked when its branch, title, description or commit messages
         mention the ticket's key (TL-123; only the project's own prefix counts). Kept up to date by the provider webhooks. When a linked PR is
-        merged, the ticket moves to its board's Done column (or is resolved in the backlog) with a "Closed by" comment.
+        merged, the ticket moves to its board's Done column (or is resolved in the backlog) with a "Closed by" comment. On a
+        board with a Dev complete column (and the release-done flag on), a merged GitHub PR moves it there instead, and the published release that contains
+        the merge (released_in) moves it to Done once all its merged PRs have shipped.
       responses:
         '200':
           description: Linked PRs.
@@ -1511,6 +1519,7 @@ paths:
                     author: { type: string }
                     branch: { type: string }
                     updated_at: { type: string, format: date-time }
+                    released_in: { type: [string, 'null'], description: The GitHub release tag that shipped the merged PR. }
 
   /webhooks/github:
     post:
@@ -1519,7 +1528,9 @@ paths:
       summary: GitHub App webhook (X-Hub-Signature-256 with GITHUB_WEBHOOK_SECRET)
       description: >-
         pull_request events link PRs to the tickets whose keys they (or their commits) mention (in repos linked to a project of an org connected
-        through that installation); merging closes them, once. An uninstalled app disconnects the org. A 5xx makes GitHub redeliver.
+        through that installation); merging closes them, once, or (release-done flag on) moves them to the board's Dev complete column. A published
+        (non-pre)release finishes the Dev complete tickets whose merges its tag contains (the app needs the Release event
+        and Contents read). An uninstalled app disconnects the org. A 5xx makes GitHub redeliver.
       security: []
       responses:
         '204': { description: Accepted. }
@@ -4435,6 +4446,7 @@ components:
         updated_at: { type: string, format: date-time }
         style: { type: string, enum: [sprints, kanban] }
         agent_review: { type: boolean, description: "Agents' moves into Done wait for a person's review." }
+        dev_complete_column_id: { type: [string, 'null'], format: uuid, description: "Set: merged GitHub PRs move tickets here and a release finishes them; null: merging finishes them." }
         archived_at: { type: [string, 'null'], format: date-time, description: Archived boards are off the project page and take no new work. }
         deletable: { type: boolean, description: 'Never used (no tickets, no sprints): DELETE works; otherwise archive it.' }
         hidden_done: { type: integer, description: "Kanban only. Done tickets finished more than 14 days ago, left off the board." }

@@ -32,12 +32,14 @@ type PullRequest struct {
 	body     string
 	// installation: the GitHub App installation the event came through, for fetching its commits
 	installation string
+	mergeSHA     string // GitHub's merge commit, once merged: a release that contains it ships the PR (TL-531)
 }
 
 // LinkedPR is a PR linked to a ticket.
 type LinkedPR struct {
 	PullRequest
-	UpdatedAt string `json:"updated_at"`
+	UpdatedAt  string  `json:"updated_at"`
+	ReleasedIn *string `json:"released_in"` // the release tag that shipped it
 }
 
 var keyInText = regexp.MustCompile(`(?i)\b([a-z][a-z0-9]{1,5})-([0-9]+)\b`)
@@ -120,6 +122,9 @@ func (h System) WithShortLinks(base string) System {
 func (h System) linkPR(ctx context.Context, orgs []string, pr PullRequest) error {
 	var commits []string
 	fetched := false
+	if h.releaseDone == nil || !h.releaseDone() {
+		pr.mergeSHA = "" // release-done off: no release ever waits on this merge
+	}
 	for _, org := range orgs {
 		var project, prefix string
 		err := h.store.DB.QueryRow(ctx, `SELECT r.project_id, p.key_prefix FROM project_repos r JOIN projects p ON p.id = r.project_id
@@ -141,10 +146,11 @@ func (h System) linkPR(ctx context.Context, orgs []string, pr PullRequest) error
 			var was *string
 			_ = h.store.DB.QueryRow(ctx, `SELECT state FROM ticket_prs WHERE ticket_id = $1 AND provider = $2 AND repo = $3 AND number = $4`,
 				ticket, pr.Provider, pr.Repo, pr.Number).Scan(&was)
-			if _, err := h.store.DB.Exec(ctx, `INSERT INTO ticket_prs (ticket_id, provider, repo, number, url, title, state, author, branch)
-				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-				ON CONFLICT (ticket_id, provider, repo, number) DO UPDATE SET url = $5, title = $6, state = $7, author = $8, branch = $9, updated_at = now()`,
-				ticket, pr.Provider, pr.Repo, pr.Number, pr.URL, pr.Title, pr.State, pr.Author, pr.Branch); err != nil {
+			if _, err := h.store.DB.Exec(ctx, `INSERT INTO ticket_prs (ticket_id, provider, repo, number, url, title, state, author, branch, merge_sha)
+				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NULLIF($10, ''))
+				ON CONFLICT (ticket_id, provider, repo, number) DO UPDATE SET url = $5, title = $6, state = $7, author = $8, branch = $9,
+					merge_sha = COALESCE(NULLIF($10, ''), ticket_prs.merge_sha), updated_at = now()`,
+				ticket, pr.Provider, pr.Repo, pr.Number, pr.URL, pr.Title, pr.State, pr.Author, pr.Branch, pr.mergeSHA); err != nil {
 				return err
 			}
 			if pr.State == "merged" && (was == nil || *was != "merged") { // once, on the merge (redeliveries are no-ops)
@@ -180,27 +186,150 @@ func (h System) commitMessages(ctx context.Context, org string, pr PullRequest) 
 }
 
 // finishByPR closes a ticket whose PR merged: to its board's Done column, or resolved in the
-// backlog, with a comment saying which PR. Already-done tickets are left alone.
+// backlog, with a comment saying which PR. On a board with a Dev complete column, a GitHub PR's
+// merge moves it there instead, and the release that ships it finishes it (releasePRs).
 func (h System) finishByPR(ctx context.Context, org, ticket string, pr PullRequest) error {
+	column, msg := "", fmt.Sprintf("Closed by %s#%d, merged: [%s](%s)", pr.Repo, pr.Number, pr.Title, pr.URL)
+	// ponytail: GitHub only; Bitbucket has no releases, so its merges still finish tickets
+	if pr.mergeSHA != "" { // set only while release-done is on (linkPR)
+		var dev string
+		var ahead bool // already in or past Dev complete: merging never moves a ticket back
+		err := h.store.DB.QueryRow(ctx, `SELECT d.id::text, c.position >= d.position FROM tickets t
+			JOIN boards b ON b.id = t.board_id JOIN columns d ON d.id = b.dev_complete_column_id JOIN columns c ON c.id = t.column_id
+			WHERE t.id = $1`, ticket).Scan(&dev, &ahead)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return err
+		}
+		if dev != "" {
+			msg = fmt.Sprintf("Merged in %s#%d: [%s](%s). Done when a release ships it.", pr.Repo, pr.Number, pr.Title, pr.URL)
+			if ahead {
+				_, err = comments.Store{DB: h.store.DB}.Create(ctx, org, pr.Provider, ticket, msg, nil)
+				return err
+			}
+			column = dev
+		}
+	}
+	return h.settle(ctx, org, ticket, column, pr.Provider, msg)
+}
+
+// settle moves an unfinished ticket to column ("": its board's Done column, or resolved in the
+// backlog) and comments why. Already-done tickets are left alone.
+func (h System) settle(ctx context.Context, org, ticket, column, author, msg string) error {
 	ts := tickets.Store{DB: h.store.DB}
 	d, err := ts.Get(ctx, org, ticket)
 	if err != nil || d.Done {
 		return err
 	}
-	if d.BoardID == nil {
+	switch {
+	case column != "":
+		err = ts.Move(ctx, org, ticket, column, 0)
+	case d.BoardID == nil:
 		err = ts.Resolve(ctx, org, ticket)
-	} else {
-		var done string
-		if err = h.store.DB.QueryRow(ctx, `SELECT id FROM columns WHERE board_id = $1 ORDER BY position DESC LIMIT 1`, *d.BoardID).Scan(&done); err == nil {
-			err = ts.Move(ctx, org, ticket, done, 0)
+	default:
+		if err = h.store.DB.QueryRow(ctx, `SELECT id FROM columns WHERE board_id = $1 ORDER BY position DESC LIMIT 1`, *d.BoardID).Scan(&column); err == nil {
+			err = ts.Move(ctx, org, ticket, column, 0)
 		}
 	}
 	if err != nil {
 		return err
 	}
-	_, err = comments.Store{DB: h.store.DB}.Create(ctx, org, pr.Provider, ticket,
-		fmt.Sprintf("Closed by %s#%d, merged: [%s](%s)", pr.Repo, pr.Number, pr.Title, pr.URL), nil)
+	_, err = comments.Store{DB: h.store.DB}.Create(ctx, org, author, ticket, msg, nil)
 	return err
+}
+
+// Release is a published GitHub release.
+type Release struct {
+	Repo, Tag, URL string
+}
+
+// githubRelease reads a release event that published a (non-pre)release; ok false otherwise.
+func githubRelease(event string, body []byte) (rel Release, installation string, ok bool) {
+	if event != "release" {
+		return rel, "", false
+	}
+	var e struct {
+		Action  string `json:"action"`
+		Release struct {
+			TagName    string `json:"tag_name"`
+			HTMLURL    string `json:"html_url"`
+			Prerelease bool   `json:"prerelease"`
+		} `json:"release"`
+		Repository struct {
+			FullName string `json:"full_name"`
+		} `json:"repository"`
+		Installation struct {
+			ID json.Number `json:"id"`
+		} `json:"installation"`
+	}
+	// ponytail: prereleases don't ship (they aren't deployed); count them if a board ever wants that
+	if json.Unmarshal(body, &e) != nil || e.Action != "published" || e.Release.Prerelease || e.Release.TagName == "" {
+		return rel, "", false
+	}
+	return Release{Repo: e.Repository.FullName, Tag: e.Release.TagName, URL: e.Release.HTMLURL}, e.Installation.ID.String(), true
+}
+
+// releasePRs marks the merged, unreleased PRs in orgs that rel's tag contains as released in it,
+// then finishes each of their tickets that has no merged PR still waiting for a release. Each PR
+// is compared with the tag itself, so out-of-order releases and redeliveries are fine.
+func (h System) releasePRs(ctx context.Context, orgs []string, installation string, rel Release) error {
+	if len(orgs) == 0 {
+		return nil
+	}
+	rows, err := h.store.DB.Query(ctx, `SELECT DISTINCT pr.merge_sha FROM ticket_prs pr JOIN tickets t ON t.id = pr.ticket_id
+		JOIN projects p ON p.id = t.project_id AND p.owner_clerk_id = ANY($2)
+		WHERE pr.provider = 'github' AND pr.repo = $1 AND pr.merge_sha IS NOT NULL AND pr.released_at IS NULL`, rel.Repo, orgs)
+	if err != nil {
+		return err
+	}
+	shas, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil || len(shas) == 0 {
+		return err
+	}
+	token, err := h.git.githubToken(ctx, installation)
+	if err != nil {
+		return err
+	}
+	type shipped struct{ org, ticket string }
+	var done []shipped
+	// ponytail: one compare call per unreleased merge; fine while each release ships tens, not thousands
+	for _, sha := range shas {
+		in, err := h.git.githubContains(ctx, token, rel.Repo, sha, rel.Tag)
+		if err != nil {
+			return err
+		}
+		if !in {
+			continue
+		}
+		rows, err := h.store.DB.Query(ctx, `UPDATE ticket_prs pr SET released_in = $3, released_at = now()
+			FROM tickets t JOIN projects p ON p.id = t.project_id
+			WHERE t.id = pr.ticket_id AND p.owner_clerk_id = ANY($4) AND pr.provider = 'github' AND pr.repo = $1 AND pr.merge_sha = $2 AND pr.released_at IS NULL
+			RETURNING p.owner_clerk_id, pr.ticket_id::text`, rel.Repo, sha, rel.Tag, orgs)
+		if err != nil {
+			return err
+		}
+		got, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (shipped, error) {
+			var s shipped
+			return s, row.Scan(&s.org, &s.ticket)
+		})
+		if err != nil {
+			return err
+		}
+		done = append(done, got...)
+	}
+	for _, s := range done {
+		var waiting bool
+		if err := h.store.DB.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM ticket_prs WHERE ticket_id = $1 AND merge_sha IS NOT NULL AND released_at IS NULL)`,
+			s.ticket).Scan(&waiting); err != nil {
+			return err
+		}
+		if waiting {
+			continue
+		}
+		if err := h.settle(ctx, s.org, s.ticket, "", GitHub, fmt.Sprintf("Released in %s %s: %s", rel.Repo, rel.Tag, rel.URL)); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // githubPR reads a pull_request event; ok false for other events.
@@ -217,6 +346,7 @@ func githubPR(event string, body []byte) (pr PullRequest, installation string, o
 			State   string `json:"state"`
 			Draft   bool   `json:"draft"`
 			Merged  bool   `json:"merged"`
+			SHA     string `json:"merge_commit_sha"`
 			User    struct {
 				Login string `json:"login"`
 			} `json:"user"`
@@ -235,17 +365,17 @@ func githubPR(event string, body []byte) (pr PullRequest, installation string, o
 		return pr, "", false
 	}
 	p := e.PullRequest
-	state := "open"
+	state, sha := "open", ""
 	switch {
 	case p.Merged:
-		state = "merged"
+		state, sha = "merged", p.SHA
 	case p.State == "closed":
 		state = "closed"
 	case p.Draft:
 		state = "draft"
 	}
 	return PullRequest{Provider: GitHub, Repo: e.Repository.FullName, Number: p.Number, URL: p.HTMLURL, Title: p.Title,
-		State: state, Author: p.User.Login, Branch: p.Head.Ref, body: p.Body, installation: e.Installation.ID.String()}, e.Installation.ID.String(), true
+		State: state, Author: p.User.Login, Branch: p.Head.Ref, body: p.Body, installation: e.Installation.ID.String(), mergeSHA: sha}, e.Installation.ID.String(), true
 }
 
 // bitbucketPR reads a pullrequest:* event; ok false for other events.
@@ -308,7 +438,7 @@ func (h System) orgsFor(ctx context.Context, provider, installation, repo string
 // TicketPRs: GET /api/tickets/{id}/prs: PRs linked to the ticket, newest first.
 func (h System) TicketPRs(w http.ResponseWriter, r *http.Request) {
 	rows, err := h.store.DB.Query(r.Context(), `SELECT pr.provider, pr.repo, pr.number, pr.url, pr.title, pr.state, pr.author, pr.branch,
-			to_char(pr.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')
+			to_char(pr.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'), pr.released_in
 		FROM ticket_prs pr JOIN tickets t ON t.id = pr.ticket_id JOIN projects p ON p.id = t.project_id AND p.owner_clerk_id = $2
 		WHERE pr.ticket_id::text = $1 ORDER BY pr.updated_at DESC`, r.PathValue("id"), auth.OrgID(r.Context()))
 	if err != nil {
@@ -318,7 +448,7 @@ func (h System) TicketPRs(w http.ResponseWriter, r *http.Request) {
 	}
 	out, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (LinkedPR, error) {
 		var p LinkedPR
-		return p, row.Scan(&p.Provider, &p.Repo, &p.Number, &p.URL, &p.Title, &p.State, &p.Author, &p.Branch, &p.UpdatedAt)
+		return p, row.Scan(&p.Provider, &p.Repo, &p.Number, &p.URL, &p.Title, &p.State, &p.Author, &p.Branch, &p.UpdatedAt, &p.ReleasedIn)
 	})
 	if err != nil {
 		logs.Errorf("integrations: ticket prs: %v", err)

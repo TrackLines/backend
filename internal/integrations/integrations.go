@@ -187,10 +187,15 @@ type System struct {
 	// shortLink finds our short links in PR text (WithShortLinks); nil: only keys and ticket links
 	shortLink *regexp.Regexp
 	chat      *GoogleChat // posts test messages (WithChat); nil: a plain client
+	// releaseDone: the release-done flag (TL-531); off or nil, merges finish tickets and releases are ignored
+	releaseDone func() bool
 }
 
 // WithChat uses chat (the server's Google Chat notifier) for test messages too.
 func (h System) WithChat(chat *GoogleChat) System { h.chat = chat; return h }
+
+// WithReleaseDone turns Dev complete on merge and Done on release on while on() (TL-531).
+func (h System) WithReleaseDone(on func() bool) System { h.releaseDone = on; return h }
 
 // Connection: GET /api/integrations/{provider}: whether the org is connected (never the secret).
 // Any org member can see it; connecting and disconnecting are for admins.

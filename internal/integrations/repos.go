@@ -276,7 +276,8 @@ func verifyHub(body []byte, header, secret string) bool {
 }
 
 // GitHubWebhook: POST /api/webhooks/github. Pull request events link PRs to the tickets they
-// mention (and merging closes them); uninstalling the app disconnects the org.
+// mention (and merging closes them, or moves them to Dev complete); a published release finishes
+// the Dev complete tickets it ships; uninstalling the app disconnects the org.
 func (h System) GitHubWebhook(secret string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if secret == "" {
@@ -304,6 +305,17 @@ func (h System) GitHubWebhook(secret string) http.HandlerFunc {
 			if err != nil {
 				h.forgetDelivery(r.Context(), "github", body)
 				gitErr(w, err) // 5xx: GitHub redelivers
+				return
+			}
+		}
+		if rel, installation, ok := githubRelease(r.Header.Get("X-GitHub-Event"), body); ok && h.releaseDone != nil && h.releaseDone() {
+			orgs, err := h.orgsFor(r.Context(), GitHub, installation, rel.Repo)
+			if err == nil {
+				err = h.releasePRs(r.Context(), orgs, installation, rel)
+			}
+			if err != nil {
+				h.forgetDelivery(r.Context(), "github", body)
+				gitErr(w, err)
 				return
 			}
 		}

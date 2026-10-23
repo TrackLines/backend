@@ -4,10 +4,15 @@ import (
 	"bytes"
 	"context"
 	"crypto/hmac"
+	"crypto/rand"
+	"crypto/rsa"
 	"crypto/sha256"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/pem"
 	"errors"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"reflect"
@@ -210,5 +215,141 @@ func TestPRWebhooks(t *testing.T) {
 	}
 	if p := prs(bbTicket.ID); p[0].Provider != "bitbucket" || p[0].State != "merged" || p[0].Author != "Keloran" {
 		t.Fatalf("bitbucket pr: %+v", p)
+	}
+
+	// Finish on release (TL-531): with a Dev complete column, a GitHub merge moves its ticket there;
+	// a published release whose tag contains the merge commit moves it to Done, once all its merged
+	// PRs have shipped. GitHub answers whether a tag contains a commit through compare.
+	contains := map[string]map[string]bool{"v1": {"aaa": true, "bbb": true}, "v2": {"aaa": true, "bbb": true, "ccc": true}}
+	compares := 0
+	key, _ := rsa.GenerateKey(rand.Reader, 2048)
+	gh := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "POST" && r.URL.Path == "/app/installations/77/access_tokens":
+			_, _ = w.Write([]byte(`{"token":"inst"}`))
+		case strings.HasPrefix(r.URL.Path, "/repos/acme/shop/compare/") && r.Header.Get("Authorization") == "Bearer inst":
+			compares++
+			sha, tag, _ := strings.Cut(strings.TrimPrefix(r.URL.Path, "/repos/acme/shop/compare/"), "...")
+			if sha == "gone" {
+				http.NotFound(w, r)
+				return
+			}
+			status := "diverged"
+			if contains[tag][sha] {
+				status = "ahead"
+			}
+			_, _ = w.Write([]byte(`{"status":"` + status + `"}`))
+		default:
+			http.Error(w, "unexpected "+r.URL.Path, 500)
+		}
+	}))
+	defer gh.Close()
+	h.git = Git{GitHubAppID: "1", GitHubPrivateKey: string(pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)})),
+		GitHubAPI: gh.URL}
+	if err := (boards.Store{DB: db}).SetDevComplete(ctx, b.ID, "org_pr", b.Columns[1].ID); err != nil {
+		t.Fatal(err)
+	}
+	send := func(event, body string) int {
+		req := httptest.NewRequest("POST", "/", strings.NewReader(body))
+		req.Header.Set("X-GitHub-Event", event)
+		req.Header.Set("X-Hub-Signature-256", sign(body, "gh"))
+		rec := httptest.NewRecorder()
+		h.GitHubWebhook("gh")(rec, req)
+		return rec.Code
+	}
+	merge := func(number, sha, ticketKey string) {
+		t.Helper()
+		body := `{"action":"closed","installation":{"id":77},"repository":{"full_name":"acme/shop"},"pull_request":{"number":` + number + `,
+			"html_url":"https://github.com/acme/shop/pull/` + number + `","title":"` + ticketKey + ` work","body":"","state":"closed","draft":false,
+			"merged":true,"merge_commit_sha":"` + sha + `","user":{"login":"keloran"},"head":{"ref":"x"}}}`
+		if code := send("pull_request", body); code != 204 {
+			t.Fatalf("merge #%s: %d", number, code)
+		}
+	}
+	release := func(tag string, pre bool) int {
+		p := "false"
+		if pre {
+			p = "true"
+		}
+		return send("release", `{"action":"published","installation":{"id":77},"repository":{"full_name":"acme/shop"},
+			"release":{"tag_name":"`+tag+`","html_url":"https://github.com/acme/shop/releases/`+tag+`","prerelease":`+p+`}}`)
+	}
+	column := func(id string) string {
+		d, _ := ts.Get(ctx, "org_pr", id)
+		if d.ColumnID == nil {
+			return ""
+		}
+		return *d.ColumnID
+	}
+	said := func(id, prefix string) int {
+		var n int
+		_ = db.QueryRow(ctx, `SELECT count(*) FROM ticket_comments WHERE ticket_id = $1 AND body LIKE $2`, id, prefix+"%").Scan(&n)
+		return n
+	}
+	// release-done flag off: merging finishes as before, and releases are ignored
+	flagOff, _ := ts.Create(ctx, "org_pr", b.Columns[0].ID, "task", "Flag off", "")
+	merge("6", "fff", flagOff.Key)
+	if !done(flagOff.ID) {
+		t.Fatal("flag off: merge didn't finish the ticket")
+	}
+	if code := release("v0", false); code != 204 || compares != 0 {
+		t.Fatalf("flag off: a release was used: %d %d", code, compares)
+	}
+	h = h.WithReleaseDone(func() bool { return true })
+	// a ticket already in Dev complete (or past it) isn't moved by a merge, only told
+	ahead, _ := ts.Create(ctx, "org_pr", b.Columns[1].ID, "task", "Ahead", "")
+	merge("5", "eee", ahead.Key)
+	if column(ahead.ID) != b.Columns[1].ID || said(ahead.ID, "Merged in acme/shop#5") != 1 {
+		t.Fatalf("ahead: %s", column(ahead.ID))
+	}
+	one, _ := ts.Create(ctx, "org_pr", b.Columns[0].ID, "task", "One PR", "")
+	two, _ := ts.Create(ctx, "org_pr", b.Columns[0].ID, "task", "Two PRs", "")
+	lost, _ := ts.Create(ctx, "org_pr", b.Columns[0].ID, "task", "Force-pushed away", "")
+	merge("7", "aaa", one.Key)
+	merge("8", "bbb", two.Key)
+	merge("9", "ccc", two.Key)
+	merge("10", "gone", lost.Key)
+	if column(one.ID) != b.Columns[1].ID || done(one.ID) || said(one.ID, "Merged in acme/shop#7") != 1 {
+		t.Fatalf("merge didn't move to Dev complete: %s", column(one.ID))
+	}
+	if code := release("v2-rc", true); code != 204 || compares != 0 {
+		t.Fatalf("a prerelease was used: %d %d", code, compares)
+	}
+	// v1 ships #7 and #8: "one" is done; "two" waits for #9; a sha GitHub doesn't know isn't shipped
+	if code := release("v1", false); code != 204 {
+		t.Fatalf("release v1: %d", code)
+	}
+	if !done(one.ID) || column(one.ID) != b.Columns[2].ID || said(one.ID, "Released in acme/shop v1: https://github.com/acme/shop/releases/v1") != 1 {
+		t.Fatalf("v1 didn't finish the shipped ticket: %s", column(one.ID))
+	}
+	if done(two.ID) || done(lost.ID) {
+		t.Fatal("a ticket finished with a merged PR still unreleased")
+	}
+	if p := prs(two.ID); len(p) != 2 || (p[0].ReleasedIn == nil) == (p[1].ReleasedIn == nil) {
+		t.Fatalf("released_in: %+v", p)
+	}
+	// v2 ships #9; already-released PRs aren't compared again
+	compares = 0
+	if code := release("v2", false); code != 204 || !done(two.ID) || said(two.ID, "Released in acme/shop v2") != 1 {
+		t.Fatalf("release v2: %d", code)
+	}
+	if compares != 3 { // ccc, gone and eee (fff merged with the flag off, so it's never waited on)
+		t.Fatalf("compares: %d", compares)
+	}
+	// a ticket someone reopened after its release isn't touched by a later one
+	if err := ts.Move(ctx, "org_pr", one.ID, b.Columns[0].ID, 0); err != nil {
+		t.Fatal(err)
+	}
+	if code := release("v3", false); code != 204 || done(one.ID) {
+		t.Fatalf("v3 re-closed a reopened ticket: %d", code)
+	}
+	// without a Dev complete column, merging finishes as before
+	if err := (boards.Store{DB: db}).SetDevComplete(ctx, b.ID, "org_pr", ""); err != nil {
+		t.Fatal(err)
+	}
+	plain, _ := ts.Create(ctx, "org_pr", b.Columns[0].ID, "task", "Plain", "")
+	merge("11", "ddd", plain.Key)
+	if !done(plain.ID) {
+		t.Fatal("merge didn't finish the ticket on a board without Dev complete")
 	}
 }
