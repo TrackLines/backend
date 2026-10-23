@@ -32,7 +32,7 @@ var (
 )
 
 var (
-	ErrBadChatURL   = errors.New("that isn't a Google Chat webhook: copy it from the space's Apps & integrations → Webhooks (https://chat.googleapis.com/v1/spaces/…)")
+	ErrBadChatURL   = httpx.Code("bad_chat_url", "that isn't a Google Chat webhook: copy it from the space's Apps & integrations → Webhooks (https://chat.googleapis.com/v1/spaces/…)")
 	ErrBadChatKinds = errors.New("unknown notification kind")
 )
 
@@ -267,13 +267,13 @@ func (h System) GetChat(w http.ResponseWriter, r *http.Request) {
 	project := r.URL.Query().Get("project_id")
 	if org == "" || !h.chatScope(w, r, org, project) {
 		if org == "" {
-			http.Error(w, "sign in to an organization", http.StatusForbidden)
+			httpx.Error(w, r, http.StatusForbidden, httpx.ErrSignInOrg)
 		}
 		return
 	}
 	c, err := h.store.chatSpace(r.Context(), org, project)
 	if err != nil {
-		gitErr(w, err)
+		gitErr(w, r, err)
 		return
 	}
 	httpx.JSON(w, http.StatusOK, c)
@@ -293,7 +293,7 @@ func (h System) SetChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if in.URL = strings.TrimSpace(in.URL); in.URL != "" && !validChatURL(in.URL) {
-		http.Error(w, ErrBadChatURL.Error(), http.StatusBadRequest)
+		httpx.Error(w, r, http.StatusBadRequest, ErrBadChatURL)
 		return
 	}
 	if in.Kinds == nil {
@@ -301,16 +301,16 @@ func (h System) SetChat(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, k := range in.Kinds {
 		if !slices.Contains(ChatKinds, k) {
-			http.Error(w, ErrBadChatKinds.Error()+": "+k, http.StatusBadRequest)
+			httpx.Error(w, r, http.StatusBadRequest, httpx.Code("bad_chat_kind", ErrBadChatKinds.Error()+": "+k))
 			return
 		}
 	}
 	if err := h.store.setChatSpace(r.Context(), org, in.ProjectID, in.URL, in.Kinds, user); err != nil {
 		if errors.Is(err, ErrNotConnected) {
-			http.Error(w, "paste the space's webhook URL first", http.StatusBadRequest)
+			httpx.Error(w, r, http.StatusBadRequest, httpx.Code("chat_url_required", "paste the space's webhook URL first"))
 			return
 		}
-		gitErr(w, err)
+		gitErr(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -322,7 +322,7 @@ func (h System) DeleteChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.store.deleteChatSpace(r.Context(), org, r.URL.Query().Get("project_id")); err != nil {
-		gitErr(w, err)
+		gitErr(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -342,12 +342,12 @@ func (h System) TestChat(w http.ResponseWriter, r *http.Request) {
 	}
 	var sealed []byte
 	if err := h.store.DB.QueryRow(r.Context(), `SELECT url FROM chat_webhooks WHERE org_id = $1 AND coalesce(project_id::text, '') = $2`, org, in.ProjectID).Scan(&sealed); err != nil {
-		http.Error(w, "not connected", http.StatusConflict)
+		httpx.Error(w, r, http.StatusConflict, ErrNotConnected)
 		return
 	}
 	webhook, err := h.store.Box.OpenWithAAD(sealed, chatAAD(org, in.ProjectID))
 	if err != nil {
-		gitErr(w, err)
+		gitErr(w, r, err)
 		return
 	}
 	chat := h.chat
@@ -355,7 +355,7 @@ func (h System) TestChat(w http.ResponseWriter, r *http.Request) {
 		chat = &GoogleChat{Store: h.store}
 	}
 	if err := chat.post(r.Context(), webhook, "*TrackLin.es* is connected: notifications for this space will appear here. (Test sent by "+user+".)", ""); err != nil {
-		http.Error(w, "Google Chat refused the test message: "+err.Error(), http.StatusBadGateway)
+		httpx.Error(w, r, http.StatusBadGateway, httpx.Code("chat_test_refused", "Google Chat refused the test message: "+err.Error()))
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

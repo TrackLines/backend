@@ -83,35 +83,35 @@ func (in ticketInput) createType() string {
 	return in.Type
 }
 
-func (in *ticketInput) valid(w http.ResponseWriter) bool {
+func (in *ticketInput) valid(w http.ResponseWriter, r *http.Request) bool {
 	if in.Title = strings.TrimSpace(in.Title); in.Title == "" {
-		http.Error(w, "title is required", http.StatusBadRequest)
+		httpx.Error(w, r, http.StatusBadRequest, httpx.ErrTitleRequired)
 		return false
 	}
 	// bounds (TL-251): a title shows on cards, pushes and MCP output; a near-1MB description broke search
 	if utf8.RuneCountInString(in.Title) > MaxTitle {
-		http.Error(w, "title must be "+strconv.Itoa(MaxTitle)+" characters or fewer", http.StatusBadRequest)
+		httpx.Error(w, r, http.StatusBadRequest, httpx.Code("title_too_long", "title must be "+strconv.Itoa(MaxTitle)+" characters or fewer"))
 		return false
 	}
 	if utf8.RuneCountInString(in.Description) > MaxBody {
-		http.Error(w, "description must be "+strconv.Itoa(MaxBody)+" characters or fewer", http.StatusBadRequest)
+		httpx.Error(w, r, http.StatusBadRequest, httpx.Code("description_too_long", "description must be "+strconv.Itoa(MaxBody)+" characters or fewer"))
 		return false
 	}
 	if !slices.Contains([]string{"", "low", "medium", "high", "urgent"}, in.Priority) {
-		http.Error(w, "priority must be low, medium, high or urgent", http.StatusBadRequest)
+		httpx.Error(w, r, http.StatusBadRequest, ErrBadPriority)
 		return false
 	}
 	if in.Labels != nil {
 		labels, err := NormalizeLabels(*in.Labels)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			httpx.Error(w, r, http.StatusBadRequest, err)
 			return false
 		}
 		in.Labels = &labels
 	}
 	if in.TimeboxDays != nil || in.TimeboxHours != nil {
 		if d, h := intOr0(in.TimeboxDays), intOr0(in.TimeboxHours); d < 0 || d > 60 || h < 0 || h > 23 {
-			http.Error(w, "timebox days must be 0–60 and hours 0–23", http.StatusBadRequest)
+			httpx.Error(w, r, http.StatusBadRequest, httpx.Code("bad_timebox", "timebox days must be 0–60 and hours 0–23"))
 			return false
 		}
 	}
@@ -171,7 +171,7 @@ func (h System) applyLabels(r *http.Request, user, id string, in ticketInput, t 
 	return h.store.SetLabels(r.Context(), user, id, *in.Labels)
 }
 
-func writeErr(w http.ResponseWriter, err error) {
+func writeErr(w http.ResponseWriter, r *http.Request, err error) {
 	if httpx.Canceled(err) {
 		return // the client left: nobody to answer, nothing to report
 	}
@@ -179,31 +179,31 @@ func writeErr(w http.ResponseWriter, err error) {
 	var unestimated EstimateRequiredError
 	switch {
 	case errors.As(err, &locked):
-		http.Error(w, err.Error(), http.StatusConflict)
+		httpx.Error(w, r, http.StatusConflict, httpx.Code("sprint_locked", err.Error()))
 		return
 	case errors.As(err, &unestimated):
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		httpx.Error(w, r, http.StatusBadRequest, httpx.Code("estimate_required", err.Error()))
 		return
 	case errors.Is(err, ErrNotFound):
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	case errors.Is(err, ErrInvalidType), errors.Is(err, ErrBadPriority), errors.Is(err, ErrBadBacklogSort), errors.Is(err, ErrBadBacklogStatus), errors.Is(err, ErrBadExternal):
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		httpx.Error(w, r, http.StatusBadRequest, err)
 		return
 	case errors.Is(err, ErrOnBoard), errors.Is(err, ErrIsDuplicate), errors.Is(err, boards.ErrBoardArchived), errors.Is(err, ErrAgentReviewBypass),
 		errors.Is(err, ErrEpicOffBoard):
-		http.Error(w, err.Error(), http.StatusConflict)
+		httpx.Error(w, r, http.StatusConflict, err)
 		return
 	case errors.Is(err, ErrAlreadyAssigned):
-		http.Error(w, err.Error(), http.StatusConflict)
+		httpx.Error(w, r, http.StatusConflict, err)
 		return
 	case errors.Is(err, ErrNotAssignedToCaller), errors.Is(err, ErrBlocked), errors.Is(err, ErrDoneBlock), errors.Is(err, ErrDoneParent):
-		http.Error(w, err.Error(), http.StatusConflict)
+		httpx.Error(w, r, http.StatusConflict, err)
 		return
 	case errors.Is(err, ErrSelfBlock), errors.Is(err, ErrOtherProject), errors.Is(err, ErrCycle), errors.Is(err, ErrUnknownAssignee), errors.Is(err, ErrBadLabels),
 		errors.Is(err, ErrSelfParent), errors.Is(err, ErrParentLoop), errors.Is(err, boards.ErrBadEstimate),
 		errors.Is(err, ErrEpicInEpic), errors.Is(err, ErrEpicEstimate):
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		httpx.Error(w, r, http.StatusBadRequest, err)
 		return
 	}
 	logs.Errorf("tickets: %v", err)
@@ -212,7 +212,7 @@ func writeErr(w http.ResponseWriter, err error) {
 
 func (h System) Create(w http.ResponseWriter, r *http.Request) {
 	var in ticketInput
-	if !httpx.Decode(w, r, &in) || !in.valid(w) {
+	if !httpx.Decode(w, r, &in) || !in.valid(w, r) {
 		return
 	}
 	org := auth.OrgID(r.Context())
@@ -231,7 +231,7 @@ func (h System) Create(w http.ResponseWriter, r *http.Request) {
 		err = h.applyTimebox(r, org, t.ID, in, t)
 	}
 	if err != nil {
-		writeErr(w, err)
+		writeErr(w, r, err)
 		return
 	}
 	h.created(r, t.ID)
@@ -247,7 +247,7 @@ func (h System) Create(w http.ResponseWriter, r *http.Request) {
 
 func (h System) Update(w http.ResponseWriter, r *http.Request) {
 	var in ticketInput
-	if !httpx.Decode(w, r, &in) || !in.valid(w) {
+	if !httpx.Decode(w, r, &in) || !in.valid(w, r) {
 		return
 	}
 	org := auth.OrgID(r.Context())
@@ -262,7 +262,7 @@ func (h System) Update(w http.ResponseWriter, r *http.Request) {
 		err = h.applyTimebox(r, org, r.PathValue("id"), in, nil)
 	}
 	if err != nil {
-		writeErr(w, err)
+		writeErr(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -271,7 +271,7 @@ func (h System) Update(w http.ResponseWriter, r *http.Request) {
 func (h System) Delete(w http.ResponseWriter, r *http.Request) {
 	org := auth.OrgID(r.Context())
 	if err := h.store.Delete(r.Context(), org, r.PathValue("id")); err != nil {
-		writeErr(w, err)
+		writeErr(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -287,7 +287,7 @@ func (h System) Move(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if in.ColumnID == "" {
-		http.Error(w, "column_id is required", http.StatusBadRequest)
+		httpx.Error(w, r, http.StatusBadRequest, httpx.Code("column_id_required", "column_id is required"))
 		return
 	}
 	org := auth.OrgID(r.Context())
@@ -295,7 +295,7 @@ func (h System) Move(w http.ResponseWriter, r *http.Request) {
 	from, unassigned := h.store.moveFrom(r.Context(), org, r.PathValue("id"))
 	review, alsoMoved, err := h.store.MoveGroup(r.Context(), org, r.PathValue("id"), in.ColumnID, in.Position, in.Estimate, true, auth.ViaAPIKey(r.Context()))
 	if err != nil {
-		writeErr(w, err)
+		writeErr(w, r, err)
 		return
 	}
 	if unassigned && from != in.ColumnID {
@@ -324,7 +324,7 @@ func (h System) Backlog(w http.ResponseWriter, r *http.Request) {
 	org := auth.OrgID(r.Context())
 	out, err := h.store.Backlog(r.Context(), org, r.PathValue("id"), r.URL.Query().Get("type"))
 	if err != nil {
-		writeErr(w, err)
+		writeErr(w, r, err)
 		return
 	}
 	httpx.JSON(w, http.StatusOK, out)
@@ -333,25 +333,25 @@ func (h System) Backlog(w http.ResponseWriter, r *http.Request) {
 // PageBacklog: GET /api/projects/{id}/backlog/page?type=&label=a&priority=high&sort=newest&page=1&per_page=25.
 func (h System) PageBacklog(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	page, ok := intParam(w, q.Get("page"), "page", 1, 100_000) // unbounded, (page-1)*per_page overflowed into a 500
+	page, ok := intParam(w, r, q.Get("page"), "page", 1, 100_000) // unbounded, (page-1)*per_page overflowed into a 500
 	if !ok {
 		return
 	}
-	perPage, ok := intParam(w, q.Get("per_page"), "per_page", 25, MaxPerPage)
+	perPage, ok := intParam(w, r, q.Get("per_page"), "per_page", 25, MaxPerPage)
 	if !ok {
 		return
 	}
 	org := auth.OrgID(r.Context())
 	out, err := h.store.PageBacklogStatus(r.Context(), org, r.PathValue("id"), q.Get("epic"), q.Get("type"), q.Get("status"), q["label"], page, perPage, q.Get("sort"), q["priority"]...)
 	if err != nil {
-		writeErr(w, err)
+		writeErr(w, r, err)
 		return
 	}
 	httpx.JSON(w, http.StatusOK, out)
 }
 
 // intParam parses an optional positive query int (def when empty, max 0 = unbounded); writes a 400 if bad.
-func intParam(w http.ResponseWriter, raw, name string, def, max int) (int, bool) {
+func intParam(w http.ResponseWriter, r *http.Request, raw, name string, def, max int) (int, bool) {
 	if raw == "" {
 		return def, true
 	}
@@ -361,7 +361,7 @@ func intParam(w http.ResponseWriter, raw, name string, def, max int) (int, bool)
 		if max > 0 {
 			msg += " up to " + strconv.Itoa(max)
 		}
-		http.Error(w, msg, http.StatusBadRequest)
+		httpx.Error(w, r, http.StatusBadRequest, httpx.Code("bad_number_param", msg))
 		return 0, false
 	}
 	return n, true
@@ -370,20 +370,20 @@ func intParam(w http.ResponseWriter, raw, name string, def, max int) (int, bool)
 // CreateBacklog adds a ticket to project {id}'s backlog.
 func (h System) CreateBacklog(w http.ResponseWriter, r *http.Request) {
 	var in ticketInput
-	if !httpx.Decode(w, r, &in) || !in.valid(w) {
+	if !httpx.Decode(w, r, &in) || !in.valid(w, r) {
 		return
 	}
 	if in.Estimate != nil && *in.Estimate != "" {
-		http.Error(w, "backlog tickets can't be estimated; estimates follow the board's scale", http.StatusBadRequest)
+		httpx.Error(w, r, http.StatusBadRequest, httpx.Code("backlog_estimate", "backlog tickets can't be estimated; estimates follow the board's scale"))
 		return
 	}
 	org := auth.OrgID(r.Context())
 	if in.External != nil && !auth.ViaAPIKey(r.Context()) {
-		http.Error(w, "external is set by integrations (API keys)", http.StatusForbidden)
+		httpx.Error(w, r, http.StatusForbidden, httpx.Code("external_api_only", "external is set by integrations (API keys)"))
 		return
 	}
 	if in.External != nil && !in.External.valid() {
-		writeErr(w, ErrBadExternal)
+		writeErr(w, r, ErrBadExternal)
 		return
 	}
 	t, err := h.store.CreateBacklogAs(r.Context(), org, auth.ActorID(r.Context()), r.PathValue("id"), in.createType(), in.Title, in.Description)
@@ -402,7 +402,7 @@ func (h System) CreateBacklog(w http.ResponseWriter, r *http.Request) {
 		err = h.applyTimebox(r, org, t.ID, in, t)
 	}
 	if err != nil {
-		writeErr(w, err)
+		writeErr(w, r, err)
 		return
 	}
 	h.created(r, t.ID)
@@ -413,13 +413,13 @@ func (h System) CreateBacklog(w http.ResponseWriter, r *http.Request) {
 // the Clerk user ID). The database update makes competing claims mutually exclusive.
 func (h System) Claim(w http.ResponseWriter, r *http.Request) {
 	if auth.ViaAPIKey(r.Context()) && auth.APIKeyKind(r.Context()) == "service" {
-		http.Error(w, "service keys can't claim tickets", http.StatusForbidden)
+		httpx.Error(w, r, http.StatusForbidden, httpx.Code("service_key_claim", "service keys can't claim tickets"))
 		return
 	}
 	org := auth.OrgID(r.Context())
 	t, err := h.store.Claim(r.Context(), org, auth.ActorID(r.Context()), r.PathValue("id"))
 	if err != nil {
-		writeErr(w, err)
+		writeErr(w, r, err)
 		return
 	}
 	httpx.JSON(w, http.StatusOK, t)
@@ -428,12 +428,12 @@ func (h System) Claim(w http.ResponseWriter, r *http.Request) {
 // Release clears the current caller's assignment.
 func (h System) Release(w http.ResponseWriter, r *http.Request) {
 	if auth.ViaAPIKey(r.Context()) && auth.APIKeyKind(r.Context()) == "service" {
-		http.Error(w, "service keys can't release tickets", http.StatusForbidden)
+		httpx.Error(w, r, http.StatusForbidden, httpx.Code("service_key_release", "service keys can't release tickets"))
 		return
 	}
 	org := auth.OrgID(r.Context())
 	if err := h.store.Release(r.Context(), org, auth.ActorID(r.Context()), r.PathValue("id")); err != nil {
-		writeErr(w, err)
+		writeErr(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -444,7 +444,7 @@ func (h System) ToBacklog(w http.ResponseWriter, r *http.Request) {
 	org := auth.OrgID(r.Context())
 	alsoMoved, err := h.store.ToBacklogGroup(r.Context(), org, r.PathValue("id"), auth.ViaAPIKey(r.Context()))
 	if err != nil {
-		writeErr(w, err)
+		writeErr(w, r, err)
 		return
 	}
 	if len(alsoMoved) > 0 { // its open sub-tickets on the board came too (TL-218)
@@ -460,12 +460,12 @@ func (h System) GetByKey(w http.ResponseWriter, r *http.Request) {
 	org := auth.OrgID(r.Context())
 	id, err := h.store.IDByKey(r.Context(), org, r.PathValue("key"))
 	if err != nil {
-		writeErr(w, err)
+		writeErr(w, r, err)
 		return
 	}
 	d, err := h.store.Get(r.Context(), org, id)
 	if err != nil {
-		writeErr(w, err)
+		writeErr(w, r, err)
 		return
 	}
 	httpx.JSON(w, http.StatusOK, d)
@@ -475,7 +475,7 @@ func (h System) Get(w http.ResponseWriter, r *http.Request) {
 	org := auth.OrgID(r.Context())
 	d, err := h.store.Get(r.Context(), org, r.PathValue("id"))
 	if err != nil {
-		writeErr(w, err)
+		writeErr(w, r, err)
 		return
 	}
 	httpx.JSON(w, http.StatusOK, d)
@@ -485,7 +485,7 @@ func (h System) Get(w http.ResponseWriter, r *http.Request) {
 func (h System) Epics(w http.ResponseWriter, r *http.Request) {
 	out, err := h.store.Epics(r.Context(), auth.OrgID(r.Context()), r.PathValue("id"))
 	if err != nil {
-		writeErr(w, err)
+		writeErr(w, r, err)
 		return
 	}
 	httpx.JSON(w, http.StatusOK, out)
@@ -496,7 +496,7 @@ func (h System) Epics(w http.ResponseWriter, r *http.Request) {
 func (h System) History(w http.ResponseWriter, r *http.Request) {
 	out, err := h.store.History(r.Context(), auth.OrgID(r.Context()), r.PathValue("id"))
 	if err != nil {
-		writeErr(w, err)
+		writeErr(w, r, err)
 		return
 	}
 	httpx.JSON(w, http.StatusOK, out)
@@ -512,7 +512,7 @@ func (h System) SetBlockedBy(w http.ResponseWriter, r *http.Request) {
 	}
 	org := auth.OrgID(r.Context())
 	if err := h.store.SetBlockedBy(r.Context(), org, r.PathValue("id"), in.TicketIDs); err != nil {
-		writeErr(w, err)
+		writeErr(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -528,7 +528,7 @@ func (h System) SetParent(w http.ResponseWriter, r *http.Request) {
 	}
 	org := auth.OrgID(r.Context())
 	if err := h.store.SetParent(r.Context(), org, r.PathValue("id"), in.ParentID); err != nil {
-		writeErr(w, err)
+		writeErr(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -538,7 +538,7 @@ func (h System) SetParent(w http.ResponseWriter, r *http.Request) {
 // For integrations (API keys) linking tickets they made earlier, e.g. Bugfixes backfilling reports.
 func (h System) SetExternal(w http.ResponseWriter, r *http.Request) {
 	if !auth.ViaAPIKey(r.Context()) {
-		http.Error(w, "external is set by integrations (API keys)", http.StatusForbidden)
+		httpx.Error(w, r, http.StatusForbidden, httpx.Code("external_api_only", "external is set by integrations (API keys)"))
 		return
 	}
 	var in *External
@@ -546,7 +546,7 @@ func (h System) SetExternal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.store.SetExternal(r.Context(), auth.OrgID(r.Context()), r.PathValue("id"), in); err != nil {
-		writeErr(w, err)
+		writeErr(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

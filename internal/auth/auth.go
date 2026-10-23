@@ -7,6 +7,8 @@ import (
 
 	"github.com/clerk/clerk-sdk-go/v2"
 	clerkhttp "github.com/clerk/clerk-sdk-go/v2/http"
+
+	"github.com/tracklines/backend/internal/httpx"
 )
 
 // Init sets the Clerk secret key (cfg.Clerk.Key) used to fetch JWKS.
@@ -51,7 +53,7 @@ func RequiredWith(optional func(http.Handler) http.Handler) func(http.Handler) h
 				return
 			}
 			if OrgID(r.Context()) == "" {
-				http.Error(w, "choose an organization first", http.StatusForbidden)
+				httpx.Error(w, r, http.StatusForbidden, httpx.ErrChooseOrg)
 				return
 			}
 			next.ServeHTTP(w, r)
@@ -70,7 +72,7 @@ func SessionRequiredWith(required func(http.Handler) http.Handler) func(http.Han
 	return func(next http.Handler) http.Handler {
 		return required(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if ViaAPIKey(r.Context()) {
-				http.Error(w, "requires a signed-in session, not an API key", http.StatusForbidden)
+				httpx.Error(w, r, http.StatusForbidden, httpx.Code("session_required", "requires a signed-in session, not an API key"))
 				return
 			}
 			next.ServeHTTP(w, r)

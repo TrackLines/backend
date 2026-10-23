@@ -7,6 +7,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/tracklines/backend/internal/httpx"
 )
 
 var (
@@ -14,7 +16,7 @@ var (
 	ErrNotEmpty     = errors.New("column contains tickets")
 	ErrInvalidOrder = errors.New("column order must contain every board column exactly once")
 	// ErrDoneMoved: the last column is Done (what makes a ticket done), so it stays last (TL-469)
-	ErrDoneMoved = errors.New("the last column is Done and stays last: move the other columns around it")
+	ErrDoneMoved = httpx.Code("done_moved", "the last column is Done and stays last: move the other columns around it")
 )
 
 type Column struct {

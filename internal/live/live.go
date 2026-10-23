@@ -54,7 +54,7 @@ func New(vk valkey.Client, db boards.Store) System { return System{VK: vk, Board
 
 func (s System) authorize(w http.ResponseWriter, r *http.Request) bool {
 	if s.VK == nil {
-		http.Error(w, "live sessions unavailable", http.StatusServiceUnavailable)
+		httpx.Error(w, r, http.StatusServiceUnavailable, httpx.Code("live_unavailable", "live sessions unavailable"))
 		return false
 	}
 	if _, err := s.Boards.Get(r.Context(), r.PathValue("id"), auth.OrgID(r.Context())); err != nil {
@@ -118,20 +118,20 @@ func (s System) Start(w http.ResponseWriter, r *http.Request) {
 	// starting one mid-standup would make the caller its host (TL-250): people only, and not while
 	// someone else's is running and they're still there (it ends itself once its host has gone)
 	if auth.ViaAPIKey(r.Context()) {
-		http.Error(w, "sign in to run a standup", http.StatusForbidden)
+		httpx.Error(w, r, http.StatusForbidden, httpx.Code("sign_in_standup", "sign in to run a standup"))
 		return
 	}
 	if h, err := s.hosted(r.Context(), boardScope(standup, r.PathValue("id")), standup); err == nil && h.Host != startedBy {
-		http.Error(w, "a standup is already running: join it", http.StatusConflict)
+		httpx.Error(w, r, http.StatusConflict, httpx.Code("standup_running", "a standup is already running: join it"))
 		return
 	} else if err != nil && !errors.Is(err, ErrNoSession) {
-		http.Error(w, "live session unavailable", 503)
+		httpx.Error(w, r, 503, httpx.Code("live_session_unavailable", "live session unavailable"))
 		return
 	}
 	// opens stopped at the first person: the host starts the clock once everyone's joined (TL-231)
 	v := Standup{People: in.People, Index: 0, SpentMS: 0, RunningSince: nil, StartedBy: startedBy}
 	if err := s.save(r.Context(), r.PathValue("id"), v); err != nil {
-		http.Error(w, "live session unavailable", 503)
+		httpx.Error(w, r, 503, httpx.Code("live_session_unavailable", "live session unavailable"))
 		return
 	}
 	_ = s.publish(r.Context(), r.PathValue("id"), "standup", v)
@@ -150,11 +150,11 @@ func (s System) Get(w http.ResponseWriter, r *http.Request) {
 	}
 	v, err := s.get(r.Context(), r.PathValue("id"))
 	if errors.Is(err, ErrNoSession) {
-		http.Error(w, "no live session", 404)
+		httpx.Error(w, r, 404, httpx.Code("no_live_session", "no live session"))
 		return
 	}
 	if err != nil {
-		http.Error(w, "live session unavailable", 503)
+		httpx.Error(w, r, 503, httpx.Code("live_session_unavailable", "live session unavailable"))
 		return
 	}
 	httpx.JSON(w, http.StatusOK, v)
@@ -167,20 +167,20 @@ func (s System) Act(w http.ResponseWriter, r *http.Request) {
 	board := r.PathValue("id")
 	v, err := s.get(r.Context(), board)
 	if errors.Is(err, ErrNoSession) {
-		http.Error(w, "no live session", 404)
+		httpx.Error(w, r, 404, httpx.Code("no_live_session", "no live session"))
 		return
 	}
 	if err != nil {
-		http.Error(w, "live session unavailable", 503)
+		httpx.Error(w, r, 503, httpx.Code("live_session_unavailable", "live session unavailable"))
 		return
 	}
 	// only the host runs the standup (TL-235); with no hosted session (its host gone too long), anyone can
 	user, _ := auth.UserID(r.Context())
 	if h, err := s.hosted(r.Context(), boardScope(standup, board), standup); err == nil && h.Host != user {
-		http.Error(w, "only the host can run the standup", http.StatusForbidden)
+		httpx.Error(w, r, http.StatusForbidden, httpx.Code("standup_host_only", "only the host can run the standup"))
 		return
 	} else if err != nil && !errors.Is(err, ErrNoSession) {
-		http.Error(w, "live session unavailable", 503)
+		httpx.Error(w, r, 503, httpx.Code("live_session_unavailable", "live session unavailable"))
 		return
 	}
 	var in struct {
@@ -199,11 +199,11 @@ func (s System) Act(w http.ResponseWriter, r *http.Request) {
 	}
 	v, ok := transition(v, in.Action, in.Index, s.Now().UnixMilli())
 	if !ok {
-		http.Error(w, "action must be next, previous, jump, pause, resume or end", 400)
+		httpx.Error(w, r, 400, httpx.Code("bad_standup_action", "action must be next, previous, jump, pause, resume or end"))
 		return
 	}
 	if err := s.save(r.Context(), board, v); err != nil {
-		http.Error(w, "live session unavailable", 503)
+		httpx.Error(w, r, 503, httpx.Code("live_session_unavailable", "live session unavailable"))
 		return
 	}
 	_ = s.publish(r.Context(), board, "standup", v)

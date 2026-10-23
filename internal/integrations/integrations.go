@@ -26,7 +26,7 @@ const Bugfixes = "bugfixes"
 // DefaultBugfixesURL is the hosted Bugfixes API.
 const DefaultBugfixesURL = "https://api.bugfix.es"
 
-var ErrNotConnected = errors.New("not connected")
+var ErrNotConnected = httpx.Code("not_connected", "not connected")
 
 type Store struct {
 	DB  *pgxpool.Pool
@@ -202,7 +202,7 @@ func (h System) WithReleaseDone(on func() bool) System { h.releaseDone = on; ret
 func (h System) Connection(w http.ResponseWriter, r *http.Request) {
 	org := auth.OrgID(r.Context())
 	if org == "" {
-		http.Error(w, "sign in to an organization", http.StatusForbidden)
+		httpx.Error(w, r, http.StatusForbidden, httpx.ErrSignInOrg)
 		return
 	}
 	if r.PathValue("provider") == GitHub { // several accounts (TL-281)
@@ -251,7 +251,7 @@ func (h System) Connect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if provider != Bugfixes {
-		http.Error(w, "unknown provider", http.StatusNotFound)
+		httpx.Error(w, r, http.StatusNotFound, httpx.Code("unknown_provider", "unknown provider"))
 		return
 	}
 	var in struct {
@@ -266,12 +266,12 @@ func (h System) Connect(w http.ResponseWriter, r *http.Request) {
 		in.BaseURL = DefaultBugfixesURL
 	}
 	if in.Token == "" || len(in.Token) > 500 || !validBaseURL(in.BaseURL) {
-		http.Error(w, "token is required; base_url must be an https address like https://bugfix.es", http.StatusBadRequest)
+		httpx.Error(w, r, http.StatusBadRequest, httpx.Code("bad_bugfixes_token", "token is required; base_url must be an https address like https://bugfix.es"))
 		return
 	}
 	if err := h.store.Connect(r.Context(), org, provider, in.BaseURL, in.Token, user); err != nil {
 		if errors.Is(err, secrets.ErrNoKey) {
-			http.Error(w, "integrations are not configured on this server", http.StatusServiceUnavailable)
+			httpx.Error(w, r, http.StatusServiceUnavailable, httpx.Code("integrations_not_configured", "integrations are not configured on this server"))
 			return
 		}
 		logs.Errorf("integrations: connect: %v", err)

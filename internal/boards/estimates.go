@@ -2,11 +2,12 @@ package boards
 
 import (
 	"context"
-	"errors"
 	"slices"
 	"strconv"
 
 	"github.com/jackc/pgx/v5"
+
+	"github.com/tracklines/backend/internal/httpx"
 )
 
 // Scales are the ways a board can estimate tickets, smallest first. "none" turns estimates off.
@@ -19,7 +20,7 @@ var Scales = map[string][]string{
 	"linear":    {"1", "2", "3", "4", "5"},
 }
 
-var ErrBadEstimate = errors.New("estimate isn't on this board's scale")
+var ErrBadEstimate = httpx.Code("bad_estimate", "estimate isn't on this board's scale")
 
 // ValidEstimate: "" (no estimate) always is; anything else must be on the scale.
 func ValidEstimate(scale, estimate string) bool {

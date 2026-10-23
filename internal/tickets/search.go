@@ -2,7 +2,6 @@ package tickets
 
 import (
 	"context"
-	"errors"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -141,7 +140,7 @@ func (s Store) SearchTotal(ctx context.Context, owner string, q SearchQuery) ([]
 	return out, total, err
 }
 
-var ErrBadPriority = errors.New("priority must be low, medium, high or urgent")
+var ErrBadPriority = httpx.Code("bad_priority", "priority must be low, medium, high or urgent")
 
 // ValidPriorities: every entry is a priority.
 func ValidPriorities(ps []string) bool {
@@ -178,16 +177,16 @@ func (h System) Search(w http.ResponseWriter, r *http.Request) {
 		Types: v["type"], Priorities: v["priority"], Labels: v["label"], Status: v.Get("status"), AnyWord: v.Get("match") == "any", Epic: v.Get("epic")}
 	for _, t := range q.Types {
 		if !ValidType(t) {
-			http.Error(w, "type must be bug, feature or task", http.StatusBadRequest)
+			httpx.Error(w, r, http.StatusBadRequest, ErrInvalidType)
 			return
 		}
 	}
 	if !ValidPriorities(q.Priorities) {
-		http.Error(w, ErrBadPriority.Error(), http.StatusBadRequest)
+		httpx.Error(w, r, http.StatusBadRequest, ErrBadPriority)
 		return
 	}
 	if q.Status != "" && q.Status != "open" && q.Status != "done" {
-		http.Error(w, "status must be open or done", http.StatusBadRequest)
+		httpx.Error(w, r, http.StatusBadRequest, httpx.Code("bad_search_status", "status must be open or done"))
 		return
 	}
 	switch a := v.Get("assignee"); a {
@@ -207,7 +206,7 @@ func (h System) Search(w http.ResponseWriter, r *http.Request) {
 	if p := v.Get("page"); p != "" {
 		n, err := strconv.Atoi(p)
 		if err != nil || n < 1 || n > 1000 {
-			http.Error(w, "page must be 1 or more", http.StatusBadRequest)
+			httpx.Error(w, r, http.StatusBadRequest, httpx.Code("bad_page", "page must be 1 or more"))
 			return
 		}
 		q.Page = n
@@ -215,14 +214,14 @@ func (h System) Search(w http.ResponseWriter, r *http.Request) {
 	if l := v.Get("limit"); l != "" {
 		n, err := strconv.Atoi(l)
 		if err != nil || n < 1 || n > maxSearchResults {
-			http.Error(w, "limit must be 1–50", http.StatusBadRequest)
+			httpx.Error(w, r, http.StatusBadRequest, httpx.Code("bad_search_limit", "limit must be 1–50"))
 			return
 		}
 		q.Limit = n
 	}
 	out, total, err := h.store.SearchTotal(r.Context(), auth.OrgID(r.Context()), q)
 	if err != nil {
-		writeErr(w, err)
+		writeErr(w, r, err)
 		return
 	}
 	if v.Get("total") == "1" { // "6 of 9" lists: the page and how many match in all

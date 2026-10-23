@@ -16,6 +16,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/tracklines/backend/internal/httpx"
 )
 
 // MaxOrigins caps a single org's list. ponytail: a sane ceiling, not a product limit; raise it if a
@@ -23,8 +25,8 @@ import (
 const MaxOrigins = 50
 
 var (
-	ErrInvalid  = errors.New("an origin like https://example.com is required")
-	ErrTooMany  = errors.New("too many embed origins for this organization")
+	ErrInvalid  = httpx.Code("bad_origin", "an origin like https://example.com is required")
+	ErrTooMany  = httpx.Code("too_many_origins", "too many embed origins for this organization")
 	ErrNotFound = errors.New("not found")
 )
 

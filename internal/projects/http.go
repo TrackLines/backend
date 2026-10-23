@@ -24,7 +24,7 @@ func NewSystem(db *pgxpool.Pool, admins organizations.Admins) System {
 	return System{db: db, store: Store{DB: db}, admins: admins}
 }
 
-func writeErr(w http.ResponseWriter, err error) {
+func writeErr(w http.ResponseWriter, r *http.Request, err error) {
 	if httpx.Canceled(err) {
 		return // the client left: nobody to answer, nothing to report
 	}
@@ -32,11 +32,11 @@ func writeErr(w http.ResponseWriter, err error) {
 	case errors.Is(err, ErrNotFound):
 		http.Error(w, "not found", http.StatusNotFound)
 	case errors.Is(err, ErrBadKeyPrefix):
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		httpx.Error(w, r, http.StatusBadRequest, err)
 	case errors.Is(err, ErrKeyPrefixTaken):
-		http.Error(w, err.Error(), http.StatusConflict)
+		httpx.Error(w, r, http.StatusConflict, err)
 	case errors.Is(err, ErrLimit):
-		http.Error(w, "your plan's project limit is reached — upgrade for more", http.StatusPaymentRequired)
+		httpx.Error(w, r, http.StatusPaymentRequired, httpx.Code("project_limit", "your plan's project limit is reached — upgrade for more"))
 	default:
 		logs.Errorf("projects: %v", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -49,9 +49,9 @@ type projectInput struct {
 	KeyPrefix   *string `json:"key_prefix"` // update only: omitted = unchanged
 }
 
-func (in *projectInput) valid(w http.ResponseWriter) bool {
+func (in *projectInput) valid(w http.ResponseWriter, r *http.Request) bool {
 	if in.Name = strings.TrimSpace(in.Name); in.Name == "" {
-		http.Error(w, "name is required", http.StatusBadRequest)
+		httpx.Error(w, r, http.StatusBadRequest, httpx.ErrNameRequired)
 		return false
 	}
 	return true
@@ -61,7 +61,7 @@ func (h System) List(w http.ResponseWriter, r *http.Request) {
 	org := auth.OrgID(r.Context())
 	out, err := h.store.List(r.Context(), org)
 	if err != nil {
-		writeErr(w, err)
+		writeErr(w, r, err)
 		return
 	}
 	httpx.JSON(w, http.StatusOK, out)
@@ -69,18 +69,18 @@ func (h System) List(w http.ResponseWriter, r *http.Request) {
 
 func (h System) Create(w http.ResponseWriter, r *http.Request) {
 	var in projectInput
-	if !httpx.Decode(w, r, &in) || !in.valid(w) {
+	if !httpx.Decode(w, r, &in) || !in.valid(w, r) {
 		return
 	}
 	// the org's plan sets its project limit, whoever creates the project (TL-243)
 	limit, err := billing.ProjectLimit(r.Context(), h.db, auth.OrgID(r.Context()))
 	if err != nil {
-		writeErr(w, err)
+		writeErr(w, r, err)
 		return
 	}
 	p, err := h.store.Create(r.Context(), auth.OrgID(r.Context()), in.Name, in.Description, limit)
 	if err != nil {
-		writeErr(w, err)
+		writeErr(w, r, err)
 		return
 	}
 	httpx.JSON(w, http.StatusCreated, p)
@@ -90,7 +90,7 @@ func (h System) Get(w http.ResponseWriter, r *http.Request) {
 	org := auth.OrgID(r.Context())
 	p, err := h.store.Get(r.Context(), r.PathValue("id"), org)
 	if err != nil {
-		writeErr(w, err)
+		writeErr(w, r, err)
 		return
 	}
 	httpx.JSON(w, http.StatusOK, p)
@@ -98,7 +98,7 @@ func (h System) Get(w http.ResponseWriter, r *http.Request) {
 
 func (h System) Update(w http.ResponseWriter, r *http.Request) {
 	var in projectInput
-	if !httpx.Decode(w, r, &in) || !in.valid(w) {
+	if !httpx.Decode(w, r, &in) || !in.valid(w, r) {
 		return
 	}
 	if in.KeyPrefix != nil {
@@ -112,7 +112,7 @@ func (h System) Update(w http.ResponseWriter, r *http.Request) {
 		err = h.store.SetKeyPrefix(r.Context(), r.PathValue("id"), org, strings.ToUpper(strings.TrimSpace(*in.KeyPrefix)))
 	}
 	if err != nil {
-		writeErr(w, err)
+		writeErr(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -124,7 +124,7 @@ func (h System) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.store.Delete(r.Context(), r.PathValue("id"), org); err != nil {
-		writeErr(w, err)
+		writeErr(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

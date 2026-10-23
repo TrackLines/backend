@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/valkey-io/valkey-go"
+
+	"github.com/tracklines/backend/internal/httpx"
 )
 
 // Hosted sessions (TL-221): someone hosts a refinement or standup and others join. What the host has
@@ -20,9 +22,9 @@ const (
 )
 
 var (
-	ErrSessionRunning = errors.New("a session is already running")
-	ErrNotHost        = errors.New("only the host can do that")
-	ErrNotJoined      = errors.New("they haven't joined the session")
+	ErrSessionRunning = httpx.Code("session_running", "a session is already running")
+	ErrNotHost        = httpx.Code("not_host", "only the host can do that")
+	ErrNotJoined      = httpx.Code("not_joined", "they haven't joined the session")
 )
 
 // Focus is what the host has open: a ticket (nil when none) and the filters they're using.

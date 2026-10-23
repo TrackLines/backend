@@ -2,7 +2,6 @@ package sprints
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"math"
 	"net/http"
@@ -420,7 +419,7 @@ func trim(f float64) string { return strconv.FormatFloat(math.Round(f*10)/10, 'f
 
 // --- HTTP ---
 
-var errRange = errors.New("from and to are dates (YYYY-MM-DD), from before to, at most two years apart")
+var errRange = httpx.Code("bad_date_range", "from and to are dates (YYYY-MM-DD), from before to, at most two years apart")
 
 // ReportRange reads ?from=&to= (whole days in the caller's time zone, to inclusive). Default: the last
 // 90 days up to today.
@@ -453,12 +452,12 @@ func ReportRange(r *http.Request) (time.Time, time.Time, error) {
 func (h System) BoardReport(w http.ResponseWriter, r *http.Request) {
 	from, to, err := ReportRange(r)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		httpx.Error(w, r, http.StatusBadRequest, err)
 		return
 	}
 	rep, err := h.store.BoardReport(r.Context(), auth.OrgID(r.Context()), r.PathValue("id"), from, to)
 	if err != nil {
-		writeErr(w, err)
+		writeErr(w, r, err)
 		return
 	}
 	if wantsMarkdown(r) { // TL-399

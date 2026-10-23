@@ -143,7 +143,7 @@ func (h System) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	in.Name = strings.TrimSpace(in.Name)
 	if in.Name == "" {
-		http.Error(w, "name is required", 400)
+		httpx.Error(w, r, 400, httpx.ErrNameRequired)
 		return
 	}
 	var t Team
@@ -168,7 +168,7 @@ func (h System) Update(w http.ResponseWriter, r *http.Request) {
 	}
 	in.Name = strings.TrimSpace(in.Name)
 	if in.Name == "" {
-		http.Error(w, "name is required", 400)
+		httpx.Error(w, r, 400, httpx.ErrNameRequired)
 		return
 	}
 	tag, err := h.db.Exec(r.Context(), `UPDATE teams SET name=$3,description=$4,updated_at=now() WHERE id=$1 AND org_id=$2`, r.PathValue("id"), auth.OrgID(r.Context()), in.Name, in.Description)
@@ -217,7 +217,7 @@ func (h System) member(w http.ResponseWriter, r *http.Request, add bool) {
 		})
 		if listErr != nil {
 			logs.Errorf("teams: check organization membership: %v", listErr)
-			http.Error(w, "could not verify organization membership", http.StatusBadGateway)
+			httpx.Error(w, r, http.StatusBadGateway, httpx.ErrVerifyMembership)
 			return
 		}
 		isMember := false
@@ -230,7 +230,7 @@ func (h System) member(w http.ResponseWriter, r *http.Request, add bool) {
 			}
 		}
 		if !isMember {
-			http.Error(w, "user is not a member of this organization", http.StatusUnprocessableEntity)
+			httpx.Error(w, r, http.StatusUnprocessableEntity, organizations.ErrNotMember)
 			return
 		}
 		_, err = h.db.Exec(r.Context(), `INSERT INTO team_members(team_id,user_clerk_id) SELECT id,$3 FROM teams WHERE id=$1 AND org_id=$2 ON CONFLICT DO NOTHING`, r.PathValue("id"), orgID, userID)

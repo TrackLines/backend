@@ -28,13 +28,13 @@ func NewSystem(db *pgxpool.Pool) System { return System{store: Store{DB: db}} }
 // WithAdmins lets org admins change the origin list (allowing an origin opens the API to it).
 func (h System) WithAdmins(a Admins) System { h.admins = a; return h }
 
-func writeErr(w http.ResponseWriter, err error) {
+func writeErr(w http.ResponseWriter, r *http.Request, err error) {
 	if httpx.Canceled(err) {
 		return
 	}
 	switch {
 	case errors.Is(err, ErrInvalid), errors.Is(err, ErrTooMany):
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		httpx.Error(w, r, http.StatusBadRequest, err)
 	case errors.Is(err, ErrNotFound):
 		http.Error(w, "not found", http.StatusNotFound)
 	default:
@@ -62,12 +62,12 @@ type listOut struct {
 func (h System) List(w http.ResponseWriter, r *http.Request) {
 	out, err := h.store.List(r.Context(), auth.OrgID(r.Context()))
 	if err != nil {
-		writeErr(w, err)
+		writeErr(w, r, err)
 		return
 	}
 	can, err := h.canManage(r)
 	if err != nil {
-		writeErr(w, err)
+		writeErr(w, r, err)
 		return
 	}
 	httpx.JSON(w, http.StatusOK, listOut{Origins: out, CanManage: can})
@@ -86,7 +86,7 @@ func (h System) Add(w http.ResponseWriter, r *http.Request) {
 	}
 	o, err := h.store.Add(r.Context(), auth.OrgID(r.Context()), auth.ActorID(r.Context()), in.Origin)
 	if err != nil {
-		writeErr(w, err)
+		writeErr(w, r, err)
 		return
 	}
 	httpx.JSON(w, http.StatusCreated, o)
@@ -98,7 +98,7 @@ func (h System) Remove(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.store.Remove(r.Context(), auth.OrgID(r.Context()), r.PathValue("id")); err != nil {
-		writeErr(w, err)
+		writeErr(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -113,12 +113,12 @@ type keysOut struct {
 func (h System) ListKeys(w http.ResponseWriter, r *http.Request) {
 	out, err := h.store.ListKeys(r.Context(), auth.OrgID(r.Context()))
 	if err != nil {
-		writeErr(w, err)
+		writeErr(w, r, err)
 		return
 	}
 	can, err := h.canManage(r)
 	if err != nil {
-		writeErr(w, err)
+		writeErr(w, r, err)
 		return
 	}
 	httpx.JSON(w, http.StatusOK, keysOut{Keys: out, CanManage: can})
@@ -138,7 +138,7 @@ func (h System) CreateKey(w http.ResponseWriter, r *http.Request) {
 	}
 	k, err := h.store.CreateKey(r.Context(), auth.OrgID(r.Context()), auth.ActorID(r.Context()), in.Label)
 	if err != nil {
-		writeErr(w, err)
+		writeErr(w, r, err)
 		return
 	}
 	httpx.JSON(w, http.StatusCreated, k)
@@ -150,7 +150,7 @@ func (h System) DeleteKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.store.DeleteKey(r.Context(), auth.OrgID(r.Context()), r.PathValue("id")); err != nil {
-		writeErr(w, err)
+		writeErr(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -160,7 +160,7 @@ func (h System) DeleteKey(w http.ResponseWriter, r *http.Request) {
 func (h System) KeyUsage(w http.ResponseWriter, r *http.Request) {
 	out, err := h.store.KeyUsage(r.Context(), auth.OrgID(r.Context()), r.PathValue("id"))
 	if err != nil {
-		writeErr(w, err)
+		writeErr(w, r, err)
 		return
 	}
 	httpx.JSON(w, http.StatusOK, out)
@@ -170,11 +170,11 @@ func (h System) KeyUsage(w http.ResponseWriter, r *http.Request) {
 func (h System) requireManager(w http.ResponseWriter, r *http.Request) bool {
 	admin, err := h.canManage(r)
 	if err != nil {
-		writeErr(w, err)
+		writeErr(w, r, err)
 		return false
 	}
 	if !admin {
-		http.Error(w, "only an organization admin, signed in, can change embed origins", http.StatusForbidden)
+		httpx.Error(w, r, http.StatusForbidden, httpx.Code("admins_embed", "only an organization admin, signed in, can change embed origins"))
 		return false
 	}
 	return true

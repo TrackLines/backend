@@ -12,7 +12,7 @@ import (
 // when left out. An org already paying changes plan instead (ChangePlan), so it never pays twice.
 func (s Service) Checkout(w http.ResponseWriter, r *http.Request) {
 	if !s.configured() {
-		http.Error(w, "billing is not configured", http.StatusServiceUnavailable)
+		httpx.Error(w, r, http.StatusServiceUnavailable, httpx.Code("billing_not_configured", "billing is not configured"))
 		return
 	}
 	org, email, ok := s.admin(w, r)
@@ -26,40 +26,40 @@ func (s Service) Checkout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if in.Plan != Pro && in.Plan != Enterprise {
-		http.Error(w, "plan must be pro or enterprise", http.StatusBadRequest)
+		httpx.Error(w, r, http.StatusBadRequest, httpx.Code("bad_plan", "plan must be pro or enterprise"))
 		return
 	}
 	if s.configuredPrice(in.Plan) == "" {
-		http.Error(w, in.Plan+" isn't on sale yet", http.StatusServiceUnavailable)
+		httpx.Error(w, r, http.StatusServiceUnavailable, httpx.Code("plan_not_on_sale", in.Plan+" isn't on sale yet"))
 		return
 	}
 	paid, err := IsPaid(r.Context(), s.DB, org)
 	if err != nil {
 		logs.Errorf("billing: tier: %v", err)
-		http.Error(w, "billing unavailable", http.StatusServiceUnavailable)
+		httpx.Error(w, r, http.StatusServiceUnavailable, httpx.Code("billing_unavailable", "billing unavailable"))
 		return
 	}
 	if paid {
-		http.Error(w, "already subscribed — manage it from the billing portal", http.StatusConflict)
+		httpx.Error(w, r, http.StatusConflict, httpx.Code("already_subscribed", "already subscribed — manage it from the billing portal"))
 		return
 	}
 	customer, err := Customer(r.Context(), s.DB, s.Stripe, org, email)
 	if err != nil {
 		logs.Errorf("billing: customer: %v", err)
-		http.Error(w, "billing provider unavailable", http.StatusBadGateway)
+		httpx.Error(w, r, http.StatusBadGateway, httpx.Code("billing_provider_unavailable", "billing provider unavailable"))
 		return
 	}
 	ret := strings.TrimRight(s.ReturnURL, "/")
 	price, err := s.Stripe.ResolvePrice(r.Context(), s.configuredPrice(in.Plan))
 	if err != nil {
 		logs.Errorf("billing: price: %v", err)
-		http.Error(w, "billing provider unavailable", http.StatusBadGateway)
+		httpx.Error(w, r, http.StatusBadGateway, httpx.Code("billing_provider_unavailable", "billing provider unavailable"))
 		return
 	}
 	url, err := s.Stripe.CheckoutURL(r.Context(), org, customer, price, ret+"?billing=success", ret+"?billing=cancelled")
 	if err != nil {
 		logs.Errorf("billing: checkout: %v", err)
-		http.Error(w, "billing provider unavailable", http.StatusBadGateway)
+		httpx.Error(w, r, http.StatusBadGateway, httpx.Code("billing_provider_unavailable", "billing provider unavailable"))
 		return
 	}
 	httpx.JSON(w, http.StatusOK, map[string]string{"url": url})

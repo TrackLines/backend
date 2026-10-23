@@ -2,11 +2,12 @@ package roadmaps
 
 import (
 	"context"
-	"errors"
 	"strings"
 	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5"
+
+	"github.com/tracklines/backend/internal/httpx"
 )
 
 const (
@@ -16,7 +17,7 @@ const (
 	MaxUpdateNoteRunes = 2000
 )
 
-var ErrInvalidUpdate = errors.New("health must be on_track, at_risk or off_track and note must be 1 to 2000 characters")
+var ErrInvalidUpdate = httpx.Code("invalid_roadmap_update", "health must be on_track, at_risk or off_track and note must be 1 to 2000 characters")
 
 // Update is an immutable, dated roadmap progress report. It deliberately contains no project,
 // organization, or linked-ticket fields, so the same shape is safe for public roadmap readers.

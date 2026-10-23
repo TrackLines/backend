@@ -143,7 +143,7 @@ func (h System) TicketReport(w http.ResponseWriter, r *http.Request) {
 	org := auth.OrgID(r.Context())
 	ext, done, err := h.tickets.ExternalOf(r.Context(), org, r.PathValue("id"))
 	if errors.Is(err, tickets.ErrNotFound) || (err == nil && ext.Source != Bugfixes) {
-		http.Error(w, "this ticket has no Bugfixes report", http.StatusNotFound)
+		httpx.Error(w, r, http.StatusNotFound, httpx.Code("no_bugfixes_report", "this ticket has no Bugfixes report"))
 		return
 	}
 	if err != nil {

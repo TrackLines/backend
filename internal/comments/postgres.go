@@ -8,14 +8,16 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/tracklines/backend/internal/httpx"
 )
 
 const MaxBody = 10000
 
 var (
 	ErrNotFound  = errors.New("not found")
-	ErrBadParent = errors.New("parent_comment_id must be a comment on the same ticket")
-	ErrBadBody   = errors.New("comment can't be empty or longer than 10000 characters")
+	ErrBadParent = httpx.Code("bad_parent_comment", "parent_comment_id must be a comment on the same ticket")
+	ErrBadBody   = httpx.Code("bad_comment_body", "comment can't be empty or longer than 10000 characters")
 )
 
 // Comment is one message in a ticket's conversation. ParentID is set on replies.

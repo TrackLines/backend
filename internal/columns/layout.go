@@ -23,9 +23,10 @@ type LayoutColumn struct {
 }
 
 // ErrBadLayout is a layout that can't be saved; its message says why, for the person editing.
-type ErrBadLayout struct{ Why string }
+type ErrBadLayout struct{ Why error }
 
-func (e ErrBadLayout) Error() string { return e.Why }
+func (e ErrBadLayout) Error() string { return e.Why.Error() }
+func (e ErrBadLayout) Unwrap() error { return e.Why }
 
 // ErrColumnInUse: a column left out of the layout still holds tickets in the current sprint.
 type ErrColumnInUse struct{ Name string }
@@ -111,7 +112,7 @@ func (s Store) Layout(ctx context.Context, owner, boardID string, want []LayoutC
 // all the board's, and the ends pinned to the board's own first and last columns.
 func checkLayout(want []LayoutColumn, hasColumns bool, haveID func(int) string, haveN int) error {
 	if len(want) < 2 {
-		return ErrBadLayout{"a board needs at least two columns: To do and Done"}
+		return ErrBadLayout{httpx.Code("layout_too_few", "a board needs at least two columns: To do and Done")}
 	}
 	ids := map[string]bool{}
 	for i := 0; i < haveN; i++ {
@@ -122,27 +123,27 @@ func checkLayout(want []LayoutColumn, hasColumns bool, haveID func(int) string, 
 		c := &want[i]
 		c.Name = strings.TrimSpace(c.Name)
 		if c.Name == "" {
-			return ErrBadLayout{"every column needs a name"}
+			return ErrBadLayout{httpx.Code("layout_unnamed", "every column needs a name")}
 		}
 		if len([]rune(c.Name)) > maxColumnName {
-			return ErrBadLayout{fmt.Sprintf("column names can be up to %d characters", maxColumnName)}
+			return ErrBadLayout{httpx.Code("layout_name_too_long", fmt.Sprintf("column names can be up to %d characters", maxColumnName))}
 		}
 		if c.WIPLimit != nil && (*c.WIPLimit < 0 || *c.WIPLimit > 999) {
-			return ErrBadLayout{"WIP limits are from 1 to 999, or none"}
+			return ErrBadLayout{httpx.Code("layout_bad_wip", "WIP limits are from 1 to 999, or none")}
 		}
 		if c.ID != "" {
 			if !ids[c.ID] || seen[c.ID] {
-				return ErrBadLayout{"the columns don't match this board: reload and try again"}
+				return ErrBadLayout{httpx.Code("layout_stale", "the columns don't match this board: reload and try again")}
 			}
 			seen[c.ID] = true
 		}
 	}
 	if hasColumns {
 		if want[0].ID != haveID(0) {
-			return ErrBadLayout{"the first column (To do) stays first"}
+			return ErrBadLayout{httpx.Code("layout_todo_first", "the first column (To do) stays first")}
 		}
 		if want[len(want)-1].ID != haveID(haveN-1) {
-			return ErrBadLayout{"the last column (Done) stays last"}
+			return ErrBadLayout{httpx.Code("layout_done_last", "the last column (Done) stays last")}
 		}
 	}
 	return nil
@@ -165,11 +166,11 @@ func (h System) Layout(w http.ResponseWriter, r *http.Request) {
 	var inUse ErrColumnInUse
 	switch {
 	case errors.As(err, &bad):
-		http.Error(w, bad.Why, http.StatusBadRequest)
+		httpx.Error(w, r, http.StatusBadRequest, err)
 	case errors.As(err, &inUse):
-		http.Error(w, inUse.Error(), http.StatusConflict)
+		httpx.Error(w, r, http.StatusConflict, httpx.Code("column_in_use", err.Error()))
 	case err != nil:
-		writeErr(w, err)
+		writeErr(w, r, err)
 	default:
 		w.WriteHeader(http.StatusNoContent)
 	}

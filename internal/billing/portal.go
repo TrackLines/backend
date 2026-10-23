@@ -15,7 +15,7 @@ import (
 // (stripe_status set directly, no subscription) has nothing to manage.
 func (s Service) Portal(w http.ResponseWriter, r *http.Request) {
 	if !s.configured() {
-		http.Error(w, "billing is not configured", http.StatusServiceUnavailable)
+		httpx.Error(w, r, http.StatusServiceUnavailable, httpx.Code("billing_not_configured", "billing is not configured"))
 		return
 	}
 	org, _, ok := s.admin(w, r)
@@ -28,21 +28,21 @@ func (s Service) Portal(w http.ResponseWriter, r *http.Request) {
 		FROM org_billing WHERE org_id = $1`, org).Scan(&customer, &subscription, &paid)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		logs.Errorf("billing: portal customer: %v", err)
-		http.Error(w, "billing unavailable", http.StatusServiceUnavailable)
+		httpx.Error(w, r, http.StatusServiceUnavailable, httpx.Code("billing_unavailable", "billing unavailable"))
 		return
 	}
 	if customer == nil || subscription == nil {
 		if paid {
-			http.Error(w, "this plan isn't billed through Stripe, so there's nothing to manage", http.StatusConflict)
+			httpx.Error(w, r, http.StatusConflict, httpx.Code("not_stripe_billed", "this plan isn't billed through Stripe, so there's nothing to manage"))
 			return
 		}
-		http.Error(w, "no subscription yet — upgrade first", http.StatusConflict)
+		httpx.Error(w, r, http.StatusConflict, httpx.Code("no_subscription_yet", "no subscription yet — upgrade first"))
 		return
 	}
 	url, err := s.Stripe.PortalURL(r.Context(), *customer, s.ReturnURL)
 	if err != nil {
 		logs.Errorf("billing: portal: %v", err)
-		http.Error(w, "billing provider unavailable", http.StatusBadGateway)
+		httpx.Error(w, r, http.StatusBadGateway, httpx.Code("billing_provider_unavailable", "billing provider unavailable"))
 		return
 	}
 	httpx.JSON(w, http.StatusOK, map[string]string{"url": url})
@@ -58,13 +58,13 @@ func (s Service) Status(w http.ResponseWriter, r *http.Request) {
 	limit := limits[tier]
 	if err != nil {
 		logs.Errorf("billing: status: %v", err)
-		http.Error(w, "billing unavailable", http.StatusServiceUnavailable)
+		httpx.Error(w, r, http.StatusServiceUnavailable, httpx.Code("billing_unavailable", "billing unavailable"))
 		return
 	}
 	var billed bool
 	if err := s.DB.QueryRow(r.Context(), `SELECT COALESCE(bool_or(stripe_subscription_id IS NOT NULL), false) FROM org_billing WHERE org_id = $1`, org).Scan(&billed); err != nil {
 		logs.Errorf("billing: status: %v", err)
-		http.Error(w, "billing unavailable", http.StatusServiceUnavailable)
+		httpx.Error(w, r, http.StatusServiceUnavailable, httpx.Code("billing_unavailable", "billing unavailable"))
 		return
 	}
 	manage := false

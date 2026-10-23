@@ -10,15 +10,16 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/tracklines/backend/internal/boards"
+	"github.com/tracklines/backend/internal/httpx"
 )
 
 var (
 	ErrNotFound = errors.New("not found")
-	ErrBadFile  = errors.New("file must be an UploadThing upload (https, *.ufs.sh or utfs.io) with a key and name")
-	ErrDone     = errors.New("ticket is done — move it out of Done to change its attachments")
-	ErrTooMany  = errors.New("this ticket already has as many files as it can hold: remove one to add another")
-	ErrTooBig   = errors.New("files can be up to 10 MB")
-	ErrCantKeep = errors.New("only an organization admin or whoever uploaded it can keep this file")
+	ErrBadFile  = httpx.Code("bad_file", "file must be an UploadThing upload (https, *.ufs.sh or utfs.io) with a key and name")
+	ErrDone     = httpx.Code("done_ticket_files", "ticket is done — move it out of Done to change its attachments")
+	ErrTooMany  = httpx.Code("too_many_files", "this ticket already has as many files as it can hold: remove one to add another")
+	ErrTooBig   = httpx.Code("file_too_big", "files can be up to 10 MB")
+	ErrCantKeep = httpx.Code("cant_keep_file", "only an organization admin or whoever uploaded it can keep this file")
 )
 
 type Attachment struct {

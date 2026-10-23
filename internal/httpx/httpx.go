@@ -17,7 +17,7 @@ func JSON(w http.ResponseWriter, status int, v any) {
 // Decode reads a JSON body capped at 1MB; writes 400 and returns false on failure.
 func Decode(w http.ResponseWriter, r *http.Request, v any) bool {
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(v); err != nil {
-		http.Error(w, "invalid json", http.StatusBadRequest)
+		Error(w, r, http.StatusBadRequest, errors.New("invalid json"))
 		return false
 	}
 	return true

@@ -8,12 +8,13 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/tracklines/backend/internal/boards"
+	"github.com/tracklines/backend/internal/httpx"
 )
 
 var (
 	ErrNotFound          = errors.New("roadmap not found")
-	ErrInvalidVisibility = errors.New("visibility must be public, login_only or team")
-	ErrInvalidItemStatus = errors.New("item manual_status must be not_started, in_progress or done")
+	ErrInvalidVisibility = httpx.Code("invalid_visibility", "visibility must be public, login_only or team")
+	ErrInvalidItemStatus = httpx.Code("invalid_item_status", "item manual_status must be not_started, in_progress or done")
 )
 
 const (
@@ -303,8 +304,8 @@ func (s Store) ReplaceItems(ctx context.Context, id, owner string, items []Item)
 }
 
 var (
-	ErrOtherProject = errors.New("linked tickets must be in the roadmap's project")
-	ErrBadDates     = errors.New("an item's start date must be on or before its target date")
+	ErrOtherProject = httpx.Code("roadmap_ticket_other_project", "linked tickets must be in the roadmap's project")
+	ErrBadDates     = httpx.Code("bad_item_dates", "an item's start date must be on or before its target date")
 )
 
 // ValidDates checks an item's start/target (YYYY-MM-DD strings compare correctly as text).

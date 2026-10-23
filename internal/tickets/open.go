@@ -82,7 +82,7 @@ func (h System) OpenTickets(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	f := OpenFilter{ExcludeBlocked: q.Get("blocked") == "exclude", Priorities: q["priority"]}
 	if !ValidPriorities(f.Priorities) {
-		http.Error(w, ErrBadPriority.Error(), http.StatusBadRequest)
+		httpx.Error(w, r, http.StatusBadRequest, ErrBadPriority)
 		return
 	}
 	switch q.Get("assignee") {
@@ -92,16 +92,16 @@ func (h System) OpenTickets(w http.ResponseWriter, r *http.Request) {
 	case "me":
 		f.Assignee = auth.ActorID(r.Context())
 	default:
-		http.Error(w, "assignee must be unassigned or me", http.StatusBadRequest)
+		httpx.Error(w, r, http.StatusBadRequest, httpx.Code("bad_assignee_filter", "assignee must be unassigned or me"))
 		return
 	}
 	if b := q.Get("blocked"); b != "" && b != "exclude" {
-		http.Error(w, "blocked must be exclude", http.StatusBadRequest)
+		httpx.Error(w, r, http.StatusBadRequest, httpx.Code("bad_blocked_filter", "blocked must be exclude"))
 		return
 	}
 	out, err := h.store.OpenTickets(r.Context(), auth.OrgID(r.Context()), r.PathValue("id"), f)
 	if err != nil {
-		writeErr(w, err)
+		writeErr(w, r, err)
 		return
 	}
 	httpx.JSON(w, http.StatusOK, out)

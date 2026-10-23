@@ -50,21 +50,21 @@ func (h System) Create(w http.ResponseWriter, r *http.Request) {
 	fields := map[string]*string{"name": &in.Name, "email": &in.Email, "company": &in.Company, "message": &in.Message, "source_path": &in.SourcePath}
 	for name, v := range fields {
 		if *v = strings.TrimSpace(*v); len([]rune(*v)) > limits[name] {
-			http.Error(w, name+" is too long", http.StatusBadRequest)
+			httpx.Error(w, r, http.StatusBadRequest, httpx.Code("enquiry_field_too_long", name+" is too long"))
 			return
 		}
 	}
 	if in.Name == "" || in.Message == "" {
-		http.Error(w, "name and message are required", http.StatusBadRequest)
+		httpx.Error(w, r, http.StatusBadRequest, httpx.Code("enquiry_required", "name and message are required"))
 		return
 	}
 	if addr, err := mail.ParseAddress(in.Email); err != nil || addr.Address != in.Email {
-		http.Error(w, "a valid email address is required", http.StatusBadRequest)
+		httpx.Error(w, r, http.StatusBadRequest, httpx.Code("bad_email", "a valid email address is required"))
 		return
 	}
 	if h.URL == "" || h.Key == "" {
 		logs.Errorf("enquiries: CHEWEDFEED_API_URL or CHEWEDFEED_ENQUIRY_KEY is not set; enquiry refused")
-		http.Error(w, "enquiries aren't available right now", http.StatusServiceUnavailable)
+		httpx.Error(w, r, http.StatusServiceUnavailable, httpx.Code("enquiries_unavailable", "enquiries aren't available right now"))
 		return
 	}
 	body, _ := json.Marshal(map[string]string{"name": in.Name, "email": in.Email, "company": in.Company, "message": in.Message, "source_path": in.SourcePath})
@@ -82,13 +82,13 @@ func (h System) Create(w http.ResponseWriter, r *http.Request) {
 	resp, err := client.Do(req)
 	if err != nil {
 		logs.Errorf("enquiries: ChewedFeed unreachable: %v", err)
-		http.Error(w, "couldn't send your message; please try again", http.StatusBadGateway)
+		httpx.Error(w, r, http.StatusBadGateway, httpx.Code("enquiry_send_failed", "couldn't send your message; please try again"))
 		return
 	}
 	resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		logs.Errorf("enquiries: ChewedFeed rejected an enquiry: HTTP %d", resp.StatusCode)
-		http.Error(w, "couldn't send your message; please try again", http.StatusBadGateway)
+		httpx.Error(w, r, http.StatusBadGateway, httpx.Code("enquiry_send_failed", "couldn't send your message; please try again"))
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

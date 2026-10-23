@@ -57,7 +57,7 @@ type MemberPage struct {
 func (h System) Members(w http.ResponseWriter, r *http.Request) {
 	orgID := auth.OrgID(r.Context())
 	if orgID == "" {
-		http.Error(w, "choose an organization first", http.StatusForbidden)
+		httpx.Error(w, r, http.StatusForbidden, httpx.ErrChooseOrg)
 		return
 	}
 	limit, offset, ok := pagination(w, r)
@@ -73,7 +73,7 @@ func (h System) Members(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		logs.Errorf("organizations: list memberships: %v", err)
-		http.Error(w, "could not load organization members", http.StatusBadGateway)
+		httpx.Error(w, r, http.StatusBadGateway, httpx.ErrLoadMembers)
 		return
 	}
 	page := MemberPage{Members: make([]Member, 0, len(list.OrganizationMemberships)), TotalCount: list.TotalCount, Limit: limit, Offset: offset}
@@ -96,12 +96,12 @@ func (h System) Members(w http.ResponseWriter, r *http.Request) {
 func pagination(w http.ResponseWriter, r *http.Request) (int64, int64, bool) {
 	limit, err := queryInt(r, "limit", defaultLimit)
 	if err != nil || limit < 1 || limit > maxLimit {
-		http.Error(w, "limit must be between 1 and 500", http.StatusBadRequest)
+		httpx.Error(w, r, http.StatusBadRequest, httpx.Code("bad_member_limit", "limit must be between 1 and 500"))
 		return 0, 0, false
 	}
 	offset, err := queryInt(r, "offset", 0)
 	if err != nil || offset < 0 {
-		http.Error(w, "offset must be a non-negative integer", http.StatusBadRequest)
+		httpx.Error(w, r, http.StatusBadRequest, httpx.Code("bad_offset", "offset must be a non-negative integer"))
 		return 0, 0, false
 	}
 	return limit, offset, true

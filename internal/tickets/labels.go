@@ -2,7 +2,6 @@ package tickets
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -18,7 +17,7 @@ const (
 	MaxLabelLen = 50
 )
 
-var ErrBadLabels = errors.New("invalid labels")
+var ErrBadLabels = httpx.Code("bad_labels", "invalid labels")
 
 // NormalizeLabels trims, drops blanks and case-insensitive duplicates (first spelling wins), and
 // enforces the limits. Shared with the BugFixes endpoint.
@@ -90,12 +89,12 @@ func (h System) SetLabels(w http.ResponseWriter, r *http.Request) {
 	}
 	labels, err := NormalizeLabels(in.Labels)
 	if err != nil {
-		writeErr(w, err)
+		writeErr(w, r, err)
 		return
 	}
 	org := auth.OrgID(r.Context())
 	if err := h.store.SetLabels(r.Context(), org, r.PathValue("id"), labels); err != nil {
-		writeErr(w, err)
+		writeErr(w, r, err)
 		return
 	}
 	httpx.JSON(w, http.StatusOK, map[string][]string{"labels": labels})
@@ -106,7 +105,7 @@ func (h System) ProjectLabels(w http.ResponseWriter, r *http.Request) {
 	org := auth.OrgID(r.Context())
 	out, err := h.store.ProjectLabels(r.Context(), org, r.PathValue("id"))
 	if err != nil {
-		writeErr(w, err)
+		writeErr(w, r, err)
 		return
 	}
 	if out == nil {

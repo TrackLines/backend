@@ -56,33 +56,33 @@ func Middleware(db *pgxpool.Pool, member Member) func(http.Handler) http.Handler
 			}
 			owner, org, name, kind, readOnly, err := s.Owner(r.Context(), key)
 			if errors.Is(err, ErrExpired) {
-				http.Error(w, "api key expired: create a new one in Settings → API keys", http.StatusUnauthorized)
+				httpx.Error(w, r, http.StatusUnauthorized, httpx.Code("api_key_expired", "api key expired: create a new one in Settings → API keys"))
 				return
 			}
 			if err != nil {
 				if !errors.Is(err, ErrNotFound) {
 					logs.Errorf("apikeys: lookup: %v", err)
 				}
-				http.Error(w, "invalid api key", http.StatusUnauthorized)
+				httpx.Error(w, r, http.StatusUnauthorized, httpx.Code("invalid_api_key", "invalid api key"))
 				return
 			}
 			if member != nil && org != "" {
 				still, err := member(r.Context(), org, owner)
 				if err != nil {
 					logs.Errorf("apikeys: check organization membership: %v", err)
-					http.Error(w, "could not verify organization membership", http.StatusServiceUnavailable)
+					httpx.Error(w, r, http.StatusServiceUnavailable, httpx.ErrVerifyMembership)
 					return
 				}
 				if !still {
 					if err := s.RevokeKey(r.Context(), key); err != nil {
 						logs.Errorf("apikeys: revoke a leaver's key: %v", err)
 					}
-					http.Error(w, "invalid api key", http.StatusUnauthorized)
+					httpx.Error(w, r, http.StatusUnauthorized, httpx.Code("invalid_api_key", "invalid api key"))
 					return
 				}
 			}
 			if readOnly && r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions {
-				http.Error(w, "this api key is read-only", http.StatusForbidden)
+				httpx.Error(w, r, http.StatusForbidden, httpx.Code("read_only_key", "this api key is read-only"))
 				return
 			}
 			if kind == KindPersonal {
@@ -125,11 +125,11 @@ func (h System) Create(w http.ResponseWriter, r *http.Request) {
 		days = *in.Days
 	}
 	if days < 1 || days > MaxDays {
-		http.Error(w, fmt.Sprintf("expires_in_days must be from 1 to %d", MaxDays), http.StatusBadRequest)
+		httpx.Error(w, r, http.StatusBadRequest, httpx.Code("bad_key_expiry", fmt.Sprintf("expires_in_days must be from 1 to %d", MaxDays)))
 		return
 	}
 	if in.Kind != KindAI && in.Kind != KindService && in.Kind != KindPersonal {
-		http.Error(w, "kind must be ai, service or personal", http.StatusBadRequest)
+		httpx.Error(w, r, http.StatusBadRequest, httpx.Code("bad_key_kind", "kind must be ai, service or personal"))
 		return
 	}
 	user, _ := auth.UserID(r.Context())
@@ -138,7 +138,7 @@ func (h System) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if in.Name = strings.TrimSpace(in.Name); in.Name == "" {
-		http.Error(w, "name is required (e.g. the script using it)", http.StatusBadRequest)
+		httpx.Error(w, r, http.StatusBadRequest, httpx.Code("key_name_required", "name is required (e.g. the script using it)"))
 		return
 	}
 	if in.Kind == KindPersonal {
@@ -148,13 +148,13 @@ func (h System) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	// service keys belong to the organization: everyone sees them (and when they expire), admins make them (TL-462)
 	if !h.admin(r) {
-		http.Error(w, "only organization admins can make service keys", http.StatusForbidden)
+		httpx.Error(w, r, http.StatusForbidden, httpx.Code("admins_make_service_keys", "only organization admins can make service keys"))
 		return
 	}
 	// a key's name is who its work is recorded as (comments, tickets, claims), so it can't pose as a
 	// person (user_…), as the system or an integration, or as another member's key (TL-247)
 	if reservedName(in.Name) {
-		http.Error(w, "that name is reserved: choose a name for the agent or script using the key", http.StatusBadRequest)
+		httpx.Error(w, r, http.StatusBadRequest, httpx.Code("reserved_key_name", "that name is reserved: choose a name for the agent or script using the key"))
 		return
 	}
 	taken, err := h.store.NameTakenByOther(r.Context(), auth.OrgID(r.Context()), user, in.Name)
@@ -164,7 +164,7 @@ func (h System) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if taken {
-		http.Error(w, "someone else in this organization already has a key with that name: choose another", http.StatusConflict)
+		httpx.Error(w, r, http.StatusConflict, httpx.Code("key_name_taken", "someone else in this organization already has a key with that name: choose another"))
 		return
 	}
 	plain, k, err := h.store.Create(r.Context(), user, auth.OrgID(r.Context()), in.Name, in.Kind, nil, nil, days, in.ReadOnly)
@@ -174,17 +174,17 @@ func (h System) Create(w http.ResponseWriter, r *http.Request) {
 // createAgent mints an agent key for client, under a generated name nobody in the org has used.
 func (h System) createAgent(w http.ResponseWriter, r *http.Request, user, client, label string, days int, readOnly bool) {
 	if !ValidClient(client) {
-		http.Error(w, "client must be one of claude-code, claude-desktop, codex, cursor, vscode, gemini or other", http.StatusBadRequest)
+		httpx.Error(w, r, http.StatusBadRequest, httpx.Code("bad_key_client", "client must be one of claude-code, claude-desktop, codex, cursor, vscode, gemini or other"))
 		return
 	}
 	var lbl *string
 	if label = strings.TrimSpace(label); client == "other" && label != "" {
 		if len([]rune(label)) > MaxLabel {
-			http.Error(w, fmt.Sprintf("the agent's name can be up to %d characters", MaxLabel), http.StatusBadRequest)
+			httpx.Error(w, r, http.StatusBadRequest, httpx.Code("agent_name_too_long", fmt.Sprintf("the agent's name can be up to %d characters", MaxLabel)))
 			return
 		}
 		if reservedName(label) {
-			http.Error(w, "that name is reserved: choose the agent's name", http.StatusBadRequest)
+			httpx.Error(w, r, http.StatusBadRequest, httpx.Code("reserved_agent_name", "that name is reserved: choose the agent's name"))
 			return
 		}
 		lbl = &label

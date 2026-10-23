@@ -15,9 +15,9 @@ import (
 )
 
 var (
-	ErrNotMember = errors.New("user is not a member of this organization")
-	ErrLastAdmin = errors.New("an organization needs at least one admin")
-	ErrNoMembers = errors.New("organization has no members to make admin")
+	ErrNotMember = httpx.Code("not_member", "user is not a member of this organization")
+	ErrLastAdmin = httpx.Code("last_admin", "an organization needs at least one admin")
+	ErrNoMembers = httpx.Code("no_members", "organization has no members to make admin")
 )
 
 type orgGetter interface {
@@ -171,16 +171,16 @@ func (a Admins) RequireAdmin(w http.ResponseWriter, r *http.Request) (org, user 
 	org = auth.OrgID(r.Context())
 	user, signedIn := auth.UserID(r.Context())
 	if auth.ViaAPIKey(r.Context()) || !signedIn || org == "" {
-		http.Error(w, "sign in as an organization admin to do this", http.StatusForbidden)
+		httpx.Error(w, r, http.StatusForbidden, httpx.Code("sign_in_as_admin", "sign in as an organization admin to do this"))
 		return "", "", false
 	}
 	isAdmin, err := a.IsAdmin(r.Context(), org, user)
 	if err != nil {
-		WriteErr(w, err)
+		WriteErr(w, r, err)
 		return "", "", false
 	}
 	if !isAdmin {
-		http.Error(w, "only organization admins can do this", http.StatusForbidden)
+		httpx.Error(w, r, http.StatusForbidden, httpx.Code("admins_only", "only organization admins can do this"))
 		return "", "", false
 	}
 	return org, user, true
@@ -220,7 +220,7 @@ func (a Admins) RequireBoardManager(w http.ResponseWriter, r *http.Request, boar
 	}
 	admin, err := a.IsAdmin(r.Context(), org, user)
 	if err != nil {
-		WriteErr(w, err)
+		WriteErr(w, r, err)
 		return false
 	}
 	if admin {
@@ -240,7 +240,7 @@ func (a Admins) RequireBoardManager(w http.ResponseWriter, r *http.Request, boar
 		return false
 	}
 	if !leader {
-		http.Error(w, "only organization admins or this board's team leaders can do this", http.StatusForbidden)
+		httpx.Error(w, r, http.StatusForbidden, httpx.Code("admins_or_leaders_only", "only organization admins or this board's team leaders can do this"))
 		return false
 	}
 	return true
@@ -278,27 +278,27 @@ func (a Admins) session(w http.ResponseWriter, r *http.Request) (string, string,
 	org := auth.OrgID(r.Context())
 	user, signedIn := auth.UserID(r.Context())
 	if auth.ViaAPIKey(r.Context()) || !signedIn || org == "" {
-		http.Error(w, "sign in to do this", http.StatusForbidden)
+		httpx.Error(w, r, http.StatusForbidden, httpx.ErrSignIn)
 		return "", "", false
 	}
 	return org, user, true
 }
 
 // WriteErr maps the admin model's errors to responses.
-func WriteErr(w http.ResponseWriter, err error) {
+func WriteErr(w http.ResponseWriter, r *http.Request, err error) {
 	if httpx.Canceled(err) {
 		return // the client left: nobody to answer, nothing to report
 	}
 	switch {
 	case errors.Is(err, ErrNotMember):
-		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
+		httpx.Error(w, r, http.StatusUnprocessableEntity, err)
 	case errors.Is(err, ErrLastAdmin):
-		http.Error(w, err.Error(), http.StatusConflict)
+		httpx.Error(w, r, http.StatusConflict, err)
 	case errors.Is(err, ErrNoMembers):
-		http.Error(w, err.Error(), http.StatusConflict)
+		httpx.Error(w, r, http.StatusConflict, err)
 	default:
 		logs.Errorf("organizations: admins: %v", err)
-		http.Error(w, "could not check organization admins", http.StatusBadGateway)
+		httpx.Error(w, r, http.StatusBadGateway, httpx.Code("check_admins_failed", "could not check organization admins"))
 	}
 }
 
@@ -306,12 +306,12 @@ func WriteErr(w http.ResponseWriter, err error) {
 func (h System) ListAdmins(w http.ResponseWriter, r *http.Request) {
 	org := auth.OrgID(r.Context())
 	if org == "" {
-		http.Error(w, "choose an organization first", http.StatusForbidden)
+		httpx.Error(w, r, http.StatusForbidden, httpx.ErrChooseOrg)
 		return
 	}
 	admins, err := h.admins.List(r.Context(), org)
 	if err != nil {
-		WriteErr(w, err)
+		WriteErr(w, r, err)
 		return
 	}
 	httpx.JSON(w, http.StatusOK, admins)
@@ -324,7 +324,7 @@ func (h System) GrantAdmin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.admins.Grant(r.Context(), org, r.PathValue("userID"), by); err != nil {
-		WriteErr(w, err)
+		WriteErr(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -337,7 +337,7 @@ func (h System) RevokeAdmin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.admins.Revoke(r.Context(), org, r.PathValue("userID")); err != nil {
-		WriteErr(w, err)
+		WriteErr(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -348,23 +348,23 @@ func (h System) Me(w http.ResponseWriter, r *http.Request) {
 	org := auth.OrgID(r.Context())
 	user, _ := auth.UserID(r.Context())
 	if org == "" || user == "" {
-		http.Error(w, "choose an organization first", http.StatusForbidden)
+		httpx.Error(w, r, http.StatusForbidden, httpx.ErrChooseOrg)
 		return
 	}
 	admin, err := h.admins.IsAdmin(r.Context(), org, user)
 	if err != nil {
-		WriteErr(w, err)
+		WriteErr(w, r, err)
 		return
 	}
 	rows, err := h.admins.DB.Query(r.Context(), `SELECT tm.team_id::text FROM team_members tm JOIN teams t ON t.id = tm.team_id
 		WHERE t.org_id = $1 AND tm.user_clerk_id = $2 AND tm.leader ORDER BY 1`, org, user)
 	if err != nil {
-		WriteErr(w, err)
+		WriteErr(w, r, err)
 		return
 	}
 	leads, err := pgx.CollectRows(rows, pgx.RowTo[string])
 	if err != nil {
-		WriteErr(w, err)
+		WriteErr(w, r, err)
 		return
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"user_id": user, "org_id": org, "admin": admin, "leads": leads})

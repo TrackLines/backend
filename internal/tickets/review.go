@@ -12,8 +12,8 @@ import (
 )
 
 var (
-	ErrNotInReview  = errors.New("this ticket isn't waiting for review")
-	ErrPeopleReview = errors.New("only people review agent work")
+	ErrNotInReview  = httpx.Code("not_in_review", "this ticket isn't waiting for review")
+	ErrPeopleReview = httpx.Code("people_review", "only people review agent work")
 )
 
 // Review settles an agent's finished ticket waiting for review: approve moves it to Done; otherwise it
@@ -45,7 +45,7 @@ func (s Store) Review(ctx context.Context, owner, actor, id string, approve bool
 // ReviewTicket: POST /api/tickets/{id}/review {approve, comment?}. People only (not API keys).
 func (h System) ReviewTicket(w http.ResponseWriter, r *http.Request) {
 	if auth.ViaAPIKey(r.Context()) {
-		http.Error(w, ErrPeopleReview.Error(), http.StatusForbidden)
+		httpx.Error(w, r, http.StatusForbidden, ErrPeopleReview)
 		return
 	}
 	var in struct {
@@ -56,11 +56,11 @@ func (h System) ReviewTicket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if in.Approve == nil {
-		http.Error(w, "approve (true or false) is required", http.StatusBadRequest)
+		httpx.Error(w, r, http.StatusBadRequest, httpx.Code("approve_required", "approve (true or false) is required"))
 		return
 	}
 	if len(in.Comment) > 10000 {
-		http.Error(w, "comment is too long", http.StatusBadRequest)
+		httpx.Error(w, r, http.StatusBadRequest, httpx.Code("review_comment_too_long", "comment is too long"))
 		return
 	}
 	err := h.store.Review(r.Context(), auth.OrgID(r.Context()), auth.ActorID(r.Context()), r.PathValue("id"), *in.Approve, in.Comment)
@@ -74,11 +74,11 @@ func (h System) ReviewTicket(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if errors.Is(err, ErrNotInReview) {
-		http.Error(w, err.Error(), http.StatusConflict)
+		httpx.Error(w, r, http.StatusConflict, err)
 		return
 	}
 	if err != nil {
-		writeErr(w, err)
+		writeErr(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

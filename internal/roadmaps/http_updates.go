@@ -13,7 +13,7 @@ import (
 func (h System) ListUpdates(w http.ResponseWriter, r *http.Request) {
 	rm, err := h.store.Get(r.Context(), r.PathValue("id"))
 	if err != nil {
-		writeErr(w, err)
+		writeErr(w, r, err)
 		return
 	}
 	_, signedIn := auth.UserID(r.Context())
@@ -23,7 +23,7 @@ func (h System) ListUpdates(w http.ResponseWriter, r *http.Request) {
 	}
 	updates, err := h.store.ListUpdates(r.Context(), rm.ID)
 	if err != nil {
-		writeErr(w, err)
+		writeErr(w, r, err)
 		return
 	}
 	httpx.JSON(w, http.StatusOK, updates)
@@ -41,7 +41,7 @@ func (h System) PublishUpdate(w http.ResponseWriter, r *http.Request) {
 	in.Health = strings.TrimSpace(in.Health)
 	in.Note = strings.TrimSpace(in.Note)
 	if !ValidUpdate(in.Health, in.Note) {
-		http.Error(w, ErrInvalidUpdate.Error(), http.StatusBadRequest)
+		httpx.Error(w, r, http.StatusBadRequest, ErrInvalidUpdate)
 		return
 	}
 	if !h.manager(w, r, r.PathValue("id"), "") {
@@ -52,7 +52,7 @@ func (h System) PublishUpdate(w http.ResponseWriter, r *http.Request) {
 	owner, _ := auth.UserID(r.Context())
 	update, err := h.store.CreateUpdate(r.Context(), r.PathValue("id"), org, in.Health, in.Note, author, h.authorName(r.Context(), org, author, owner))
 	if err != nil {
-		writeErr(w, err)
+		writeErr(w, r, err)
 		return
 	}
 	httpx.JSON(w, http.StatusCreated, update)

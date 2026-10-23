@@ -9,6 +9,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/tracklines/backend/internal/httpx"
 )
 
 var ErrNotFound = errors.New("board not found")
@@ -281,7 +283,7 @@ func (s Store) SetAgentReview(ctx context.Context, id, owner string, on bool) er
 }
 
 // ErrBadDevComplete: the Dev complete column must be one of the board's own, between To do and Done.
-var ErrBadDevComplete = errors.New("the Dev complete column must be one of this board's columns, other than To do and Done")
+var ErrBadDevComplete = httpx.Code("bad_dev_complete", "the Dev complete column must be one of this board's columns, other than To do and Done")
 
 // SetDevComplete picks the column merged PRs move tickets to ("" turns it off: merging finishes them).
 func (s Store) SetDevComplete(ctx context.Context, id, owner, column string) error {
@@ -396,9 +398,9 @@ func (s Store) Delete(ctx context.Context, id, owner string) error {
 }
 
 var (
-	ErrBoardUsed     = errors.New("this board has been used; archive it instead, so its history is kept")
-	ErrOpenTickets   = errors.New("this board still has unfinished tickets; finish them or move them first")
-	ErrBoardArchived = errors.New("this board is archived; restore it first")
+	ErrBoardUsed     = httpx.Code("board_used", "this board has been used; archive it instead, so its history is kept")
+	ErrOpenTickets   = httpx.Code("open_tickets", "this board still has unfinished tickets; finish them or move them first")
+	ErrBoardArchived = httpx.Code("board_archived", "this board is archived; restore it first")
 )
 
 // Archive takes a used board off the project: refused while it has unfinished tickets. Its open sprint

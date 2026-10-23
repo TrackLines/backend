@@ -21,7 +21,7 @@ const (
 // caller; false means an error was written.
 func (s System) project(w http.ResponseWriter, r *http.Request) (scope, string, bool) {
 	if s.VK == nil {
-		http.Error(w, "live sessions unavailable", http.StatusServiceUnavailable)
+		httpx.Error(w, r, http.StatusServiceUnavailable, httpx.Code("live_unavailable", "live sessions unavailable"))
 		return scope{}, "", false
 	}
 	user, ok := auth.UserID(r.Context())
@@ -56,19 +56,19 @@ func (s System) canRefine(r *http.Request, user string) (bool, error) {
 	return leader, err
 }
 
-func hostedErr(w http.ResponseWriter, err error) {
+func hostedErr(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, ErrNoSession):
-		http.Error(w, "no session running", http.StatusNotFound)
+		httpx.Error(w, r, http.StatusNotFound, httpx.Code("no_session_running", "no session running"))
 	case errors.Is(err, ErrSessionRunning):
-		http.Error(w, err.Error(), http.StatusConflict)
+		httpx.Error(w, r, http.StatusConflict, err)
 	case errors.Is(err, ErrNotHost):
-		http.Error(w, err.Error(), http.StatusForbidden)
+		httpx.Error(w, r, http.StatusForbidden, err)
 	case errors.Is(err, ErrNotJoined):
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		httpx.Error(w, r, http.StatusBadRequest, err)
 	default:
 		logs.Errorf("live: hosted session: %v", err)
-		http.Error(w, "live session unavailable", http.StatusServiceUnavailable)
+		httpx.Error(w, r, http.StatusServiceUnavailable, httpx.Code("live_session_unavailable", "live session unavailable"))
 	}
 }
 
@@ -92,12 +92,12 @@ func (s System) RefinementStart(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	} else if !can {
-		http.Error(w, "only organization admins or a team leader of this project's boards can run refinement", http.StatusForbidden)
+		httpx.Error(w, r, http.StatusForbidden, httpx.Code("refinement_admins_or_leaders", "only organization admins or a team leader of this project's boards can run refinement"))
 		return
 	}
 	h, err := s.startHosted(r.Context(), sc, refinement, user)
 	if err != nil {
-		hostedErr(w, err)
+		hostedErr(w, r, err)
 		return
 	}
 	httpx.JSON(w, http.StatusCreated, h)
@@ -111,7 +111,7 @@ func (s System) RefinementGet(w http.ResponseWriter, r *http.Request) {
 	}
 	h, err := s.hosted(r.Context(), sc, refinement)
 	if err != nil {
-		hostedErr(w, err)
+		hostedErr(w, r, err)
 		return
 	}
 	httpx.JSON(w, http.StatusOK, h)
@@ -125,7 +125,7 @@ func (s System) RefinementJoin(w http.ResponseWriter, r *http.Request) {
 	}
 	h, err := s.joinHosted(r.Context(), sc, refinement, user)
 	if err != nil {
-		hostedErr(w, err)
+		hostedErr(w, r, err)
 		return
 	}
 	httpx.JSON(w, http.StatusOK, h)
@@ -138,7 +138,7 @@ func (s System) RefinementLeave(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.leaveHosted(r.Context(), sc, refinement, user); err != nil {
-		hostedErr(w, err)
+		hostedErr(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -156,7 +156,7 @@ func (s System) RefinementFocus(w http.ResponseWriter, r *http.Request) {
 	}
 	h, err := s.focusHosted(r.Context(), sc, refinement, user, f)
 	if err != nil {
-		hostedErr(w, err)
+		hostedErr(w, r, err)
 		return
 	}
 	httpx.JSON(w, http.StatusOK, h)
@@ -177,7 +177,7 @@ func (s System) RefinementHost(w http.ResponseWriter, r *http.Request) {
 	}
 	h, err := s.handOver(r.Context(), sc, refinement, user, in.UserID)
 	if err != nil {
-		hostedErr(w, err)
+		hostedErr(w, r, err)
 		return
 	}
 	httpx.JSON(w, http.StatusOK, h)
@@ -191,15 +191,15 @@ func (s System) RefinementEnd(w http.ResponseWriter, r *http.Request) {
 	}
 	h, err := s.hosted(r.Context(), sc, refinement)
 	if err != nil {
-		hostedErr(w, err)
+		hostedErr(w, r, err)
 		return
 	}
 	if h.Host != user {
-		hostedErr(w, ErrNotHost)
+		hostedErr(w, r, ErrNotHost)
 		return
 	}
 	if err := s.endHosted(r.Context(), sc, refinement); err != nil {
-		hostedErr(w, err)
+		hostedErr(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -226,7 +226,7 @@ func (s System) StandupSession(w http.ResponseWriter, r *http.Request) {
 	}
 	h, err := s.hosted(r.Context(), sc, standup)
 	if err != nil {
-		hostedErr(w, err)
+		hostedErr(w, r, err)
 		return
 	}
 	httpx.JSON(w, http.StatusOK, h)
@@ -240,7 +240,7 @@ func (s System) StandupJoin(w http.ResponseWriter, r *http.Request) {
 	}
 	h, err := s.joinHosted(r.Context(), sc, standup, user)
 	if err != nil {
-		hostedErr(w, err)
+		hostedErr(w, r, err)
 		return
 	}
 	httpx.JSON(w, http.StatusOK, h)
@@ -253,7 +253,7 @@ func (s System) StandupLeave(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.leaveHosted(r.Context(), sc, standup, user); err != nil {
-		hostedErr(w, err)
+		hostedErr(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -271,7 +271,7 @@ func (s System) StandupFocus(w http.ResponseWriter, r *http.Request) {
 	}
 	h, err := s.focusHosted(r.Context(), sc, standup, user, f)
 	if err != nil {
-		hostedErr(w, err)
+		hostedErr(w, r, err)
 		return
 	}
 	httpx.JSON(w, http.StatusOK, h)
@@ -291,7 +291,7 @@ func (s System) StandupHost(w http.ResponseWriter, r *http.Request) {
 	}
 	h, err := s.handOver(r.Context(), sc, standup, user, in.UserID)
 	if err != nil {
-		hostedErr(w, err)
+		hostedErr(w, r, err)
 		return
 	}
 	httpx.JSON(w, http.StatusOK, h)

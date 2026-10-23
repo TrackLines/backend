@@ -40,7 +40,7 @@ var Builtins = []Template{
 		Columns: []TemplateColumn{{Name: "Ready"}, {Name: "In progress", WIPLimit: wip(3)}, {Name: "Review", WIPLimit: wip(2)}, {Name: "Done"}}},
 }
 
-var ErrBadTemplate = errors.New("invalid template")
+var ErrBadTemplate = httpx.Code("bad_template", "invalid template")
 
 // valid checks a template's settings; the message says what's wrong.
 func (t *Template) valid() error {
@@ -163,7 +163,7 @@ func (s Store) CreateFrom(ctx context.Context, owner, projectID, name, desc stri
 func (h System) ListTemplates(w http.ResponseWriter, r *http.Request) {
 	ts, err := h.store.Templates(r.Context(), auth.OrgID(r.Context()))
 	if err != nil {
-		writeErr(w, err)
+		writeErr(w, r, err)
 		return
 	}
 	httpx.JSON(w, http.StatusOK, ts)
@@ -187,19 +187,19 @@ func (h System) CreateTemplate(w http.ResponseWriter, r *http.Request) {
 	if in.FromBoardID != "" {
 		from, err := h.store.TemplateFromBoard(r.Context(), org, in.FromBoardID)
 		if err != nil {
-			writeErr(w, err)
+			writeErr(w, r, err)
 			return
 		}
 		from.Name = t.Name
 		t = from
 	}
 	if err := t.valid(); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		httpx.Error(w, r, http.StatusBadRequest, err)
 		return
 	}
 	saved, err := h.store.SaveTemplate(r.Context(), org, t)
 	if err != nil {
-		writeErr(w, err)
+		writeErr(w, r, err)
 		return
 	}
 	httpx.JSON(w, http.StatusCreated, saved)
@@ -212,11 +212,11 @@ func (h System) DeleteTemplate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if strings.HasPrefix(r.PathValue("id"), "builtin:") {
-		http.Error(w, "built-in templates can't be deleted", http.StatusBadRequest)
+		httpx.Error(w, r, http.StatusBadRequest, httpx.Code("builtin_template", "built-in templates can't be deleted"))
 		return
 	}
 	if err := h.store.DeleteTemplate(r.Context(), org, r.PathValue("id")); err != nil {
-		writeErr(w, err)
+		writeErr(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

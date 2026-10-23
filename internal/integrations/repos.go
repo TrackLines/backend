@@ -29,8 +29,8 @@ type ProjectRepo struct {
 }
 
 var (
-	ErrRepoNotVisible = errors.New("the connection can't see that repository")
-	ErrRepoLinked     = errors.New("that repository is already linked to a project in this organization")
+	ErrRepoNotVisible = httpx.Code("repo_not_visible", "the connection can't see that repository")
+	ErrRepoLinked     = httpx.Code("repo_linked", "that repository is already linked to a project in this organization")
 )
 
 func (s Store) projectRepos(ctx context.Context, org, project string) ([]ProjectRepo, error) {
@@ -61,27 +61,27 @@ func (s Store) ownsProject(ctx context.Context, org, project string) bool {
 func (h System) providerParam(w http.ResponseWriter, r *http.Request) (string, bool) {
 	p := r.PathValue("provider")
 	if p != GitHub && p != Bitbucket {
-		http.Error(w, "provider must be github or bitbucket", http.StatusNotFound)
+		httpx.Error(w, r, http.StatusNotFound, httpx.Code("bad_provider", "provider must be github or bitbucket"))
 		return "", false
 	}
 	return p, true
 }
 
-func gitErr(w http.ResponseWriter, err error) {
+func gitErr(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, ErrProviderOff), errors.Is(err, secrets.ErrNoKey):
-		http.Error(w, "this integration isn't configured on the server", http.StatusServiceUnavailable)
+		httpx.Error(w, r, http.StatusServiceUnavailable, httpx.Code("integration_not_configured", "this integration isn't configured on the server"))
 	case errors.Is(err, ErrNotConnected):
-		http.Error(w, "not connected", http.StatusConflict)
+		httpx.Error(w, r, http.StatusConflict, ErrNotConnected)
 	case errors.Is(err, ErrBadState), errors.Is(err, ErrRepoNotVisible):
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		httpx.Error(w, r, http.StatusBadRequest, err)
 	case errors.Is(err, ErrRepoLinked), errors.Is(err, ErrTaken):
-		http.Error(w, err.Error(), http.StatusConflict)
+		httpx.Error(w, r, http.StatusConflict, err)
 	case errors.Is(err, ErrNotYours):
-		http.Error(w, err.Error(), http.StatusForbidden)
+		httpx.Error(w, r, http.StatusForbidden, err)
 	case errors.Is(err, ErrProviderCall):
 		logs.Warnf("integrations: %v", err)
-		http.Error(w, "provider call failed", http.StatusBadGateway)
+		httpx.Error(w, r, http.StatusBadGateway, httpx.Code("provider_call_failed", "provider call failed"))
 	default:
 		logs.Errorf("integrations: %v", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -101,7 +101,7 @@ func (h System) ConnectURL(w http.ResponseWriter, r *http.Request) {
 	}
 	u, err := h.connectURL(org, provider)
 	if err != nil {
-		gitErr(w, err)
+		gitErr(w, r, err)
 		return
 	}
 	httpx.JSON(w, http.StatusOK, map[string]string{"url": u})
@@ -126,7 +126,7 @@ func (h System) Complete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.complete(r.Context(), org, user, provider, in.State, in.InstallationID, in.Code); err != nil {
-		gitErr(w, err)
+		gitErr(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -144,7 +144,7 @@ func (h System) ListRepos(w http.ResponseWriter, r *http.Request) {
 	}
 	repos, err := h.Repos(r.Context(), org, provider)
 	if err != nil {
-		gitErr(w, err)
+		gitErr(w, r, err)
 		return
 	}
 	httpx.JSON(w, http.StatusOK, repos)
@@ -161,7 +161,7 @@ func (h System) ProjectRepos(w http.ResponseWriter, r *http.Request) {
 	}
 	out, err := h.store.projectRepos(r.Context(), org, r.PathValue("id"))
 	if err != nil {
-		gitErr(w, err)
+		gitErr(w, r, err)
 		return
 	}
 	httpx.JSON(w, http.StatusOK, out)
@@ -187,12 +187,12 @@ func (h System) LinkRepo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if in.Provider != GitHub && in.Provider != Bitbucket {
-		http.Error(w, "provider must be github or bitbucket", http.StatusBadRequest)
+		httpx.Error(w, r, http.StatusBadRequest, httpx.Code("bad_provider", "provider must be github or bitbucket"))
 		return
 	}
 	repos, err := h.Repos(r.Context(), org, in.Provider)
 	if err != nil {
-		gitErr(w, err)
+		gitErr(w, r, err)
 		return
 	}
 	var repo *Repo
@@ -202,7 +202,7 @@ func (h System) LinkRepo(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if repo == nil {
-		gitErr(w, ErrRepoNotVisible)
+		gitErr(w, r, ErrRepoNotVisible)
 		return
 	}
 	var link string
@@ -210,18 +210,18 @@ func (h System) LinkRepo(w http.ResponseWriter, r *http.Request) {
 		project, org, in.Provider, repo.FullName, repo.DefaultBranch).Scan(&link)
 	var pg *pgconn.PgError
 	if errors.As(err, &pg) && pg.Code == "23505" {
-		gitErr(w, ErrRepoLinked)
+		gitErr(w, r, ErrRepoLinked)
 		return
 	}
 	if err != nil {
-		gitErr(w, err)
+		gitErr(w, r, err)
 		return
 	}
 	if in.Provider == Bitbucket {
 		// its own webhook and secret, made by us, so the secret is never shared or shown (TL-165)
 		if err := h.bitbucketHook(r.Context(), org, link, repo.FullName); err != nil {
 			_, _ = h.store.DB.Exec(r.Context(), `DELETE FROM project_repos WHERE id = $1`, link)
-			gitErr(w, err)
+			gitErr(w, r, err)
 			return
 		}
 	}
@@ -244,7 +244,7 @@ func (h System) UnlinkRepo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		gitErr(w, err)
+		gitErr(w, r, err)
 		return
 	}
 	if hook != nil { // take our webhook off the repo too (best effort: the link is gone either way)
@@ -291,7 +291,7 @@ func (h System) GitHubWebhook(secret string) http.HandlerFunc {
 		}
 		if first, err := h.firstDelivery(r.Context(), "github", body); err != nil || !first {
 			if err != nil {
-				gitErr(w, err)
+				gitErr(w, r, err)
 				return
 			}
 			w.WriteHeader(http.StatusNoContent) // a replay: already handled
@@ -304,7 +304,7 @@ func (h System) GitHubWebhook(secret string) http.HandlerFunc {
 			}
 			if err != nil {
 				h.forgetDelivery(r.Context(), "github", body)
-				gitErr(w, err) // 5xx: GitHub redelivers
+				gitErr(w, r, err) // 5xx: GitHub redelivers
 				return
 			}
 		}
@@ -315,7 +315,7 @@ func (h System) GitHubWebhook(secret string) http.HandlerFunc {
 			}
 			if err != nil {
 				h.forgetDelivery(r.Context(), "github", body)
-				gitErr(w, err)
+				gitErr(w, r, err)
 				return
 			}
 		}
@@ -329,7 +329,7 @@ func (h System) GitHubWebhook(secret string) http.HandlerFunc {
 			if json.Unmarshal(body, &e) == nil && e.Action == "deleted" && e.Installation.ID != "" {
 				if _, err := h.store.DB.Exec(r.Context(), `DELETE FROM org_integrations WHERE provider = 'github' AND external_id = $1`, e.Installation.ID.String()); err != nil {
 					h.forgetDelivery(r.Context(), "github", body)
-					gitErr(w, err)
+					gitErr(w, r, err)
 					return
 				}
 			}
@@ -375,7 +375,7 @@ func (h System) BitbucketWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 	secret, err := h.store.Box.OpenWithAAD(sealed, "bitbucket-hook|"+r.PathValue("link"))
 	if err != nil {
-		gitErr(w, err)
+		gitErr(w, r, err)
 		return
 	}
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 5<<20))
@@ -386,7 +386,7 @@ func (h System) BitbucketWebhook(w http.ResponseWriter, r *http.Request) {
 	provider := "bitbucket:" + r.PathValue("link") // each link has its own secret, so its own replay record
 	if first, err := h.firstDelivery(r.Context(), provider, body); err != nil || !first {
 		if err != nil {
-			gitErr(w, err)
+			gitErr(w, r, err)
 			return
 		}
 		w.WriteHeader(http.StatusNoContent) // a replay: already handled
@@ -395,7 +395,7 @@ func (h System) BitbucketWebhook(w http.ResponseWriter, r *http.Request) {
 	if pr, ok := bitbucketPR(r.Header.Get("X-Event-Key"), body); ok && strings.EqualFold(pr.Repo, fullName) {
 		if err := h.linkPR(r.Context(), []string{org}, pr); err != nil {
 			h.forgetDelivery(r.Context(), provider, body)
-			gitErr(w, err)
+			gitErr(w, r, err)
 			return
 		}
 	}

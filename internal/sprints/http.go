@@ -33,7 +33,7 @@ func (h System) WithLive(vk valkey.Client) System {
 	return h
 }
 
-func writeErr(w http.ResponseWriter, err error) {
+func writeErr(w http.ResponseWriter, r *http.Request, err error) {
 	if httpx.Canceled(err) {
 		return // the client left: nobody to answer, nothing to report
 	}
@@ -41,9 +41,9 @@ func writeErr(w http.ResponseWriter, err error) {
 	case errors.Is(err, ErrNotFound):
 		http.Error(w, "not found", http.StatusNotFound)
 	case errors.Is(err, ErrAlreadyOpen), errors.Is(err, ErrKanban), errors.Is(err, ErrTooManyPlanned), errors.Is(err, ErrNotBacklog), errors.Is(err, ErrEpicNotPlanned):
-		http.Error(w, err.Error(), http.StatusConflict)
+		httpx.Error(w, r, http.StatusConflict, err)
 	case errors.Is(err, ErrInvalidLength), errors.Is(err, ErrInvalidStart), errors.Is(err, ErrInvalidGoal), errors.Is(err, boards.ErrBadEstimate):
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		httpx.Error(w, r, http.StatusBadRequest, err)
 	default:
 		logs.Errorf("sprints: %v", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -63,7 +63,7 @@ func (h System) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if in.LengthDays == nil && in.Goal == nil {
-		http.Error(w, "send length_days and/or goal", http.StatusBadRequest)
+		httpx.Error(w, r, http.StatusBadRequest, httpx.Code("sprint_update_empty", "send length_days and/or goal"))
 		return
 	}
 	org, id := auth.OrgID(r.Context()), r.PathValue("id")
@@ -76,7 +76,7 @@ func (h System) Update(w http.ResponseWriter, r *http.Request) {
 		sp, err = h.store.SetGoal(r.Context(), org, id, *in.Goal)
 	}
 	if err != nil {
-		writeErr(w, err)
+		writeErr(w, r, err)
 		return
 	}
 	httpx.JSON(w, http.StatusOK, sp)
@@ -95,7 +95,7 @@ func (h System) Start(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, err := cleanGoal(in.Goal); err != nil {
-		writeErr(w, err)
+		writeErr(w, r, err)
 		return
 	}
 	org := auth.OrgID(r.Context())
@@ -104,7 +104,7 @@ func (h System) Start(w http.ResponseWriter, r *http.Request) {
 		sp, err = h.store.SetGoal(r.Context(), org, sp.ID, in.Goal)
 	}
 	if err != nil {
-		writeErr(w, err)
+		writeErr(w, r, err)
 		return
 	}
 	httpx.JSON(w, http.StatusCreated, sp)
@@ -115,7 +115,7 @@ func (h System) List(w http.ResponseWriter, r *http.Request) {
 	org := auth.OrgID(r.Context())
 	out, err := h.store.List(r.Context(), org, r.PathValue("id"))
 	if err != nil {
-		writeErr(w, err)
+		writeErr(w, r, err)
 		return
 	}
 	httpx.JSON(w, http.StatusOK, out)
@@ -125,7 +125,7 @@ func (h System) List(w http.ResponseWriter, r *http.Request) {
 func (h System) Get(w http.ResponseWriter, r *http.Request) {
 	d, err := h.store.Detail(r.Context(), auth.OrgID(r.Context()), r.PathValue("id"))
 	if err != nil {
-		writeErr(w, err)
+		writeErr(w, r, err)
 		return
 	}
 	httpx.JSON(w, http.StatusOK, d)
@@ -135,7 +135,7 @@ func (h System) Get(w http.ResponseWriter, r *http.Request) {
 func (h System) Velocity(w http.ResponseWriter, r *http.Request) {
 	v, err := h.store.Velocity(r.Context(), auth.OrgID(r.Context()), r.PathValue("id"))
 	if err != nil {
-		writeErr(w, err)
+		writeErr(w, r, err)
 		return
 	}
 	httpx.JSON(w, http.StatusOK, v)
@@ -161,7 +161,7 @@ func (h System) Close(w http.ResponseWriter, r *http.Request) {
 		NextStartsAt:   in.NextStartsAt,
 	})
 	if err != nil {
-		writeErr(w, err)
+		writeErr(w, r, err)
 		return
 	}
 	if next == nil {
