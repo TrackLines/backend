@@ -105,6 +105,16 @@ func TestMCP(t *testing.T) {
 		if tool.Name == "set_roadmap_item_tickets" && !strings.Contains(tool.Description, "feature milestone") {
 			t.Fatalf("set_roadmap_item_tickets: %s", tool.Description)
 		}
+		if tool.Name == "unplan_ticket" && !strings.Contains(tool.Description, "instead of unplan_sprint") {
+			t.Fatalf("unplan_ticket should distinguish removing one ticket from removing a sprint: %s", tool.Description)
+		}
+	}
+	var hasUnplanTicket bool
+	for _, tool := range list.Tools {
+		hasUnplanTicket = hasUnplanTicket || tool.Name == "unplan_ticket"
+	}
+	if !hasUnplanTicket {
+		t.Fatal("unplan_ticket is missing from the MCP tools")
 	}
 	call := func(name string, args map[string]any) *sdk.CallToolResult {
 		t.Helper()
