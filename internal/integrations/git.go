@@ -17,6 +17,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -142,6 +143,22 @@ func (s Store) openState(state, org, provider string, now time.Time) error {
 }
 
 // GitHub App
+
+var pemParts = regexp.MustCompile(`(?s)^(-----BEGIN [A-Z ]+-----)(.*?)(-----END [A-Z ]+-----)$`)
+
+// pemText: the app key as PEM however it was pasted (TL-560): on one line with \n, with its
+// newlines turned into spaces (1Password's concealed fields do that), or the whole PEM base64'd.
+func pemText(s string) string {
+	s = strings.TrimSpace(strings.ReplaceAll(s, `\n`, "\n"))
+	if b, err := base64.StdEncoding.DecodeString(s); err == nil && bytes.Contains(b, []byte("-----BEGIN ")) {
+		s = strings.TrimSpace(string(b))
+	}
+	m := pemParts.FindStringSubmatch(s)
+	if m == nil {
+		return s
+	}
+	return m[1] + "\n" + strings.Join(strings.Fields(m[2]), "\n") + "\n" + m[3] + "\n"
+}
 
 // appJWT is the app's own token (RS256, 9 minutes), used to look at installations and mint
 // installation tokens.

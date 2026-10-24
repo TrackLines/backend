@@ -8,7 +8,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"strings"
 	"time"
 
 	"github.com/bugfixes/go-bugfixes/logs"
@@ -121,7 +120,7 @@ func (b BugfixesAPI) Report(ctx context.Context, org, project, id string) (*Repo
 // the server's GitHub App / Bitbucket consumer.
 func NewSystem(db *pgxpool.Pool, box secrets.Box, vk valkey.Client, admins organizations.Admins, git Git) System {
 	store := Store{DB: db, Box: box}
-	git.GitHubPrivateKey = strings.ReplaceAll(git.GitHubPrivateKey, `\n`, "\n") // env vars often carry the PEM on one line
+	git.GitHubPrivateKey = pemText(git.GitHubPrivateKey)
 	return System{store: store, admins: admins, reports: BugfixesAPI{Store: store, VK: vk}, tickets: tickets.Store{DB: db}, git: git, now: time.Now}
 }
 

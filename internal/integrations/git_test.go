@@ -339,3 +339,27 @@ func TestGitProviders(t *testing.T) {
 		t.Fatalf("unconfigured webhook: %d", code)
 	}
 }
+
+// TL-560: the app key works however it was pasted into the env or 1Password.
+func TestPEMText(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pemKey := string(pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)}))
+	for name, in := range map[string]string{
+		"pem":        pemKey,
+		"escaped":    strings.ReplaceAll(pemKey, "\n", `\n`),
+		"spaces":     strings.ReplaceAll(pemKey, "\n", " "),
+		"base64":     base64.StdEncoding.EncodeToString([]byte(pemKey)),
+		"whitespace": "\n  " + pemKey + "  \n",
+	} {
+		g := Git{GitHubAppID: "1", GitHubPrivateKey: pemText(in)}
+		if _, err := g.appJWT(); err != nil {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	if _, err := (Git{GitHubPrivateKey: pemText("not a key")}).appJWT(); err == nil {
+		t.Error("a non-key should still fail")
+	}
+}
