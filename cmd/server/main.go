@@ -41,6 +41,7 @@ func run() error {
 		return fmt.Errorf("build config: %w", err)
 	}
 	pc := config.Get(c)
+	logs.Local().Logf("starting flags client")
 	// flags.gg: with no IDs set the SDK returns false, but FLAGS_<NAME>=true env overrides still work locally
 	fl := goFlags.NewClient(goFlags.WithAuth(goFlags.Auth{
 		ProjectID:     c.Flags.ProjectID,
@@ -50,23 +51,29 @@ func run() error {
 	if fl == nil {
 		return fmt.Errorf("init flags client")
 	}
+	logs.Local().Logf("starting clerk")
 	auth.Init(c.Clerk.Key)
 
+	logs.Local().Logf("connecting to postgres")
 	db, err := c.Database.GetPGXPoolClient(context.Background())
 	if err != nil {
 		return fmt.Errorf("connect postgres: %w", err)
 	}
 	defer db.Close()
 	// migrate before serving, fail fast
+	logs.Local().Logf("starting migrations")
 	if err := migrations.Up(db); err != nil {
 		return fmt.Errorf("migrate database: %w", err)
 	}
+	logs.Local().Logf("ending migrations")
 	if box, err := secrets.New(pc.SecretKey); err == nil {
+		logs.Local().Logf("migrating integration secrets")
 		if err := (integrations.Store{DB: db, Box: box}).MigrateSealedSecrets(context.Background()); err != nil {
 			return fmt.Errorf("migrate integration secrets: %w", err)
 		}
 	}
 
+	logs.Local().Logf("connecting to valkey")
 	vkOpt, err := valkey.ParseURL(pc.ValkeyURL)
 	if err != nil {
 		return fmt.Errorf("parse valkey url: %w", err)
@@ -99,6 +106,7 @@ func run() error {
 		ChewedFeed:        billing.ChewedFeed{URL: pc.ChewedFeedURL, Key: pc.ChewedFeedKey},
 		ClerkOrgs:         organization.NewClient(&clerk.ClientConfig{}), // member caps follow the plan (TL-418)
 	}
+	logs.Local().Logf("starting service on port %s", port)
 	return service.New(c, db, vk, fl, bill, port).Start()
 }
 
