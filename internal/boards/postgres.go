@@ -51,6 +51,9 @@ type Ticket struct {
 	// a spike's timebox (TL-502): days + hours as entered (hours 0–23); both null when not a spike or not yet timed
 	TimeboxDays  *int `json:"timebox_days"`
 	TimeboxHours *int `json:"timebox_hours"`
+	// a planned backlog ticket's sprint, to show "Sprint 6 · Backend" (TL-582); both null when unplanned
+	PlannedSprintNumber *int    `json:"planned_sprint_number"`
+	PlannedBoardName    *string `json:"planned_board_name"`
 }
 
 // TicketCols + ScanTicket read a ticket row; shared with the tickets package. The last column
@@ -71,7 +74,10 @@ var TicketCols = `t.id, t.created_by, t.assigned_to, t.project_id, t.column_id, 
 	(WITH RECURSIVE up AS (SELECT e.id, e.parent_id, e.type FROM tickets e WHERE e.id = t.parent_id
 		UNION SELECT e.id, e.parent_id, e.type FROM tickets e JOIN up ON e.id = up.parent_id)
 	SELECT up.id::text FROM up WHERE up.type = 'epic' LIMIT 1),
-	t.timebox_days, t.timebox_hours`
+	t.timebox_days, t.timebox_hours,
+	(SELECT ps.position + COALESCE((SELECT s.number FROM sprints s WHERE s.board_id = ps.board_id AND s.closed_at IS NULL),
+		(SELECT max(s.number) FROM sprints s WHERE s.board_id = ps.board_id), 0) FROM planned_sprints ps WHERE ps.id = t.planned_sprint_id),
+	(SELECT pb.name FROM planned_sprints ps JOIN boards pb ON pb.id = ps.board_id WHERE ps.id = t.planned_sprint_id)`
 
 func ScanTicket(row pgx.Row) (Ticket, error) {
 	var t Ticket
@@ -95,7 +101,7 @@ var TicketBlockedSQL = `EXISTS (SELECT 1 FROM ticket_dependencies td JOIN ticket
 
 // TicketDest lists scan targets matching TicketCols, for queries that select extra columns after them.
 func TicketDest(t *Ticket) []any {
-	return []any{&t.ID, &t.CreatedBy, &t.AssignedTo, &t.ProjectID, &t.ColumnID, &t.SprintID, &t.Type, &t.Title, &t.Description, &t.Priority, &t.Estimate, &t.Position, &t.Blocked, &t.Labels, &t.ResolvedAt, &t.CreatedAt, &t.UpdatedAt, &t.DoneAt, &t.StartedAt, &t.PlannedSprintID, &t.Key, &t.ExternalSource, &t.ExternalURL, &t.ReviewRequestedAt, &t.Resolution, &t.DuplicateOfID, &t.DuplicateOfKey, &t.DuplicateOfTitle, &t.EpicID, &t.TimeboxDays, &t.TimeboxHours}
+	return []any{&t.ID, &t.CreatedBy, &t.AssignedTo, &t.ProjectID, &t.ColumnID, &t.SprintID, &t.Type, &t.Title, &t.Description, &t.Priority, &t.Estimate, &t.Position, &t.Blocked, &t.Labels, &t.ResolvedAt, &t.CreatedAt, &t.UpdatedAt, &t.DoneAt, &t.StartedAt, &t.PlannedSprintID, &t.Key, &t.ExternalSource, &t.ExternalURL, &t.ReviewRequestedAt, &t.Resolution, &t.DuplicateOfID, &t.DuplicateOfKey, &t.DuplicateOfTitle, &t.EpicID, &t.TimeboxDays, &t.TimeboxHours, &t.PlannedSprintNumber, &t.PlannedBoardName}
 }
 
 // Sprint is a board's time box; only the open one is shown on the board.

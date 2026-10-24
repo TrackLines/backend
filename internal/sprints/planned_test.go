@@ -108,6 +108,22 @@ func TestPlannedSprints(t *testing.T) {
 	if d, _ := ts.Get(ctx, "pl1", a); d.BoardID != nil || d.PlannedSprintID == nil || *d.PlannedSprintID != next || d.EstimateScale != "fibonacci" {
 		t.Fatalf("planned ticket: %+v", d)
 	}
+	// it says which sprint: "Sprint 2 · fib" (TL-582); unplanned tickets say nothing
+	if d, _ := ts.Get(ctx, "pl1", a); d.PlannedSprintNumber == nil || *d.PlannedSprintNumber != 2 || d.PlannedBoardName == nil || *d.PlannedBoardName != "fib" {
+		t.Fatalf("planned sprint label: %v %v", d.PlannedSprintNumber, d.PlannedBoardName)
+	}
+	if err := s.PlanTicket(ctx, "pl1", bb, &later, nil); err != nil {
+		t.Fatal(err)
+	}
+	if d, _ := ts.Get(ctx, "pl1", bb); d.PlannedSprintNumber == nil || *d.PlannedSprintNumber != 3 {
+		t.Fatalf("later sprint number: %v", d.PlannedSprintNumber)
+	}
+	if err := s.PlanTicket(ctx, "pl1", bb, &next, str("3")); err != nil { // back where the capacity checks below expect it
+		t.Fatal(err)
+	}
+	if d, _ := ts.Get(ctx, "pl1", backlog("unplanned")); d.PlannedSprintNumber != nil || d.PlannedBoardName != nil {
+		t.Fatalf("unplanned: %v %v", d.PlannedSprintNumber, d.PlannedBoardName)
+	}
 	// only backlog tickets can be planned
 	onBoard, _ := ts.Create(ctx, "pl1", b.Columns[0].ID, "task", "on board", "")
 	if err := s.PlanTicket(ctx, "pl1", onBoard.ID, &next, str("1")); !errors.Is(err, ErrNotBacklog) {

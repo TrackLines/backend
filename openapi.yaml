@@ -3938,6 +3938,8 @@ components:
         done_at: { type: [string, 'null'], format: date-time, description: "When it reached its board's Done column or was resolved; null while open." }
         started_at: { type: [string, 'null'], format: date-time, description: "First move out of the board's first column; null for historical tickets without a known start." }
         planned_sprint_id: { type: [string, 'null'], format: uuid, description: A backlog ticket planned into a board's upcoming sprint (refinement). }
+        planned_sprint_number: { type: [integer, 'null'], description: "The number the planned sprint will get, e.g. 6; null when unplanned." }
+        planned_board_name: { type: [string, 'null'], description: The board of the planned sprint; null when unplanned. }
         key: { type: string, example: TL-123, description: "The project's key prefix and the ticket's number in the project, assigned on create. For branch names, PR titles and search." }
         external_source: { type: [string, 'null'], description: Where an integration made it (bugfixes); null for our own tickets. }
         external_url: { type: [string, 'null'], description: Link to it there (e.g. the Bugfixes report). }
