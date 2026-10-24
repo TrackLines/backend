@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -361,5 +362,31 @@ func TestPEMText(t *testing.T) {
 	}
 	if _, err := (Git{GitHubPrivateKey: pemText("not a key")}).appJWT(); err == nil {
 		t.Error("a non-key should still fail")
+	}
+}
+
+// TL-563: every page of an installation's repos, not just the first 100.
+func TestGitHubReposPages(t *testing.T) {
+	key, _ := rsa.GenerateKey(rand.Reader, 2048)
+	pemKey := string(pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)}))
+	github := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/app/installations/1/access_tokens" {
+			_, _ = w.Write([]byte(`{"token":"ghs_1"}`))
+			return
+		}
+		from, to := 0, 100
+		if r.URL.Query().Get("page") == "2" {
+			from, to = 100, 150
+		}
+		var repos []string
+		for i := from; i < to; i++ {
+			repos = append(repos, fmt.Sprintf(`{"full_name":"acme/r%d","default_branch":"main"}`, i))
+		}
+		_, _ = fmt.Fprintf(w, `{"total_count":150,"repositories":[%s]}`, strings.Join(repos, ","))
+	}))
+	defer github.Close()
+	repos, err := Git{GitHubAppID: "1", GitHubPrivateKey: pemKey, GitHubAPI: github.URL}.githubRepos(context.Background(), "1")
+	if err != nil || len(repos) != 150 || repos[149].FullName != "acme/r149" {
+		t.Fatalf("got %d repos, err %v", len(repos), err)
 	}
 }
