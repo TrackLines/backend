@@ -238,3 +238,24 @@ func resolveKeys(ctx context.Context, call caller, args map[string]any) error {
 	}
 	return nil
 }
+
+// Prompt is what an agent is told about one tool.
+type Prompt struct {
+	Name        string `json:"name"`
+	Title       string `json:"title"`
+	Description string `json:"description"`
+}
+
+// Prompts: GET /api/mcp/prompts, public. The instructions and tool descriptions agents get, from the
+// same values the server sends, so the docs show them without a copy to drift (TL-565).
+func Prompts(w http.ResponseWriter, _ *http.Request) {
+	out := struct {
+		Instructions string   `json:"instructions"`
+		Tools        []Prompt `json:"tools"`
+	}{Instructions: Instructions}
+	for _, t := range tools {
+		out.Tools = append(out.Tools, Prompt{t.name, t.title, t.description})
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(out)
+}
