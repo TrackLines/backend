@@ -198,12 +198,28 @@ var backlogStatus = map[string]string{
 
 var ErrBadBacklogStatus = httpx.Code("bad_backlog_status", "status must be open, done, wont_do, duplicate or closed")
 
-// PageBacklogStatus is PageBacklogIn for status: open (the default), done, wont_do, duplicate or
-// closed (any of those). Closed tickets list most recently closed first unless a date sort is asked for.
+// backlogPlanned: planned=exclude hides tickets planned into an upcoming sprint, only shows just
+// those, "" shows both (TL-583).
+var backlogPlanned = map[string]string{"": `true`, "exclude": `t.planned_sprint_id IS NULL`, "only": `t.planned_sprint_id IS NOT NULL`}
+
+var ErrBadBacklogPlanned = httpx.Code("bad_backlog_planned", "planned must be exclude or only")
+
+// PageBacklogStatus is PageBacklogPlanned with planned and unplanned tickets both shown.
 func (s Store) PageBacklogStatus(ctx context.Context, owner, projectID, epic, typ, status string, labels []string, page, perPage int, sortBy string, priorities ...string) (*BacklogPage, error) {
+	return s.PageBacklogPlanned(ctx, owner, projectID, epic, typ, status, "", labels, page, perPage, sortBy, priorities...)
+}
+
+// PageBacklogPlanned is PageBacklogIn for status: open (the default), done, wont_do, duplicate or
+// closed (any of those), and planned (see backlogPlanned). Closed tickets list most recently closed
+// first unless a date sort is asked for.
+func (s Store) PageBacklogPlanned(ctx context.Context, owner, projectID, epic, typ, status, planned string, labels []string, page, perPage int, sortBy string, priorities ...string) (*BacklogPage, error) {
 	statusSQL, known := backlogStatus[status]
 	if !known {
 		return nil, ErrBadBacklogStatus
+	}
+	plannedSQL, known := backlogPlanned[planned]
+	if !known {
+		return nil, ErrBadBacklogPlanned
 	}
 	if typ != "" && !ValidType(typ) {
 		return nil, ErrInvalidType
@@ -226,7 +242,7 @@ func (s Store) PageBacklogStatus(ctx context.Context, owner, projectID, epic, ty
 	for i, l := range labels {
 		lower[i] = strings.ToLower(l)
 	}
-	where := `t.project_id = $1 AND t.board_id IS NULL AND ` + statusSQL + ` AND (cardinality($2::text[]) = 0 OR EXISTS (
+	where := `t.project_id = $1 AND t.board_id IS NULL AND ` + statusSQL + ` AND ` + plannedSQL + ` AND (cardinality($2::text[]) = 0 OR EXISTS (
 		SELECT 1 FROM ticket_labels l WHERE l.ticket_id = t.id AND lower(l.label) = ANY($2)))
 		AND (cardinality($3::text[]) = 0 OR t.priority::text = ANY($3)) AND ` + inEpic("$4::text")
 
