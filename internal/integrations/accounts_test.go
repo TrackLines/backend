@@ -60,8 +60,11 @@ func TestSeveralGitHubAccounts(t *testing.T) {
 	key, _ := rsa.GenerateKey(rand.Reader, 2048)
 	pemKey := string(pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)}))
 	// two GitHub orgs with the app installed: acme (123) and 1tn-pw (456); one person installed both
+	removed := false // the app taken off 1tn-pw (TL-563)
 	github := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case removed && r.URL.Path == "/app/installations/456/access_tokens":
+			http.Error(w, "gone", http.StatusNotFound)
 		case r.URL.Path == "/app/installations/123":
 			_, _ = w.Write([]byte(`{"account":{"login":"acme"}}`))
 		case r.URL.Path == "/app/installations/456":
@@ -131,6 +134,12 @@ func TestSeveralGitHubAccounts(t *testing.T) {
 	if rec := call(h.ListRepos, "GET", "/", "", map[string]string{"provider": "github"}); !strings.Contains(rec.Body.String(), "acme/shop") || !strings.Contains(rec.Body.String(), "1tn-pw/short-service") {
 		t.Fatalf("repos from both accounts: %s", rec.Body)
 	}
+	// one account failing doesn't hide the other's repos (TL-563)
+	removed = true
+	if rec := call(h.ListRepos, "GET", "/", "", map[string]string{"provider": "github"}); rec.Code != 200 || !strings.Contains(rec.Body.String(), "acme/shop") || strings.Contains(rec.Body.String(), "1tn-pw/") {
+		t.Fatalf("repos with one account failing: %d %s", rec.Code, rec.Body)
+	}
+	removed = false
 	for project, repo := range map[string]string{shop: "acme/shop", short: "1tn-pw/short-service"} {
 		if rec := call(h.LinkRepo, "POST", "/", `{"provider":"github","full_name":"`+repo+`"}`, map[string]string{"id": project}); rec.Code != 201 {
 			t.Fatalf("link %s: %d %s", repo, rec.Code, rec.Body)

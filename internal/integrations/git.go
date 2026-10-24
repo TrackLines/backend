@@ -21,8 +21,10 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
+	"github.com/bugfixes/go-bugfixes/logs"
 	"github.com/tracklines/backend/internal/httpx"
 )
 
@@ -352,25 +354,30 @@ func (g Git) githubRepos(ctx context.Context, installation string) ([]Repo, erro
 	if err != nil {
 		return nil, err
 	}
-	req, err := g.githubRequest(ctx, http.MethodGet, "/installation/repositories?per_page=100", token, nil)
-	if err != nil {
-		return nil, err
+	var out []Repo
+	for p := 1; ; p++ { // 100 a page, GitHub's most (TL-563)
+		req, err := g.githubRequest(ctx, http.MethodGet, "/installation/repositories?per_page=100&page="+strconv.Itoa(p), token, nil)
+		if err != nil {
+			return nil, err
+		}
+		var page struct {
+			Total        int `json:"total_count"`
+			Repositories []struct {
+				FullName      string `json:"full_name"`
+				DefaultBranch string `json:"default_branch"`
+				Private       bool   `json:"private"`
+			} `json:"repositories"`
+		}
+		if err := g.do(req, &page); err != nil {
+			return nil, err
+		}
+		for _, r := range page.Repositories {
+			out = append(out, Repo{FullName: r.FullName, DefaultBranch: r.DefaultBranch, Private: r.Private})
+		}
+		if len(page.Repositories) < 100 || len(out) >= page.Total {
+			return out, nil
+		}
 	}
-	var page struct {
-		Repositories []struct {
-			FullName      string `json:"full_name"`
-			DefaultBranch string `json:"default_branch"`
-			Private       bool   `json:"private"`
-		} `json:"repositories"`
-	}
-	if err := g.do(req, &page); err != nil {
-		return nil, err
-	}
-	out := make([]Repo, 0, len(page.Repositories))
-	for _, r := range page.Repositories {
-		out = append(out, Repo{FullName: r.FullName, DefaultBranch: r.DefaultBranch, Private: r.Private})
-	}
-	return out, nil
 }
 
 // Bitbucket OAuth
@@ -627,12 +634,22 @@ func (h System) Repos(ctx context.Context, org, provider string) ([]Repo, error)
 		if len(list) == 0 {
 			return nil, ErrNotConnected
 		}
+		// every account at once (TL-563): one at a time, ten orgs meant twenty GitHub calls in a row
+		found := make([][]Repo, len(list))
+		errs := make([]error, len(list))
+		var wg sync.WaitGroup
+		for n, i := range list {
+			wg.Go(func() { found[n], errs[n] = h.git.githubRepos(ctx, i.ID) })
+		}
+		wg.Wait()
 		var out []Repo
 		seen := map[string]bool{}
-		for _, i := range list {
-			repos, err := h.git.githubRepos(ctx, i.ID)
-			if err != nil {
-				return nil, err
+		failed := 0
+		for n, repos := range found {
+			if errs[n] != nil { // one account failing (the app removed there, say) mustn't hide the rest
+				failed++
+				logs.Warnf("integrations: github repos for %s: %v", cmp.Or(list[n].Account, list[n].ID), errs[n])
+				continue
 			}
 			for _, r := range repos {
 				if k := strings.ToLower(r.FullName); !seen[k] {
@@ -640,6 +657,9 @@ func (h System) Repos(ctx context.Context, org, provider string) ([]Repo, error)
 					out = append(out, r)
 				}
 			}
+		}
+		if failed == len(list) {
+			return nil, errs[0]
 		}
 		return out, nil
 	case Bitbucket:
