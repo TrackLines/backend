@@ -218,6 +218,13 @@ var tools = []tool{
 		method: "PUT", path: "/api/tickets/{ticket_id}/planned-sprint", body: []string{"planned_sprint_id", "estimate"},
 		props: map[string]any{"ticket_id": id("Ticket"), "planned_sprint_id": map[string]any{"type": []string{"string", "null"}, "description": "Planned sprint UUID, or null to unplan"},
 			"estimate": str("Estimate on the planned sprint's board scale")}, required: []string{"ticket_id", "planned_sprint_id"}},
+	{name: "unplan_ticket", title: "Remove ticket from planned sprint", description: "Remove this one ticket from its planned sprint. It stays in the backlog, unplanned and unestimated. " +
+		"Use this instead of unplan_sprint, which removes the entire planned sprint.",
+		method: "PUT", path: "/api/tickets/{ticket_id}/planned-sprint", body: []string{"planned_sprint_id"},
+		props: map[string]any{"ticket_id": id("Ticket")}, required: []string{"ticket_id"}, prepare: func(_ context.Context, _ caller, args map[string]any) error {
+			args["planned_sprint_id"] = nil
+			return nil
+		}},
 	{name: "approve_planned_sprint", title: "Approve planned sprint", description: "Accept a planned sprint's current total over capacity, so it can start. Org admins and the board team's leaders " +
 		"(signed in; agent keys can't approve). Adding more afterwards needs approval again.",
 		method: "POST", path: "/api/planned-sprints/{planned_sprint_id}/approve", props: map[string]any{"planned_sprint_id": id("Planned sprint")}, required: []string{"planned_sprint_id"}},
