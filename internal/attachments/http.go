@@ -22,7 +22,7 @@ func NewSystem(db *pgxpool.Pool) System {
 	return System{store: Store{DB: db}}
 }
 
-func writeErr(w http.ResponseWriter, err error) {
+func writeErr(w http.ResponseWriter, r *http.Request, err error) {
 	if httpx.Canceled(err) {
 		return // the client left: nobody to answer, nothing to report
 	}
@@ -30,13 +30,13 @@ func writeErr(w http.ResponseWriter, err error) {
 	case errors.Is(err, ErrNotFound):
 		http.Error(w, "not found", http.StatusNotFound)
 	case errors.Is(err, ErrBadFile), errors.Is(err, ErrTooBig):
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		httpx.Error(w, r, http.StatusBadRequest, err)
 	case errors.Is(err, ErrCantKeep):
-		http.Error(w, err.Error(), http.StatusForbidden)
+		httpx.Error(w, r, http.StatusForbidden, err)
 	case errors.Is(err, ErrTooMany):
-		http.Error(w, err.Error(), http.StatusConflict)
+		httpx.Error(w, r, http.StatusConflict, err)
 	case errors.Is(err, ErrDone):
-		http.Error(w, err.Error(), http.StatusConflict)
+		httpx.Error(w, r, http.StatusConflict, err)
 	default:
 		logs.Errorf("attachments: %v", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -48,7 +48,7 @@ func (h System) List(w http.ResponseWriter, r *http.Request) {
 	org := auth.OrgID(r.Context())
 	out, err := h.store.List(r.Context(), org, r.PathValue("id"))
 	if err != nil {
-		writeErr(w, err)
+		writeErr(w, r, err)
 		return
 	}
 	httpx.JSON(w, http.StatusOK, out)
@@ -63,7 +63,7 @@ func (h System) Create(w http.ResponseWriter, r *http.Request) {
 	org := auth.OrgID(r.Context())
 	a, err := h.store.Create(r.Context(), org, auth.ActorID(r.Context()), r.PathValue("id"), in)
 	if err != nil {
-		writeErr(w, err)
+		writeErr(w, r, err)
 		return
 	}
 	httpx.JSON(w, http.StatusCreated, a)
@@ -74,7 +74,7 @@ func (h System) Create(w http.ResponseWriter, r *http.Request) {
 func (h System) Delete(w http.ResponseWriter, r *http.Request) {
 	org := auth.OrgID(r.Context())
 	if _, err := h.store.Delete(r.Context(), org, r.PathValue("id")); err != nil {
-		writeErr(w, err)
+		writeErr(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -85,7 +85,7 @@ func (h System) Delete(w http.ResponseWriter, r *http.Request) {
 func (h System) Keep(w http.ResponseWriter, r *http.Request) {
 	user, signedIn := auth.UserID(r.Context())
 	if auth.ViaAPIKey(r.Context()) || !signedIn {
-		http.Error(w, "sign in to keep a file", http.StatusForbidden)
+		httpx.Error(w, r, http.StatusForbidden, httpx.Code("sign_in_keep_file", "sign in to keep a file"))
 		return
 	}
 	org := auth.OrgID(r.Context())
@@ -100,7 +100,7 @@ func (h System) Keep(w http.ResponseWriter, r *http.Request) {
 		return admin
 	})
 	if err != nil {
-		writeErr(w, err)
+		writeErr(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -116,12 +116,12 @@ func (h System) Retention(w http.ResponseWriter, r *http.Request) {
 		admin, _ = h.IsAdmin(r.Context(), org, user)
 	}
 	if !admin {
-		http.Error(w, "only org admins can see the file clean-up", http.StatusForbidden)
+		httpx.Error(w, r, http.StatusForbidden, httpx.Code("admins_file_cleanup", "only org admins can see the file clean-up"))
 		return
 	}
 	out, err := h.store.Retention(r.Context(), org)
 	if err != nil {
-		writeErr(w, err)
+		writeErr(w, r, err)
 		return
 	}
 	httpx.JSON(w, http.StatusOK, out)

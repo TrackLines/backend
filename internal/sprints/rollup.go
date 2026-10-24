@@ -248,13 +248,13 @@ func rollupSummary(now, before OverallTotals, boards int) string {
 func (h System) ProjectReport(w http.ResponseWriter, r *http.Request) {
 	from, to, err := ReportRange(r)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		httpx.Error(w, r, http.StatusBadRequest, err)
 		return
 	}
 	loc := httpx.Zone(r.Context())
 	rep, err := h.store.ProjectReport(r.Context(), auth.OrgID(r.Context()), r.PathValue("id"), from, to, loc)
 	if err != nil {
-		writeErr(w, err)
+		writeErr(w, r, err)
 		return
 	}
 	if wantsMarkdown(r) { // TL-399
@@ -272,13 +272,13 @@ func (h System) OrgReport(w http.ResponseWriter, r *http.Request) {
 	}
 	from, to, err := ReportRange(r)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		httpx.Error(w, r, http.StatusBadRequest, err)
 		return
 	}
 	loc := httpx.Zone(r.Context())
 	rep, err := h.store.OrgReport(r.Context(), org, from, to, loc)
 	if err != nil {
-		writeErr(w, err)
+		writeErr(w, r, err)
 		return
 	}
 	if wantsMarkdown(r) { // TL-399

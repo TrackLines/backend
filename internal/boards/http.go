@@ -23,7 +23,7 @@ type System struct {
 	admins organizations.Admins
 }
 
-func writeErr(w http.ResponseWriter, err error) {
+func writeErr(w http.ResponseWriter, r *http.Request, err error) {
 	if httpx.Canceled(err) {
 		return // the client left: nobody to answer, nothing to report
 	}
@@ -31,9 +31,9 @@ func writeErr(w http.ResponseWriter, err error) {
 	case errors.Is(err, ErrNotFound):
 		http.Error(w, "not found", http.StatusNotFound)
 	case errors.Is(err, ErrBadDevComplete):
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		httpx.Error(w, r, http.StatusBadRequest, err)
 	case errors.Is(err, ErrBoardUsed), errors.Is(err, ErrOpenTickets), errors.Is(err, ErrBoardArchived):
-		http.Error(w, err.Error(), http.StatusConflict)
+		httpx.Error(w, r, http.StatusConflict, err)
 	default:
 		logs.Errorf("boards: %v", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -54,7 +54,7 @@ func (h System) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if in.Name = strings.TrimSpace(in.Name); in.Name == "" {
-		http.Error(w, "name is required", http.StatusBadRequest)
+		httpx.Error(w, r, http.StatusBadRequest, httpx.ErrNameRequired)
 		return
 	}
 	org := auth.OrgID(r.Context())
@@ -62,13 +62,13 @@ func (h System) Create(w http.ResponseWriter, r *http.Request) {
 	if in.TemplateID != "" {
 		var err error
 		if tpl, err = h.store.Template(r.Context(), org, in.TemplateID); err != nil {
-			http.Error(w, "template not found", http.StatusBadRequest)
+			httpx.Error(w, r, http.StatusBadRequest, httpx.Code("template_not_found", "template not found"))
 			return
 		}
 	}
 	b, err := h.store.CreateFrom(r.Context(), org, r.PathValue("id"), in.Name, in.Description, tpl)
 	if err != nil {
-		writeErr(w, err)
+		writeErr(w, r, err)
 		return
 	}
 	httpx.JSON(w, http.StatusCreated, b)
@@ -78,7 +78,7 @@ func (h System) Get(w http.ResponseWriter, r *http.Request) {
 	org := auth.OrgID(r.Context())
 	b, err := h.store.Get(r.Context(), r.PathValue("id"), org)
 	if err != nil {
-		writeErr(w, err)
+		writeErr(w, r, err)
 		return
 	}
 	httpx.JSON(w, http.StatusOK, b)
@@ -90,14 +90,14 @@ func (h System) Flow(w http.ResponseWriter, r *http.Request) {
 	if raw := r.URL.Query().Get("weeks"); raw != "" {
 		n, err := strconv.Atoi(raw)
 		if err != nil || n < 1 || n > 52 {
-			http.Error(w, "weeks must be between 1 and 52", http.StatusBadRequest)
+			httpx.Error(w, r, http.StatusBadRequest, httpx.Code("bad_weeks", "weeks must be between 1 and 52"))
 			return
 		}
 		weeks = n
 	}
 	f, err := h.store.Flow(r.Context(), auth.OrgID(r.Context()), r.PathValue("id"), weeks)
 	if err != nil {
-		writeErr(w, err)
+		writeErr(w, r, err)
 		return
 	}
 	httpx.JSON(w, http.StatusOK, f)
@@ -119,48 +119,48 @@ func (h System) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if in.Name == nil && in.EstimateScale == nil && in.Style == nil && in.AgentReview == nil && in.DevComplete == nil {
-		http.Error(w, "name, estimate_scale, style, agent_review or dev_complete_column_id is required", http.StatusBadRequest)
+		httpx.Error(w, r, http.StatusBadRequest, httpx.Code("board_update_empty", "name, estimate_scale, style, agent_review or dev_complete_column_id is required"))
 		return
 	}
 	name := ""
 	if in.Name != nil {
 		name = strings.TrimSpace(*in.Name)
 		if name == "" {
-			http.Error(w, "name is required", http.StatusBadRequest)
+			httpx.Error(w, r, http.StatusBadRequest, httpx.ErrNameRequired)
 			return
 		}
 	}
 	if in.EstimateScale != nil {
 		if _, ok := Scales[*in.EstimateScale]; !ok {
-			http.Error(w, "estimate_scale must be none, fibonacci, tshirt, powers or linear", http.StatusBadRequest)
+			httpx.Error(w, r, http.StatusBadRequest, httpx.Code("bad_estimate_scale", "estimate_scale must be none, fibonacci, tshirt, powers or linear"))
 			return
 		}
 	}
 	if in.Style != nil && *in.Style != "sprints" && *in.Style != "kanban" {
-		http.Error(w, "style must be sprints or kanban", http.StatusBadRequest)
+		httpx.Error(w, r, http.StatusBadRequest, httpx.Code("bad_board_style", "style must be sprints or kanban"))
 		return
 	}
 	if in.Style != nil {
 		if err := h.store.SetStyle(r.Context(), r.PathValue("id"), auth.OrgID(r.Context()), *in.Style); err != nil {
-			writeErr(w, err)
+			writeErr(w, r, err)
 			return
 		}
 	}
 	if in.AgentReview != nil {
 		if err := h.store.SetAgentReview(r.Context(), r.PathValue("id"), auth.OrgID(r.Context()), *in.AgentReview); err != nil {
-			writeErr(w, err)
+			writeErr(w, r, err)
 			return
 		}
 	}
 	if in.DevComplete != nil {
 		if err := h.store.SetDevComplete(r.Context(), r.PathValue("id"), auth.OrgID(r.Context()), *in.DevComplete); err != nil {
-			writeErr(w, err)
+			writeErr(w, r, err)
 			return
 		}
 	}
 	if in.Name != nil || in.EstimateScale != nil {
 		if err := h.store.UpdateSettings(r.Context(), r.PathValue("id"), auth.OrgID(r.Context()), name, in.EstimateScale); err != nil {
-			writeErr(w, err)
+			writeErr(w, r, err)
 			return
 		}
 	}
@@ -173,7 +173,7 @@ func (h System) Archive(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.store.Archive(r.Context(), r.PathValue("id"), auth.OrgID(r.Context())); err != nil {
-		writeErr(w, err)
+		writeErr(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -185,7 +185,7 @@ func (h System) Restore(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.store.Restore(r.Context(), r.PathValue("id"), auth.OrgID(r.Context())); err != nil {
-		writeErr(w, err)
+		writeErr(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -195,7 +195,7 @@ func (h System) Restore(w http.ResponseWriter, r *http.Request) {
 func (h System) Archived(w http.ResponseWriter, r *http.Request) {
 	out, err := h.store.Archived(r.Context(), auth.OrgID(r.Context()), r.PathValue("id"))
 	if err != nil {
-		writeErr(w, err)
+		writeErr(w, r, err)
 		return
 	}
 	httpx.JSON(w, http.StatusOK, out)
@@ -208,7 +208,7 @@ func (h System) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 	org := auth.OrgID(r.Context())
 	if err := h.store.Delete(r.Context(), r.PathValue("id"), org); err != nil {
-		writeErr(w, err)
+		writeErr(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

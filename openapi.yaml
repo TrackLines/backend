@@ -33,7 +33,12 @@ info:
     scope is locked: moving a ticket into it answers 409, and a ticket created
     in one of its board's columns goes to the bottom of the project backlog
     instead (the 201 body has `redirected_to_backlog: true`).
-    IDs are UUIDs. Error responses are plain-text messages.
+    IDs are UUIDs. Error responses are plain-text messages, unless the request
+    sends `Accept: application/json`: then they're an `ErrorResponse`,
+    `{"code": "done_parent", "error": "…"}`. The code is stable (the web app
+    translates it; `x-error-codes` on `ErrorResponse` lists them all) and the
+    English message can change; an error without a code (not found, unauthorized,
+    invalid json, internal error) has only `error`, and its status says what it is.
 servers:
   - url: https://api.tracklin.es/api
     description: Production backend API
@@ -4458,24 +4463,273 @@ components:
     Error:
       type: string
       description: Plain-text error message.
+    ErrorResponse:
+      type: object
+      description: >-
+        An error for a client that sent `Accept: application/json`. `code` is
+        stable and listed in `x-error-codes` (code → English message; `{…}` is
+        filled in); it's missing for a generic error, where the status says it all.
+      required: [error]
+      properties:
+        code: { type: string, description: Stable error code, for translating the message. }
+        error: { type: string, description: The English message, as the plain-text response would give it. }
+      x-error-codes:
+        accept_clerk_first: "accept the organization invitation through Clerk before completing this invitation"
+        accept_session_required: "invitation acceptance requires a signed-in session"
+        admins_embed: "only an organization admin, signed in, can change embed origins"
+        admins_file_cleanup: "only org admins can see the file clean-up"
+        admins_intake_form: "only an organization admin, signed in, can open, close or reset the request form"
+        admins_make_service_keys: "only organization admins can make service keys"
+        admins_manage_plan: "only organization admins can manage the plan"
+        admins_only: "only organization admins can do this"
+        admins_or_leaders_only: "only organization admins or this board's team leaders can do this"
+        agent_name_too_long: "the agent's name can be up to {max} characters"
+        agent_review_bypass: "agents cannot bypass human review"
+        agent_review_duplicate: "an AI agent can't close a ticket on a board with agent review: ask a person to mark it as a duplicate"
+        already_assigned: "ticket is already assigned"
+        already_duplicate: "ticket is already marked as a duplicate"
+        already_member: "user is already an organization member; add them to the team directly"
+        already_subscribed: "already subscribed — manage it from the billing portal"
+        already_triaged: "this request has already been triaged"
+        api_key_expired: "api key expired: create a new one in Settings → API keys"
+        approve_required: "approve (true or false) is required"
+        backlog_estimate: "backlog tickets can't be estimated; estimates follow the board's scale"
+        bad_assignee_filter: "assignee must be unassigned or me"
+        bad_backlog_sort: "sort must be manual, newest or oldest"
+        bad_backlog_status: "status must be open, done, wont_do, duplicate or closed"
+        bad_blocked_filter: "blocked must be exclude"
+        bad_board_style: "style must be sprints or kanban"
+        bad_bugfixes_token: "token is required; base_url must be an https address like https://bugfix.es"
+        bad_chat_kind: "unknown notification kind: {kind}"
+        bad_chat_url: "that isn't a Google Chat webhook: copy it from the space's Apps & integrations → Webhooks (https://chat.googleapis.com/v1/spaces/…)"
+        bad_column_order: "invalid column order"
+        bad_comment_body: "comment can't be empty or longer than 10000 characters"
+        bad_connect_state: "the connect link has expired or wasn't for this organization; start again"
+        bad_date_range: "from and to are dates (YYYY-MM-DD), from before to, at most two years apart"
+        bad_dev_complete: "the Dev complete column must be one of this board's columns, other than To do and Done"
+        bad_email: "a valid email address is required"
+        bad_estimate: "estimate isn't on this board's scale"
+        bad_estimate_scale: "estimate_scale must be none, fibonacci, tshirt, powers or linear"
+        bad_external: "external needs source (bugfixes), project and id; url must be http(s)"
+        bad_file: "file must be an UploadThing upload (https, *.ufs.sh or utfs.io) with a key and name"
+        bad_intake_request: "a title (up to 200 characters) and a type (bug or feature) are required"
+        bad_intake_status: "status must be pending, promoted or dismissed"
+        bad_invite_email: "email_address must be a valid email address"
+        bad_invite_scope: "scope must be organization, team, or project"
+        bad_invite_target: "target_id is required for team and project invitations and omitted for organization invitations"
+        bad_item_dates: "an item's start date must be on or before its target date"
+        bad_key_client: "client must be one of claude-code, claude-desktop, codex, cursor, vscode, gemini or other"
+        bad_key_expiry: "expires_in_days must be from 1 to {max}"
+        bad_key_kind: "kind must be ai, service or personal"
+        bad_key_prefix: "key prefix must be 2–6 capital letters or digits, starting with a letter"
+        bad_labels: "invalid labels"
+        bad_language: "language must be one of en, nl, or null"
+        bad_link_code: "this link has expired or was already used: message the TrackLin.es app in Google Chat for a new one"
+        bad_member_limit: "limit must be between 1 and 500"
+        bad_number_param: "{name} must be a whole number from 1 to {max}"
+        bad_offset: "offset must be a non-negative integer"
+        bad_origin: "an origin like https://example.com is required"
+        bad_page: "page must be 1 or more"
+        bad_parent_comment: "parent_comment_id must be a comment on the same ticket"
+        bad_plan: "plan must be pro or enterprise"
+        bad_priority: "priority must be low, medium, high or urgent"
+        bad_provider: "provider must be github or bitbucket"
+        bad_push_subscription: "not a browser push subscription"
+        bad_resolution: "resolution must be done or wont_do"
+        bad_search_limit: "limit must be 1–50"
+        bad_search_status: "status must be open or done"
+        bad_sprint_length: "length_days must be between 1 and 365"
+        bad_sprint_start: "next_starts_at must be in the future"
+        bad_standup_action: "action must be next, previous, jump, pause, resume or end"
+        bad_template: "invalid template"
+        bad_timebox: "timebox days must be 0–60 and hours 0–23"
+        bad_type: "type must be bug, feature or task"
+        bad_weeks: "weeks must be between 1 and 52"
+        bad_wip_limit: "wip_limit must be between 1 and 999, or 0 to remove it"
+        billing_not_configured: "billing is not configured"
+        billing_provider_unavailable: "billing provider unavailable"
+        billing_unavailable: "billing unavailable"
+        block_cycle: "that would make tickets block each other in a loop"
+        blocked: "ticket is blocked by tickets that aren't done yet"
+        board_archived: "this board is archived; restore it first"
+        board_update_empty: "name, estimate_scale, style, agent_review or dev_complete_column_id is required"
+        board_used: "this board has been used; archive it instead, so its history is kept"
+        builtin_template: "built-in templates can't be deleted"
+        calendar_admin_email: "the admin email must be an address at {domain}"
+        calendar_domain_required: "enter your Google Workspace domain, e.g. example.com"
+        calendar_domain_taken: "{domain} is already connected to another organization"
+        calendar_domain_unverified: "to connect {domain}, add and verify your own {domain} email address on your TrackLin.es account first"
+        calendar_holidays_id: "the holidays calendar should be a calendar ID, e.g. en.uk#holiday@group.v.calendar.google.com"
+        calendar_holidays_kind: "the holidays calendar must be a public holiday calendar (…#holiday@group.v.calendar.google.com) or a shared calendar (…@group.calendar.google.com)"
+        calendar_not_configured: "Google Calendar isn't set up on this server"
+        calendar_not_connected: "Google Calendar isn't connected"
+        calendar_refused: "{Google's reason for refusing the set-up}"
+        cant_keep_file: "only an organization admin or whoever uploaded it can keep this file"
+        chat_app_not_configured: "the Google Chat app isn't set up on this server"
+        chat_test_refused: "Google Chat refused the test message: {reason}"
+        chat_url_required: "paste the space's webhook URL first"
+        check_admins_failed: "could not check organization admins"
+        choose_org: "choose an organization first"
+        clerk_invite_invalid: "Clerk invitation is no longer valid"
+        clerk_refused: "Clerk refused to {action}: {reason}"
+        column_id_required: "column_id is required"
+        column_in_use: "“{column}” still has tickets: move them before removing the column"
+        column_not_empty: "move or delete tickets before deleting this column"
+        column_update_empty: "name or wip_limit is required"
+        comment_too_long: "comment must be {max} characters or fewer"
+        description_too_long: "description must be {max} characters or fewer"
+        done_blocker: "a done ticket can't get new blockers; move it out of Done first"
+        done_moved: "the last column is Done and stays last: move the other columns around it"
+        done_parent: "a done ticket can't get new sub-tickets; move it out of Done first"
+        done_ticket_files: "ticket is done — move it out of Done to change its attachments"
+        duplicate_of_required: "duplicate_of is required"
+        duplicate_target: "the original ticket must not itself be a duplicate"
+        email_check_failed: "couldn't check your email addresses; try again in a minute"
+        enquiries_unavailable: "enquiries aren't available right now"
+        enquiry_field_too_long: "{field} is too long"
+        enquiry_required: "name and message are required"
+        enquiry_send_failed: "couldn't send your message; please try again"
+        epic_estimate: "epics take no estimate: their size comes from their sub-tickets"
+        epic_in_epic: "an epic can't be inside another epic"
+        epic_not_planned: "epics stay in the backlog: plan their sub-tickets instead"
+        epic_on_board: "epics stay in the backlog: they can't go on a board or into a sprint"
+        estimate_required: "estimate required: this board estimates on the {scale} scale ({estimates})"
+        external_api_only: "external is set by integrations (API keys)"
+        file_too_big: "files can be up to 10 MB"
+        form_closed: "this form isn't taking requests"
+        goal_too_long: "goal must be at most 200 characters"
+        google_unreachable: "couldn't reach Google; try again in a minute"
+        installation_not_yours: "that GitHub installation isn't one you can access; install the app on your own account or organization"
+        installation_taken: "that GitHub installation is already connected to another organization"
+        intake_rate_limited: "too many requests from you; please try again later"
+        integration_not_configured: "this integration isn't configured on the server"
+        integrations_not_configured: "integrations are not configured on this server"
+        invalid_api_key: "invalid api key"
+        invalid_item_status: "item manual_status must be not_started, in_progress or done"
+        invalid_roadmap_update: "health must be on_track, at_risk or off_track and note must be 1 to 2000 characters"
+        invalid_visibility: "visibility must be public, login_only or team"
+        invite_accepted: "invitation has already been accepted"
+        invite_email_mismatch: "signed-in account must have the invited verified email address"
+        invite_mismatch: "invitation details do not match"
+        invite_not_pending: "invitation is no longer pending"
+        invite_not_pending_revoke: "only pending invitations can be revoked"
+        invite_session_required: "invitations require a signed-in session"
+        invite_unavailable: "invitation is no longer available"
+        is_duplicate: "a duplicate ticket is already closed"
+        item_title_required: "item title is required"
+        kanban_no_sprints: "kanban boards don't run sprints"
+        key_name_required: "name is required (e.g. the script using it)"
+        key_name_taken: "someone else in this organization already has a key with that name: choose another"
+        key_prefix_taken: "another project in this organization already uses that key prefix"
+        last_admin: "an organization needs at least one admin"
+        layout_bad_wip: "WIP limits are from 1 to 999, or none"
+        layout_done_last: "the last column (Done) stays last"
+        layout_name_too_long: "column names can be up to {max} characters"
+        layout_stale: "the columns don't match this board: reload and try again"
+        layout_todo_first: "the first column (To do) stays first"
+        layout_too_few: "a board needs at least two columns: To do and Done"
+        layout_unnamed: "every column needs a name"
+        leader_not_in_team: "add them to the team before making them a leader"
+        live_session_unavailable: "live session unavailable"
+        live_unavailable: "live sessions unavailable"
+        load_members_failed: "could not load organization members"
+        member_limit: "your plan includes up to {limit} members, counting invitations not yet accepted; upgrade to Enterprise for unlimited members"
+        membership_not_active: "organization membership is not active yet"
+        name_empty: "name can't be empty"
+        name_required: "name is required"
+        no_bugfixes_report: "this ticket has no Bugfixes report"
+        no_live_session: "no live session"
+        no_members: "organization has no members to make admin"
+        no_session_running: "no session running"
+        no_subscription_to_change: "there's no subscription to change: upgrade with checkout, or this plan was granted by hand"
+        no_subscription_yet: "no subscription yet — upgrade first"
+        not_assigned_to_you: "ticket is not assigned to caller"
+        not_backlog: "only backlog tickets can be planned into a sprint"
+        not_connected: "not connected"
+        not_host: "only the host can do that"
+        not_in_review: "this ticket isn't waiting for review"
+        not_joined: "they haven't joined the session"
+        not_member: "user is not a member of this organization"
+        not_our_link: "only TrackLin.es links can be shortened"
+        not_stripe_billed: "this plan isn't billed through Stripe, so there's nothing to manage"
+        on_board: "this ticket is on a board: move it to the board's Done column instead"
+        open_tickets: "this board still has unfinished tickets; finish them or move them first"
+        other_project: "tickets must belong to the same project"
+        parent_loop: "that parent is already a sub-ticket of this ticket"
+        people_review: "only people review agent work"
+        plan_not_on_sale: "{plan} isn't on sale yet"
+        project_limit: "your plan's project limit is reached — upgrade for more"
+        provider_call_failed: "provider call failed"
+        push_not_configured: "push notifications aren't set up on this server"
+        read_only_key: "this api key is read-only"
+        reason_too_long: "reason is too long"
+        refinement_admins_or_leaders: "only organization admins or a team leader of this project's boards can run refinement"
+        repo_linked: "that repository is already linked to a project in this organization"
+        repo_not_visible: "the connection can't see that repository"
+        reserved_agent_name: "that name is reserved: choose the agent's name"
+        reserved_key_name: "that name is reserved: choose a name for the agent or script using the key"
+        review_comment_too_long: "comment is too long"
+        roadmap_admins_or_leaders: "only organization admins and this project's team leaders can change its roadmaps"
+        roadmap_publish_admins: "only an organization admin, signed in, can publish, unpublish or delete a roadmap"
+        roadmap_ticket_other_project: "linked tickets must be in the roadmap's project"
+        self_block: "a ticket can't block itself"
+        self_duplicate: "a ticket can't be a duplicate of itself"
+        self_parent: "a ticket can't be its own parent"
+        service_key_assign: "only people and AI keys can assign tickets"
+        service_key_claim: "service keys can't claim tickets"
+        service_key_release: "service keys can't release tickets"
+        session_required: "requires a signed-in session, not an API key"
+        session_running: "a session is already running"
+        shorten_failed: "couldn't shorten the link"
+        sign_in_as_admin: "sign in as an organization admin to do this"
+        sign_in_keep_file: "sign in to keep a file"
+        sign_in_link_chat: "sign in to link Google Chat"
+        sign_in_org: "sign in to an organization"
+        sign_in_push: "sign in to turn on notifications for a device"
+        sign_in_required: "sign in to do this"
+        sign_in_standup: "sign in to run a standup"
+        sign_in_to_manage_plan: "sign in to an organization to manage its plan"
+        sprint_already_open: "board already has an open sprint"
+        sprint_locked: "sprint {number} ends today: its scope is locked. Put this in the backlog or the next sprint"
+        sprint_update_empty: "send length_days and/or goal"
+        standup_host_only: "only the host can run the standup"
+        standup_running: "a standup is already running: join it"
+        team_not_in_project: "add the team to this board's project first"
+        template_not_found: "template not found"
+        title_required: "title is required"
+        title_too_long: "title must be {max} characters or fewer"
+        too_many_files: "this ticket already has as many files as it can hold: remove one to add another"
+        too_many_origins: "too many embed origins for this organization"
+        too_many_planned: "a board plans at most 2 sprints ahead"
+        unknown_assignee: "assignee must be an active organization member or AI agent"
+        unknown_provider: "unknown provider"
+        verify_membership_failed: "could not verify organization membership"
   responses:
     BadRequest:
       description: Invalid request body or field values.
       content:
         text/plain:
           schema: { $ref: '#/components/schemas/Error' }
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
     Unauthorized:
       description: Missing, invalid, or revoked API key.
       content:
         text/plain:
           schema: { $ref: '#/components/schemas/Error' }
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
     NotFound:
       description: Resource not found or not owned by this API key.
       content:
         text/plain:
           schema: { $ref: '#/components/schemas/Error' }
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
     InternalError:
       description: Unexpected server error.
       content:
         text/plain:
           schema: { $ref: '#/components/schemas/Error' }
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }

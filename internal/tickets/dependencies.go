@@ -2,17 +2,17 @@ package tickets
 
 import (
 	"context"
-	"errors"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/tracklines/backend/internal/boards"
+	"github.com/tracklines/backend/internal/httpx"
 )
 
 var (
-	ErrBlocked   = errors.New("ticket is blocked by tickets that aren't done yet")
-	ErrSelfBlock = errors.New("a ticket can't block itself")
-	ErrCycle     = errors.New("that would make tickets block each other in a loop")
-	ErrDoneBlock = errors.New("a done ticket can't get new blockers; move it out of Done first")
+	ErrBlocked   = httpx.Code("blocked", "ticket is blocked by tickets that aren't done yet")
+	ErrSelfBlock = httpx.Code("self_block", "a ticket can't block itself")
+	ErrCycle     = httpx.Code("block_cycle", "that would make tickets block each other in a loop")
+	ErrDoneBlock = httpx.Code("done_blocker", "a done ticket can't get new blockers; move it out of Done first")
 )
 
 // Dep is a linked ticket shown under "blocked by" / "blocks".

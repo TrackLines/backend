@@ -32,7 +32,7 @@ func (h System) leader(w http.ResponseWriter, r *http.Request, lead bool) {
 		return
 	}
 	if tag.RowsAffected() == 0 {
-		http.Error(w, "add them to the team before making them a leader", http.StatusUnprocessableEntity)
+		httpx.Error(w, r, http.StatusUnprocessableEntity, httpx.Code("leader_not_in_team", "add them to the team before making them a leader"))
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -66,7 +66,7 @@ func (h System) SetBoardTeam(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !team {
-		http.Error(w, "add the team to this board's project first", http.StatusUnprocessableEntity)
+		httpx.Error(w, r, http.StatusUnprocessableEntity, httpx.Code("team_not_in_project", "add the team to this board's project first"))
 		return
 	}
 	if _, err := h.db.Exec(r.Context(), `UPDATE boards SET team_id = $2::uuid, updated_at = now() WHERE id::text = $1`, r.PathValue("id"), in.TeamID); err != nil {

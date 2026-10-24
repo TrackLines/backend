@@ -2,11 +2,11 @@ package tickets
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/tracklines/backend/internal/boards"
+	"github.com/tracklines/backend/internal/httpx"
 )
 
 // Epics (TL-213): large pieces of work. An epic lives in the backlog (never on a board or in a sprint),
@@ -16,9 +16,9 @@ import (
 const TypeEpic = "epic"
 
 var (
-	ErrEpicOffBoard = errors.New("epics stay in the backlog: they can't go on a board or into a sprint")
-	ErrEpicEstimate = errors.New("epics take no estimate: their size comes from their sub-tickets")
-	ErrEpicInEpic   = errors.New("an epic can't be inside another epic")
+	ErrEpicOffBoard = httpx.Code("epic_on_board", "epics stay in the backlog: they can't go on a board or into a sprint")
+	ErrEpicEstimate = httpx.Code("epic_estimate", "epics take no estimate: their size comes from their sub-tickets")
+	ErrEpicInEpic   = httpx.Code("epic_in_epic", "an epic can't be inside another epic")
 )
 
 // EpicProgress: how far an epic's sub-tickets have got (duplicates left out), and their size: the sum

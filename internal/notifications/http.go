@@ -36,7 +36,7 @@ func (h System) me(w http.ResponseWriter, r *http.Request) (org, user string, ok
 	user, _ = auth.UserID(r.Context())
 	org = auth.OrgID(r.Context())
 	if user == "" || org == "" {
-		http.Error(w, "sign in to an organization", http.StatusForbidden)
+		httpx.Error(w, r, http.StatusForbidden, httpx.ErrSignInOrg)
 		return "", "", false
 	}
 	return org, user, true
@@ -200,7 +200,7 @@ type pushSubscription struct {
 func (h System) person(w http.ResponseWriter, r *http.Request) (string, bool) {
 	user, _ := auth.UserID(r.Context())
 	if user == "" || auth.ViaAPIKey(r.Context()) {
-		http.Error(w, "sign in to turn on notifications for a device", http.StatusForbidden)
+		httpx.Error(w, r, http.StatusForbidden, httpx.Code("sign_in_push", "sign in to turn on notifications for a device"))
 		return "", false
 	}
 	return user, true
@@ -214,7 +214,7 @@ func (h System) Subscribe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !h.push.Enabled() {
-		http.Error(w, "push notifications aren't set up on this server", http.StatusServiceUnavailable)
+		httpx.Error(w, r, http.StatusServiceUnavailable, httpx.Code("push_not_configured", "push notifications aren't set up on this server"))
 		return
 	}
 	var in pushSubscription
@@ -222,7 +222,7 @@ func (h System) Subscribe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !ValidEndpoint(in.Endpoint) || in.Keys.P256dh == "" || in.Keys.Auth == "" || len(in.Keys.P256dh) > 200 || len(in.Keys.Auth) > 100 {
-		http.Error(w, "not a browser push subscription", http.StatusBadRequest)
+		httpx.Error(w, r, http.StatusBadRequest, httpx.Code("bad_push_subscription", "not a browser push subscription"))
 		return
 	}
 	if _, err := h.store.DB.Exec(r.Context(), `INSERT INTO push_subscriptions (user_id, endpoint, p256dh, auth) VALUES ($1, $2, $3, $4)

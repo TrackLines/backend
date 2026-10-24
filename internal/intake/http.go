@@ -30,7 +30,7 @@ func (h System) WithNotifier(n notifications.Notifier) System { h.notify = n; re
 
 func NewSystem(db *pgxpool.Pool) System { return System{store: Store{DB: db}} }
 
-func writeErr(w http.ResponseWriter, err error) {
+func writeErr(w http.ResponseWriter, r *http.Request, err error) {
 	if httpx.Canceled(err) {
 		return // the client left: nobody to answer, nothing to report
 	}
@@ -38,13 +38,13 @@ func writeErr(w http.ResponseWriter, err error) {
 	case errors.Is(err, ErrNotFound):
 		http.Error(w, "not found", http.StatusNotFound)
 	case errors.Is(err, ErrClosed):
-		http.Error(w, err.Error(), http.StatusNotFound)
+		httpx.Error(w, r, http.StatusNotFound, err)
 	case errors.Is(err, ErrInvalid):
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		httpx.Error(w, r, http.StatusBadRequest, err)
 	case errors.Is(err, ErrTooMany):
-		http.Error(w, err.Error(), http.StatusTooManyRequests)
+		httpx.Error(w, r, http.StatusTooManyRequests, err)
 	case errors.Is(err, ErrDecided):
-		http.Error(w, err.Error(), http.StatusConflict)
+		httpx.Error(w, r, http.StatusConflict, err)
 	default:
 		http.Error(w, "internal error", http.StatusInternalServerError)
 	}
@@ -58,7 +58,7 @@ func sender(r *http.Request) string { return httpx.RateKey(r) }
 // It says nothing else about the project.
 func (h System) Form(w http.ResponseWriter, r *http.Request) {
 	if !h.store.Open(r.Context(), r.PathValue("token")) {
-		http.Error(w, ErrClosed.Error(), http.StatusNotFound)
+		httpx.Error(w, r, http.StatusNotFound, ErrClosed)
 		return
 	}
 	httpx.JSON(w, http.StatusOK, map[string]bool{"open": true})
@@ -83,7 +83,7 @@ func (h System) Submit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.store.Submit(r.Context(), r.PathValue("token"), sender(r), in.Type, in.Title, in.Details, in.Contact); err != nil {
-		writeErr(w, err)
+		writeErr(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusAccepted)
@@ -99,12 +99,12 @@ type settings struct {
 func (h System) Settings(w http.ResponseWriter, r *http.Request) {
 	token, err := h.store.Settings(r.Context(), auth.OrgID(r.Context()), r.PathValue("id"))
 	if err != nil {
-		writeErr(w, err)
+		writeErr(w, r, err)
 		return
 	}
 	can, err := h.canManage(r)
 	if err != nil {
-		writeErr(w, err)
+		writeErr(w, r, err)
 		return
 	}
 	httpx.JSON(w, http.StatusOK, settings{Open: token != nil, Token: token, CanManage: can})
@@ -132,15 +132,15 @@ func (h System) SetOpen(w http.ResponseWriter, r *http.Request) {
 	// a public form is open to the whole internet: a person's decision, not an agent's
 	if admin, err := h.canManage(r); err != nil || !admin {
 		if err != nil {
-			writeErr(w, err)
+			writeErr(w, r, err)
 		} else {
-			http.Error(w, "only an organization admin, signed in, can open, close or reset the request form", http.StatusForbidden)
+			httpx.Error(w, r, http.StatusForbidden, httpx.Code("admins_intake_form", "only an organization admin, signed in, can open, close or reset the request form"))
 		}
 		return
 	}
 	token, err := h.store.SetOpen(r.Context(), auth.OrgID(r.Context()), r.PathValue("id"), in.Open, in.Rotate)
 	if err != nil {
-		writeErr(w, err)
+		writeErr(w, r, err)
 		return
 	}
 	httpx.JSON(w, http.StatusOK, settings{Open: token != nil, Token: token, CanManage: true})
@@ -153,12 +153,12 @@ func (h System) List(w http.ResponseWriter, r *http.Request) {
 		status = "pending"
 	}
 	if status != "pending" && status != "promoted" && status != "dismissed" {
-		http.Error(w, "status must be pending, promoted or dismissed", http.StatusBadRequest)
+		httpx.Error(w, r, http.StatusBadRequest, httpx.Code("bad_intake_status", "status must be pending, promoted or dismissed"))
 		return
 	}
 	out, err := h.store.List(r.Context(), auth.OrgID(r.Context()), r.PathValue("id"), status, 100)
 	if err != nil {
-		writeErr(w, err)
+		writeErr(w, r, err)
 		return
 	}
 	httpx.JSON(w, http.StatusOK, out)
@@ -168,7 +168,7 @@ func (h System) List(w http.ResponseWriter, r *http.Request) {
 func (h System) Promote(w http.ResponseWriter, r *http.Request) {
 	out, err := h.store.Promote(r.Context(), auth.OrgID(r.Context()), auth.ActorID(r.Context()), r.PathValue("id"))
 	if err != nil {
-		writeErr(w, err)
+		writeErr(w, r, err)
 		return
 	}
 	if out.TicketID != nil {
@@ -186,7 +186,7 @@ func (h System) Promote(w http.ResponseWriter, r *http.Request) {
 // Dismiss: POST /api/intake-submissions/{id}/dismiss.
 func (h System) Dismiss(w http.ResponseWriter, r *http.Request) {
 	if err := h.store.Dismiss(r.Context(), auth.OrgID(r.Context()), auth.ActorID(r.Context()), r.PathValue("id")); err != nil {
-		writeErr(w, err)
+		writeErr(w, r, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

@@ -14,6 +14,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/tracklines/backend/internal/httpx"
 	"github.com/tracklines/backend/internal/tickets"
 )
 
@@ -26,11 +27,11 @@ const (
 )
 
 var (
-	ErrClosed   = errors.New("this form isn't taking requests")
-	ErrInvalid  = errors.New("a title (up to 200 characters) and a type (bug or feature) are required")
-	ErrTooMany  = errors.New("too many requests from you; please try again later")
+	ErrClosed   = httpx.Code("form_closed", "this form isn't taking requests")
+	ErrInvalid  = httpx.Code("bad_intake_request", "a title (up to 200 characters) and a type (bug or feature) are required")
+	ErrTooMany  = httpx.Code("intake_rate_limited", "too many requests from you; please try again later")
 	ErrNotFound = errors.New("not found")
-	ErrDecided  = errors.New("this request has already been triaged")
+	ErrDecided  = httpx.Code("already_triaged", "this request has already been triaged")
 )
 
 type Submission struct {

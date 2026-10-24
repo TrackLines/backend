@@ -12,9 +12,9 @@ import (
 )
 
 var (
-	ErrAlreadyDuplicate = errors.New("ticket is already marked as a duplicate")
-	ErrDuplicateTarget  = errors.New("the original ticket must not itself be a duplicate")
-	ErrSelfDuplicate    = errors.New("a ticket can't be a duplicate of itself")
+	ErrAlreadyDuplicate = httpx.Code("already_duplicate", "ticket is already marked as a duplicate")
+	ErrDuplicateTarget  = httpx.Code("duplicate_target", "the original ticket must not itself be a duplicate")
+	ErrSelfDuplicate    = httpx.Code("self_duplicate", "a ticket can't be a duplicate of itself")
 )
 
 type DuplicateOptions struct {
@@ -25,7 +25,7 @@ type DuplicateOptions struct {
 }
 
 // ErrAgentReview: marking a duplicate closes the ticket, so an AI agent can't do it where a person reviews agents' work.
-var ErrAgentReview = errors.New("an AI agent can't close a ticket on a board with agent review: ask a person to mark it as a duplicate")
+var ErrAgentReview = httpx.Code("agent_review_duplicate", "an AI agent can't close a ticket on a board with agent review: ask a person to mark it as a duplicate")
 
 // MarkDuplicate closes id as a duplicate of canonical, optionally copying its labels and
 // comments to the original. Both tickets must be in the caller's project.
@@ -158,7 +158,7 @@ func (h System) MarkDuplicate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if in.DuplicateOf == "" {
-		http.Error(w, "duplicate_of is required", http.StatusBadRequest)
+		httpx.Error(w, r, http.StatusBadRequest, httpx.Code("duplicate_of_required", "duplicate_of is required"))
 		return
 	}
 	org := auth.OrgID(r.Context())
@@ -166,13 +166,13 @@ func (h System) MarkDuplicate(w http.ResponseWriter, r *http.Request) {
 		Agent: auth.ViaAPIKey(r.Context()) && auth.APIKeyKind(r.Context()) == "ai"}); err != nil {
 		switch {
 		case errors.Is(err, ErrAgentReview):
-			http.Error(w, err.Error(), http.StatusForbidden)
+			httpx.Error(w, r, http.StatusForbidden, err)
 		case errors.Is(err, ErrSelfDuplicate), errors.Is(err, ErrOtherProject), errors.Is(err, ErrDuplicateTarget):
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			httpx.Error(w, r, http.StatusBadRequest, err)
 		case errors.Is(err, ErrAlreadyDuplicate):
-			http.Error(w, err.Error(), http.StatusConflict)
+			httpx.Error(w, r, http.StatusConflict, err)
 		default:
-			writeErr(w, err)
+			writeErr(w, r, err)
 		}
 		return
 	}

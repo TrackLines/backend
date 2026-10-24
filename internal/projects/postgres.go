@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/tracklines/backend/internal/boards"
+	"github.com/tracklines/backend/internal/httpx"
 	"github.com/tracklines/backend/internal/roadmaps"
 )
 
@@ -142,8 +143,8 @@ func (s Store) Update(ctx context.Context, id, owner, name, desc string) error {
 }
 
 var (
-	ErrBadKeyPrefix   = errors.New("key prefix must be 2–6 capital letters or digits, starting with a letter")
-	ErrKeyPrefixTaken = errors.New("another project in this organization already uses that key prefix")
+	ErrBadKeyPrefix   = httpx.Code("bad_key_prefix", "key prefix must be 2–6 capital letters or digits, starting with a letter")
+	ErrKeyPrefixTaken = httpx.Code("key_prefix_taken", "another project in this organization already uses that key prefix")
 )
 
 // SetKeyPrefix renames the project's ticket keys (TL-123 → TRK-123). Old keys in branch names or

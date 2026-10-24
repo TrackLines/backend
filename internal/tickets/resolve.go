@@ -14,8 +14,8 @@ import (
 )
 
 var (
-	ErrOnBoard           = errors.New("this ticket is on a board: move it to the board's Done column instead")
-	ErrAgentReviewBypass = errors.New("agents cannot bypass human review")
+	ErrOnBoard           = httpx.Code("on_board", "this ticket is on a board: move it to the board's Done column instead")
+	ErrAgentReviewBypass = httpx.Code("agent_review_bypass", "agents cannot bypass human review")
 )
 
 // Resolve closes a backlog ticket in place: it counts as done everywhere (boards.DoneSQL) and leaves
@@ -30,7 +30,7 @@ const (
 	ResolutionWontDo = "wont_do"
 )
 
-var ErrBadResolution = errors.New("resolution must be done or wont_do")
+var ErrBadResolution = httpx.Code("bad_resolution", "resolution must be done or wont_do")
 
 // ResolveAs resolves a backlog ticket as done or wont_do (decided against: it stays, readable, so whoever
 // raised it can be told). A reason is added as a comment by actor. Resolving again updates the resolution.
@@ -182,7 +182,7 @@ func (h System) Resolve(w http.ResponseWriter, r *http.Request) {
 		in.Resolution = ResolutionDone
 	}
 	if len(in.Reason) > 10000 {
-		http.Error(w, "reason is too long", http.StatusBadRequest)
+		httpx.Error(w, r, http.StatusBadRequest, httpx.Code("reason_too_long", "reason is too long"))
 		return
 	}
 	org := auth.OrgID(r.Context())
@@ -191,10 +191,10 @@ func (h System) Resolve(w http.ResponseWriter, r *http.Request) {
 	agent := auth.ViaAPIKey(r.Context()) && auth.APIKeyKind(r.Context()) == "ai"
 	if err := h.store.ResolveAsAgent(r.Context(), org, auth.ActorID(r.Context()), r.PathValue("id"), in.Resolution, in.Reason, agent); err != nil {
 		if errors.Is(err, ErrBadResolution) {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			httpx.Error(w, r, http.StatusBadRequest, err)
 			return
 		}
-		writeErr(w, err)
+		writeErr(w, r, err)
 		return
 	}
 	if d := h.detail(r.Context(), org, r.PathValue("id")); d != nil && before != nil && (!before.Done || in.Resolution == ResolutionWontDo) {

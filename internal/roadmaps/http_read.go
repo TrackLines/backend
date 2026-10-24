@@ -38,7 +38,7 @@ func (h System) WithPeople(p func(ctx context.Context, org string) ([]notificati
 	return h
 }
 
-func writeErr(w http.ResponseWriter, err error) {
+func writeErr(w http.ResponseWriter, r *http.Request, err error) {
 	if httpx.Canceled(err) {
 		return // the client left: nobody to answer, nothing to report
 	}
@@ -46,7 +46,7 @@ func writeErr(w http.ResponseWriter, err error) {
 	case errors.Is(err, ErrNotFound):
 		http.Error(w, "not found", http.StatusNotFound)
 	case errors.Is(err, ErrInvalidVisibility), errors.Is(err, ErrOtherProject), errors.Is(err, ErrBadDates), errors.Is(err, ErrInvalidItemStatus), errors.Is(err, ErrInvalidUpdate):
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		httpx.Error(w, r, http.StatusBadRequest, err)
 	default:
 		logs.Errorf("roadmaps: %v", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -62,13 +62,13 @@ func (h System) manager(w http.ResponseWriter, r *http.Request, roadmap, project
 	org := auth.OrgID(ctx)
 	user, ok := auth.UserID(ctx)
 	if !ok || org == "" {
-		http.Error(w, "sign in to do this", http.StatusForbidden)
+		httpx.Error(w, r, http.StatusForbidden, httpx.ErrSignIn)
 		return false
 	}
 	if project == "" {
 		rm, err := h.store.Get(ctx, roadmap)
 		if err != nil {
-			writeErr(w, err)
+			writeErr(w, r, err)
 			return false
 		}
 		if rm.OwnerClerkID != org {
@@ -79,33 +79,35 @@ func (h System) manager(w http.ResponseWriter, r *http.Request, roadmap, project
 	}
 	can, err := h.canManage(ctx, org, user, project)
 	if err != nil {
-		writeErr(w, err)
+		writeErr(w, r, err)
 		return false
 	}
 	if !can {
-		http.Error(w, "only organization admins and this project's team leaders can change its roadmaps", http.StatusForbidden)
+		httpx.Error(w, r, http.StatusForbidden, httpx.Code("roadmap_admins_or_leaders", "only organization admins and this project's team leaders can change its roadmaps"))
 		return false
 	}
 	return true
 }
 
+// errPublisher: only a signed-in org admin publishes, unpublishes or deletes a roadmap.
+var errPublisher = httpx.Code("roadmap_publish_admins", "only an organization admin, signed in, can publish, unpublish or delete a roadmap")
+
 // publisher lets only a signed-in org admin make a roadmap public, take it off public or delete it,
 // never an API key, even an admin's: what the outside world sees is a person's decision (TL-432).
 func (h System) publisher(w http.ResponseWriter, r *http.Request) bool {
 	ctx := r.Context()
-	const msg = "only an organization admin, signed in, can publish, unpublish or delete a roadmap"
 	if auth.ViaAPIKey(ctx) || h.managers == nil {
-		http.Error(w, msg, http.StatusForbidden)
+		httpx.Error(w, r, http.StatusForbidden, errPublisher)
 		return false
 	}
 	user, _ := auth.UserID(ctx)
 	admin, err := h.managers.IsAdmin(ctx, auth.OrgID(ctx), user)
 	if err != nil {
-		writeErr(w, err)
+		writeErr(w, r, err)
 		return false
 	}
 	if !admin {
-		http.Error(w, msg, http.StatusForbidden)
+		httpx.Error(w, r, http.StatusForbidden, errPublisher)
 	}
 	return admin
 }
@@ -133,7 +135,7 @@ func canRead(r *Roadmap, org string, signedIn bool) int {
 func (h System) Get(w http.ResponseWriter, r *http.Request) {
 	rm, err := h.store.Get(r.Context(), r.PathValue("id"))
 	if err != nil {
-		writeErr(w, err)
+		writeErr(w, r, err)
 		return
 	}
 	_, ok := auth.UserID(r.Context())
@@ -146,7 +148,7 @@ func (h System) Get(w http.ResponseWriter, r *http.Request) {
 		redactTickets(rm) // public/login-only readers see progress counts, never ticket titles or ids
 	} else if user, _ := auth.UserID(r.Context()); user != "" {
 		if rm.CanManage, err = h.canManage(r.Context(), org, user, rm.ProjectID); err != nil {
-			writeErr(w, err)
+			writeErr(w, r, err)
 			return
 		}
 	}
@@ -158,7 +160,7 @@ func (h System) Get(w http.ResponseWriter, r *http.Request) {
 func (h System) List(w http.ResponseWriter, r *http.Request) {
 	out, err := h.store.ListByOwner(r.Context(), auth.OrgID(r.Context()))
 	if err != nil {
-		writeErr(w, err)
+		writeErr(w, r, err)
 		return
 	}
 	httpx.JSON(w, http.StatusOK, out)

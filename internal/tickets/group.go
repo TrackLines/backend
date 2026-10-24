@@ -74,7 +74,7 @@ func (h System) GroupPreview(w http.ResponseWriter, r *http.Request) {
 		return err
 	})
 	if err != nil {
-		writeErr(w, err)
+		writeErr(w, r, err)
 		return
 	}
 	if out == nil {

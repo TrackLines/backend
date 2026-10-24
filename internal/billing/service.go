@@ -6,6 +6,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/tracklines/backend/internal/auth"
+	"github.com/tracklines/backend/internal/httpx"
 )
 
 // Service holds what the checkout, portal and webhook handlers share.
@@ -34,19 +35,19 @@ func (s Service) admin(w http.ResponseWriter, r *http.Request) (org, email strin
 	org = auth.OrgID(r.Context())
 	user, signedIn := auth.UserID(r.Context())
 	if auth.ViaAPIKey(r.Context()) || !signedIn || org == "" {
-		http.Error(w, "sign in to an organization to manage its plan", http.StatusForbidden)
+		httpx.Error(w, r, http.StatusForbidden, httpx.Code("sign_in_to_manage_plan", "sign in to an organization to manage its plan"))
 		return "", "", false
 	}
 	admin := false
 	if s.IsAdmin != nil {
 		var err error
 		if admin, err = s.IsAdmin(r.Context(), org, user); err != nil {
-			http.Error(w, "billing unavailable", http.StatusServiceUnavailable)
+			httpx.Error(w, r, http.StatusServiceUnavailable, httpx.Code("billing_unavailable", "billing unavailable"))
 			return "", "", false
 		}
 	}
 	if !admin {
-		http.Error(w, "only organization admins can manage the plan", http.StatusForbidden)
+		httpx.Error(w, r, http.StatusForbidden, httpx.Code("admins_manage_plan", "only organization admins can manage the plan"))
 		return "", "", false
 	}
 	_ = s.DB.QueryRow(r.Context(), `SELECT email FROM users WHERE clerk_id = $1`, user).Scan(&email)

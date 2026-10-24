@@ -43,7 +43,7 @@ const (
 	chatAPIDomain = "https://chat.googleapis.com"
 )
 
-var ErrLinkCode = errors.New("this link has expired or was already used: message the TrackLin.es app in Google Chat for a new one")
+var ErrLinkCode = httpx.Code("bad_link_code", "this link has expired or was already used: message the TrackLin.es app in Google Chat for a new one")
 
 // ChatApp sends personal notifications through the Chat app and answers Chat's requests. A nil
 // *ChatApp is a server without the app set up: it notifies nobody and its endpoints say so.
@@ -464,18 +464,18 @@ func (c *ChatApp) Status(w http.ResponseWriter, r *http.Request) {
 // using it up, so the page asks before linking (audit: a link someone else sent used to link silently).
 func (c *ChatApp) LinkCode(w http.ResponseWriter, r *http.Request) {
 	if c == nil {
-		http.Error(w, "the Google Chat app isn't set up on this server", http.StatusServiceUnavailable)
+		httpx.Error(w, r, http.StatusServiceUnavailable, httpx.Code("chat_app_not_configured", "the Google Chat app isn't set up on this server"))
 		return
 	}
 	if _, ok := auth.UserID(r.Context()); !ok || auth.ViaAPIKey(r.Context()) {
-		http.Error(w, "sign in to link Google Chat", http.StatusForbidden)
+		httpx.Error(w, r, http.StatusForbidden, httpx.Code("sign_in_link_chat", "sign in to link Google Chat"))
 		return
 	}
 	var label string
 	err := c.DB.QueryRow(r.Context(), `SELECT google_label FROM chat_link_codes WHERE code_hash = $1 AND expires_at > $2`,
 		hashCode(r.URL.Query().Get("code")), c.clock()).Scan(&label)
 	if errors.Is(err, pgx.ErrNoRows) {
-		http.Error(w, ErrLinkCode.Error(), http.StatusBadRequest)
+		httpx.Error(w, r, http.StatusBadRequest, ErrLinkCode)
 		return
 	}
 	if err != nil {
@@ -490,12 +490,12 @@ func (c *ChatApp) LinkCode(w http.ResponseWriter, r *http.Request) {
 // was made for. One Google account per person and the other way round: linking again replaces it.
 func (c *ChatApp) Link(w http.ResponseWriter, r *http.Request) {
 	if c == nil {
-		http.Error(w, "the Google Chat app isn't set up on this server", http.StatusServiceUnavailable)
+		httpx.Error(w, r, http.StatusServiceUnavailable, httpx.Code("chat_app_not_configured", "the Google Chat app isn't set up on this server"))
 		return
 	}
 	user, ok := auth.UserID(r.Context())
 	if !ok || auth.ViaAPIKey(r.Context()) {
-		http.Error(w, "sign in to link Google Chat", http.StatusForbidden)
+		httpx.Error(w, r, http.StatusForbidden, httpx.Code("sign_in_link_chat", "sign in to link Google Chat"))
 		return
 	}
 	var in struct {
@@ -521,7 +521,7 @@ func (c *ChatApp) Link(w http.ResponseWriter, r *http.Request) {
 		return err
 	})
 	if errors.Is(err, ErrLinkCode) {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		httpx.Error(w, r, http.StatusBadRequest, err)
 		return
 	}
 	if err != nil {

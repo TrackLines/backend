@@ -29,7 +29,7 @@ type System struct {
 	Client *http.Client
 }
 
-var ErrNotOurs = errors.New("only TrackLin.es links can be shortened")
+var ErrNotOurs = httpx.Code("not_our_link", "only TrackLin.es links can be shortened")
 
 // Create: POST /api/short-links {"url": "https://tracklin.es/tickets/<id>", "title": "TL-204 on Tracklines"}
 // → {"url": "https://1tn.pw/abc123"}.
@@ -43,12 +43,12 @@ func (s System) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	short, err := s.Shorten(r.Context(), in.URL, in.Title)
 	if errors.Is(err, ErrNotOurs) {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		httpx.Error(w, r, http.StatusBadRequest, err)
 		return
 	}
 	if err != nil {
 		logs.Errorf("shortlinks: %v", err)
-		http.Error(w, "couldn't shorten the link", http.StatusBadGateway)
+		httpx.Error(w, r, http.StatusBadGateway, httpx.Code("shorten_failed", "couldn't shorten the link"))
 		return
 	}
 	httpx.JSON(w, http.StatusOK, map[string]string{"url": short})

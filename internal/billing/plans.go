@@ -16,7 +16,7 @@ import (
 // org without a subscription checks out instead, and a plan granted by hand has no billing to change.
 func (s Service) ChangePlan(w http.ResponseWriter, r *http.Request) {
 	if !s.configured() {
-		http.Error(w, "billing is not configured", http.StatusServiceUnavailable)
+		httpx.Error(w, r, http.StatusServiceUnavailable, httpx.Code("billing_not_configured", "billing is not configured"))
 		return
 	}
 	org, _, ok := s.admin(w, r)
@@ -30,22 +30,22 @@ func (s Service) ChangePlan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if in.Plan != Pro && in.Plan != Enterprise {
-		http.Error(w, "plan must be pro or enterprise", http.StatusBadRequest)
+		httpx.Error(w, r, http.StatusBadRequest, httpx.Code("bad_plan", "plan must be pro or enterprise"))
 		return
 	}
 	if s.configuredPrice(in.Plan) == "" {
-		http.Error(w, in.Plan+" isn't on sale yet", http.StatusServiceUnavailable)
+		httpx.Error(w, r, http.StatusServiceUnavailable, httpx.Code("plan_not_on_sale", in.Plan+" isn't on sale yet"))
 		return
 	}
 	var sub *string
 	err := s.DB.QueryRow(r.Context(), `SELECT stripe_subscription_id FROM org_billing WHERE org_id = $1 AND stripe_status IN ('active', 'trialing')`, org).Scan(&sub)
 	if errors.Is(err, pgx.ErrNoRows) || (err == nil && sub == nil) {
-		http.Error(w, "there's no subscription to change: upgrade with checkout, or this plan was granted by hand", http.StatusConflict)
+		httpx.Error(w, r, http.StatusConflict, httpx.Code("no_subscription_to_change", "there's no subscription to change: upgrade with checkout, or this plan was granted by hand"))
 		return
 	}
 	if err != nil {
 		logs.Errorf("billing: change plan: %v", err)
-		http.Error(w, "billing unavailable", http.StatusServiceUnavailable)
+		httpx.Error(w, r, http.StatusServiceUnavailable, httpx.Code("billing_unavailable", "billing unavailable"))
 		return
 	}
 	current, err := s.Stripe.Subscription(r.Context(), *sub)
@@ -61,7 +61,7 @@ func (s Service) ChangePlan(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		logs.Errorf("billing: change plan: %v", err)
-		http.Error(w, "billing provider unavailable", http.StatusBadGateway)
+		httpx.Error(w, r, http.StatusBadGateway, httpx.Code("billing_provider_unavailable", "billing provider unavailable"))
 		return
 	}
 	// the webhook says so too; recording it now means the new limit applies straight away

@@ -2,7 +2,6 @@ package sprints
 
 import (
 	"context"
-	"errors"
 	"math"
 	"net/http"
 	"time"
@@ -24,9 +23,9 @@ const MaxPlanned = 2
 const velocityWindow = 3
 
 var (
-	ErrTooManyPlanned = errors.New("a board plans at most 2 sprints ahead")
-	ErrNotBacklog     = errors.New("only backlog tickets can be planned into a sprint")
-	ErrEpicNotPlanned = errors.New("epics stay in the backlog: plan their sub-tickets instead")
+	ErrTooManyPlanned = httpx.Code("too_many_planned", "a board plans at most 2 sprints ahead")
+	ErrNotBacklog     = httpx.Code("not_backlog", "only backlog tickets can be planned into a sprint")
+	ErrEpicNotPlanned = httpx.Code("epic_not_planned", "epics stay in the backlog: plan their sub-tickets instead")
 )
 
 type PlannedSprint struct {
@@ -382,7 +381,7 @@ func (s Store) UpdatePlanned(ctx context.Context, owner, id string, lengthDays *
 func (h System) ListPlanned(w http.ResponseWriter, r *http.Request) {
 	out, err := h.store.Planned(r.Context(), auth.OrgID(r.Context()), r.PathValue("id"))
 	if err != nil {
-		writeErr(w, err)
+		writeErr(w, r, err)
 		return
 	}
 	httpx.JSON(w, http.StatusOK, out)
@@ -402,7 +401,7 @@ func (h System) Plan(w http.ResponseWriter, r *http.Request) {
 	}
 	out, err := h.store.Plan(r.Context(), auth.OrgID(r.Context()), r.PathValue("id"), in.LengthDays, in.Goal)
 	if err != nil {
-		writeErr(w, err)
+		writeErr(w, r, err)
 		return
 	}
 	_ = h.live.PublishRefinement(r.Context(), r.PathValue("id"), "plan")
@@ -423,7 +422,7 @@ func (h System) UpdatePlanned(w http.ResponseWriter, r *http.Request) {
 	}
 	out, err := h.store.UpdatePlanned(r.Context(), auth.OrgID(r.Context()), r.PathValue("id"), in.LengthDays, in.Goal)
 	if err != nil {
-		writeErr(w, err)
+		writeErr(w, r, err)
 		return
 	}
 	h.publishPlanned(r, r.PathValue("id"), "update")
@@ -438,7 +437,7 @@ func (h System) Unplan(w http.ResponseWriter, r *http.Request) {
 	var board string
 	_ = h.store.DB.QueryRow(r.Context(), `SELECT board_id FROM planned_sprints WHERE id = $1`, r.PathValue("id")).Scan(&board)
 	if err := h.store.Unplan(r.Context(), auth.OrgID(r.Context()), r.PathValue("id")); err != nil {
-		writeErr(w, err)
+		writeErr(w, r, err)
 		return
 	}
 	if board != "" {
@@ -454,7 +453,7 @@ func (h System) Approve(w http.ResponseWriter, r *http.Request) {
 	}
 	p, err := h.store.Approve(r.Context(), auth.OrgID(r.Context()), auth.ActorID(r.Context()), r.PathValue("id"))
 	if err != nil {
-		writeErr(w, err)
+		writeErr(w, r, err)
 		return
 	}
 	_ = h.live.PublishRefinement(r.Context(), p.BoardID, "approve")
@@ -488,7 +487,7 @@ func (h System) PlanTicket(w http.ResponseWriter, r *http.Request) {
 	}
 	_, _, wasOver := h.approvalState(r.Context(), auth.OrgID(r.Context()), plan)
 	if err := h.store.PlanTicket(r.Context(), auth.OrgID(r.Context()), r.PathValue("id"), in.PlannedSprintID, in.Estimate); err != nil {
-		writeErr(w, err)
+		writeErr(w, r, err)
 		return
 	}
 	if board, number, over := h.approvalState(r.Context(), auth.OrgID(r.Context()), plan); over && !wasOver {

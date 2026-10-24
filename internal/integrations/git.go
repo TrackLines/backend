@@ -21,6 +21,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/tracklines/backend/internal/httpx"
 )
 
 const (
@@ -50,10 +52,10 @@ type Git struct {
 
 var (
 	ErrProviderOff  = errors.New("this provider isn't configured on the server")
-	ErrBadState     = errors.New("the connect link has expired or wasn't for this organization; start again")
+	ErrBadState     = httpx.Code("bad_connect_state", "the connect link has expired or wasn't for this organization; start again")
 	ErrProviderCall = errors.New("the provider refused or couldn't be reached")
-	ErrNotYours     = errors.New("that GitHub installation isn't one you can access; install the app on your own account or organization")
-	ErrTaken        = errors.New("that GitHub installation is already connected to another organization")
+	ErrNotYours     = httpx.Code("installation_not_yours", "that GitHub installation isn't one you can access; install the app on your own account or organization")
+	ErrTaken        = httpx.Code("installation_taken", "that GitHub installation is already connected to another organization")
 )
 
 func (g Git) on(provider string) bool {

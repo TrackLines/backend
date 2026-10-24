@@ -12,16 +12,17 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/tracklines/backend/internal/boards"
+	"github.com/tracklines/backend/internal/httpx"
 	"github.com/tracklines/backend/internal/notifications"
 )
 
 var (
 	ErrNotFound      = errors.New("sprint not found")
-	ErrAlreadyOpen   = errors.New("board already has an open sprint")
-	ErrInvalidLength = errors.New("length_days must be between 1 and 365")
-	ErrInvalidStart  = errors.New("next_starts_at must be in the future")
-	ErrKanban        = errors.New("kanban boards don't run sprints")
-	ErrInvalidGoal   = errors.New("goal must be at most 200 characters")
+	ErrAlreadyOpen   = httpx.Code("sprint_already_open", "board already has an open sprint")
+	ErrInvalidLength = httpx.Code("bad_sprint_length", "length_days must be between 1 and 365")
+	ErrInvalidStart  = httpx.Code("bad_sprint_start", "next_starts_at must be in the future")
+	ErrKanban        = httpx.Code("kanban_no_sprints", "kanban boards don't run sprints")
+	ErrInvalidGoal   = httpx.Code("goal_too_long", "goal must be at most 200 characters")
 )
 
 type Sprint = boards.Sprint

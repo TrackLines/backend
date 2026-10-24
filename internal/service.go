@@ -254,6 +254,9 @@ func (s *Service) Handler() http.Handler {
 	nf := notifications.NewSystem(inbox).WithPush(push)
 	mux.Handle("GET /api/push", signedIn(nf.PushKey))
 	// Google Chat app (TL-289): linking your own account (Chat's requests: see the end of Handler)
+	// the app's language for the signed-in person (TL-551); null follows the browser
+	mux.Handle("GET /api/me/language", sessionRequired(http.HandlerFunc(users.Store{DB: s.DB}.GetLanguage)))
+	mux.Handle("PUT /api/me/language", sessionRequired(http.HandlerFunc(users.Store{DB: s.DB}.PutLanguage)))
 	mux.Handle("GET /api/me/google-chat", sessionRequired(http.HandlerFunc(chatApp.Status)))
 	mux.Handle("GET /api/me/google-chat/link", sessionRequired(http.HandlerFunc(chatApp.LinkCode)))
 	mux.Handle("POST /api/me/google-chat/link", sessionRequired(http.HandlerFunc(chatApp.Link)))

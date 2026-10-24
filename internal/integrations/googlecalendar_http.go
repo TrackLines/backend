@@ -55,7 +55,7 @@ func (h CalendarSystem) ownsDomain(r *http.Request, userID, domain string) (bool
 func (h CalendarSystem) Get(w http.ResponseWriter, r *http.Request) {
 	org := auth.OrgID(r.Context())
 	if org == "" {
-		http.Error(w, "sign in to an organization", http.StatusForbidden)
+		httpx.Error(w, r, http.StatusForbidden, httpx.ErrSignInOrg)
 		return
 	}
 	out := map[string]any{"provider": GoogleCalendarProvider, "available": h.Google != nil, "connected": false, "scope": calendarScope}
@@ -90,7 +90,7 @@ func (h CalendarSystem) Connect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if h.Google == nil {
-		http.Error(w, "Google Calendar isn't set up on this server", http.StatusServiceUnavailable)
+		httpx.Error(w, r, http.StatusServiceUnavailable, httpx.Code("calendar_not_configured", "Google Calendar isn't set up on this server"))
 		return
 	}
 	var in struct {
@@ -103,16 +103,16 @@ func (h CalendarSystem) Connect(w http.ResponseWriter, r *http.Request) {
 	}
 	domain, adminEmail, holidays, err := calendarInput(in.Domain, in.AdminEmail, in.HolidaysCalendar)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		httpx.Error(w, r, http.StatusBadRequest, err)
 		return
 	}
 	// the domain must be theirs: an organization can only connect a Workspace one of its admins belongs to
 	if owns, err := h.ownsDomain(r, user, domain); err != nil {
 		logs.Warnf("google calendar: domain check: %v", err)
-		http.Error(w, "couldn't check your email addresses; try again in a minute", http.StatusBadGateway)
+		httpx.Error(w, r, http.StatusBadGateway, httpx.Code("email_check_failed", "couldn't check your email addresses; try again in a minute"))
 		return
 	} else if !owns {
-		http.Error(w, "to connect "+domain+", add and verify your own "+domain+" email address on your TrackLin.es account first", http.StatusForbidden)
+		httpx.Error(w, r, http.StatusForbidden, httpx.Code("calendar_domain_unverified", "to connect "+domain+", add and verify your own "+domain+" email address on your TrackLin.es account first"))
 		return
 	}
 	var other bool
@@ -121,7 +121,7 @@ func (h CalendarSystem) Connect(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	} else if other {
-		http.Error(w, domain+" is already connected to another organization", http.StatusConflict)
+		httpx.Error(w, r, http.StatusConflict, httpx.Code("calendar_domain_taken", domain+" is already connected to another organization"))
 		return
 	}
 	if !h.check(w, r, adminEmail, holidays) {
@@ -156,12 +156,12 @@ func (h CalendarSystem) SyncNow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if h.Sync == nil || h.Google == nil {
-		http.Error(w, "Google Calendar isn't set up on this server", http.StatusServiceUnavailable)
+		httpx.Error(w, r, http.StatusServiceUnavailable, httpx.Code("calendar_not_configured", "Google Calendar isn't set up on this server"))
 		return
 	}
 	err := h.Sync.Org(r.Context(), org)
 	if errors.Is(err, errNoCalendar) {
-		http.Error(w, "Google Calendar isn't connected", http.StatusNotFound)
+		httpx.Error(w, r, http.StatusNotFound, httpx.Code("calendar_not_connected", "Google Calendar isn't connected"))
 		return
 	}
 	c, gerr := getCalendar(r.Context(), h.DB, org)
@@ -180,12 +180,12 @@ func (h CalendarSystem) Test(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if h.Google == nil {
-		http.Error(w, "Google Calendar isn't set up on this server", http.StatusServiceUnavailable)
+		httpx.Error(w, r, http.StatusServiceUnavailable, httpx.Code("calendar_not_configured", "Google Calendar isn't set up on this server"))
 		return
 	}
 	c, err := getCalendar(r.Context(), h.DB, org)
 	if errors.Is(err, errNoCalendar) {
-		http.Error(w, "Google Calendar isn't connected", http.StatusNotFound)
+		httpx.Error(w, r, http.StatusNotFound, httpx.Code("calendar_not_connected", "Google Calendar isn't connected"))
 		return
 	}
 	if err != nil {
@@ -206,10 +206,10 @@ func (h CalendarSystem) check(w http.ResponseWriter, r *http.Request, adminEmail
 	case err == nil:
 		return true
 	case errors.As(err, &refused):
-		http.Error(w, refused.Message, http.StatusBadRequest)
+		httpx.Error(w, r, http.StatusBadRequest, httpx.Code("calendar_refused", refused.Message))
 	default:
 		logs.Warnf("google calendar: check: %v", err)
-		http.Error(w, "couldn't reach Google; try again in a minute", http.StatusBadGateway)
+		httpx.Error(w, r, http.StatusBadGateway, httpx.Code("google_unreachable", "couldn't reach Google; try again in a minute"))
 	}
 	return false
 }

@@ -12,20 +12,21 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/tracklines/backend/internal/boards"
+	"github.com/tracklines/backend/internal/httpx"
 	"github.com/tracklines/backend/retention"
 )
 
 var (
 	ErrNotFound            = errors.New("ticket not found")
-	ErrInvalidType         = errors.New("type must be bug, feature or task")
-	ErrBadBacklogSort      = errors.New("sort must be manual, newest or oldest")
-	ErrAlreadyAssigned     = errors.New("ticket is already assigned")
-	ErrNotAssignedToCaller = errors.New("ticket is not assigned to caller")
-	ErrSelfParent          = errors.New("a ticket can't be its own parent")
-	ErrParentLoop          = errors.New("that parent is already a sub-ticket of this ticket")
-	ErrDoneParent          = errors.New("a done ticket can't get new sub-tickets; move it out of Done first")
-	ErrOtherProject        = errors.New("tickets must belong to the same project")
-	ErrIsDuplicate         = errors.New("a duplicate ticket is already closed")
+	ErrInvalidType         = httpx.Code("bad_type", "type must be bug, feature or task")
+	ErrBadBacklogSort      = httpx.Code("bad_backlog_sort", "sort must be manual, newest or oldest")
+	ErrAlreadyAssigned     = httpx.Code("already_assigned", "ticket is already assigned")
+	ErrNotAssignedToCaller = httpx.Code("not_assigned_to_you", "ticket is not assigned to caller")
+	ErrSelfParent          = httpx.Code("self_parent", "a ticket can't be its own parent")
+	ErrParentLoop          = httpx.Code("parent_loop", "that parent is already a sub-ticket of this ticket")
+	ErrDoneParent          = httpx.Code("done_parent", "a done ticket can't get new sub-tickets; move it out of Done first")
+	ErrOtherProject        = httpx.Code("other_project", "tickets must belong to the same project")
+	ErrIsDuplicate         = httpx.Code("is_duplicate", "a duplicate ticket is already closed")
 )
 
 type Ticket = boards.Ticket
@@ -195,7 +196,7 @@ var backlogStatus = map[string]string{
 	"closed":    `t.resolved_at IS NOT NULL`,
 }
 
-var ErrBadBacklogStatus = errors.New("status must be open, done, wont_do, duplicate or closed")
+var ErrBadBacklogStatus = httpx.Code("bad_backlog_status", "status must be open, done, wont_do, duplicate or closed")
 
 // PageBacklogStatus is PageBacklogIn for status: open (the default), done, wont_do, duplicate or
 // closed (any of those). Closed tickets list most recently closed first unless a date sort is asked for.
@@ -931,7 +932,7 @@ type External struct {
 	URL     string `json:"url"`
 }
 
-var ErrBadExternal = errors.New("external needs source (bugfixes), project and id; url must be http(s)")
+var ErrBadExternal = httpx.Code("bad_external", "external needs source (bugfixes), project and id; url must be http(s)")
 
 func (e External) valid() bool {
 	ok := func(s string, max int) bool { return s != "" && len(s) <= max && !strings.ContainsAny(s, "/?# ") }

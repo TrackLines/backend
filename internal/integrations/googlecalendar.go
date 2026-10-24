@@ -17,6 +17,8 @@ import (
 	"github.com/go-jose/go-jose/v4/jwt"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/tracklines/backend/internal/httpx"
 )
 
 // Google Calendar (TL-404): who's on holiday. A Workspace admin lets our service account read their
@@ -259,14 +261,14 @@ func calendarInput(domain, adminEmail, holidays string) (string, string, string,
 	holidays = strings.TrimSpace(holidays)
 	switch {
 	case len(domain) > 253 || !domainPattern.MatchString(domain):
-		return "", "", "", errors.New("enter your Google Workspace domain, e.g. example.com")
+		return "", "", "", httpx.Code("calendar_domain_required", "enter your Google Workspace domain, e.g. example.com")
 	case !strings.HasSuffix(adminEmail, "@"+domain) || strings.Count(adminEmail, "@") != 1 || len(adminEmail) <= len(domain)+1:
-		return "", "", "", fmt.Errorf("the admin email must be an address at %s", domain)
+		return "", "", "", httpx.Code("calendar_admin_email", "the admin email must be an address at "+domain)
 	case len(holidays) > 300 || strings.ContainsAny(holidays, " \t\r\n/"):
-		return "", "", "", errors.New("the holidays calendar should be a calendar ID, e.g. en.uk#holiday@group.v.calendar.google.com")
+		return "", "", "", httpx.Code("calendar_holidays_id", "the holidays calendar should be a calendar ID, e.g. en.uk#holiday@group.v.calendar.google.com")
 	// a public holiday calendar or a shared (group) calendar, never someone's own calendar (audit)
 	case holidays != "" && !strings.HasSuffix(holidays, "#holiday@group.v.calendar.google.com") && !strings.HasSuffix(holidays, "@group.calendar.google.com"):
-		return "", "", "", errors.New("the holidays calendar must be a public holiday calendar (…#holiday@group.v.calendar.google.com) or a shared calendar (…@group.calendar.google.com)")
+		return "", "", "", httpx.Code("calendar_holidays_kind", "the holidays calendar must be a public holiday calendar (…#holiday@group.v.calendar.google.com) or a shared calendar (…@group.calendar.google.com)")
 	}
 	return domain, adminEmail, holidays, nil
 }

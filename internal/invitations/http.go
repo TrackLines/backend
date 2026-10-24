@@ -90,15 +90,15 @@ func (h System) Create(w http.ResponseWriter, r *http.Request) {
 	in.EmailAddress = strings.TrimSpace(in.EmailAddress)
 	parsed, err := mail.ParseAddress(in.EmailAddress)
 	if err != nil || !strings.EqualFold(parsed.Address, in.EmailAddress) {
-		http.Error(w, "email_address must be a valid email address", http.StatusBadRequest)
+		httpx.Error(w, r, http.StatusBadRequest, httpx.Code("bad_invite_email", "email_address must be a valid email address"))
 		return
 	}
 	if in.Scope != "organization" && in.Scope != "team" && in.Scope != "project" {
-		http.Error(w, "scope must be organization, team, or project", http.StatusBadRequest)
+		httpx.Error(w, r, http.StatusBadRequest, httpx.Code("bad_invite_scope", "scope must be organization, team, or project"))
 		return
 	}
 	if (in.Scope == "organization") != (in.TargetID == nil) {
-		http.Error(w, "target_id is required for team and project invitations and omitted for organization invitations", http.StatusBadRequest)
+		httpx.Error(w, r, http.StatusBadRequest, httpx.Code("bad_invite_target", "target_id is required for team and project invitations and omitted for organization invitations"))
 		return
 	}
 	if in.TargetID != nil {
@@ -120,18 +120,18 @@ func (h System) Create(w http.ResponseWriter, r *http.Request) {
 		ListParams: clerk.ListParams{Limit: &limit},
 	})
 	if err != nil {
-		writeClerkErr(w, "check organization membership before inviting", err)
+		writeClerkErr(w, r, "check organization membership before inviting", err)
 		return
 	}
 	if users != nil && len(users.OrganizationMemberships) > 0 {
-		http.Error(w, "user is already an organization member; add them to the team directly", http.StatusConflict)
+		httpx.Error(w, r, http.StatusConflict, httpx.Code("already_member", "user is already an organization member; add them to the team directly"))
 		return
 	}
 	if full, err := h.full(r, org); err != nil {
-		writeClerkErr(w, "check the plan's member limit", err)
+		writeClerkErr(w, r, "check the plan's member limit", err)
 		return
 	} else if full != "" {
-		http.Error(w, full, http.StatusPaymentRequired)
+		httpx.Error(w, r, http.StatusPaymentRequired, httpx.Code("member_limit", full))
 		return
 	}
 
@@ -149,7 +149,7 @@ func (h System) Create(w http.ResponseWriter, r *http.Request) {
 		PublicMetadata: (*json.RawMessage)(&metadata),
 	})
 	if err != nil {
-		writeClerkErr(w, "create organization invitation", err)
+		writeClerkErr(w, r, "create organization invitation", err)
 		return
 	}
 	expiresAt := time.Now().UTC().Add(time.Duration(invitationDays) * 24 * time.Hour)
@@ -232,7 +232,7 @@ func (h System) List(w http.ResponseWriter, r *http.Request) {
 // It does not require an active organization because invitees may not be members yet.
 func (h System) Mine(w http.ResponseWriter, r *http.Request) {
 	if auth.ViaAPIKey(r.Context()) {
-		http.Error(w, "invitations require a signed-in session", http.StatusForbidden)
+		httpx.Error(w, r, http.StatusForbidden, httpx.Code("invite_session_required", "invitations require a signed-in session"))
 		return
 	}
 	userID, ok := auth.UserID(r.Context())
@@ -242,7 +242,7 @@ func (h System) Mine(w http.ResponseWriter, r *http.Request) {
 	}
 	emails, err := h.verifiedEmails(r.Context(), userID)
 	if err != nil {
-		writeClerkErr(w, "load invitation recipient", err)
+		writeClerkErr(w, r, "load invitation recipient", err)
 		return
 	}
 	if len(emails) == 0 {
@@ -300,13 +300,13 @@ func (h System) Revoke(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if inv.Status != "pending" {
-		http.Error(w, "only pending invitations can be revoked", http.StatusConflict)
+		httpx.Error(w, r, http.StatusConflict, httpx.Code("invite_not_pending_revoke", "only pending invitations can be revoked"))
 		return
 	}
 	if _, err := h.invitations.Revoke(r.Context(), &organizationinvitation.RevokeParams{
 		OrganizationID: org, ID: inv.clerkID, RequestingUserID: clerk.String(userID),
 	}); err != nil {
-		writeClerkErr(w, "revoke organization invitation", err)
+		writeClerkErr(w, r, "revoke organization invitation", err)
 		return
 	}
 	if _, err := h.db.Exec(r.Context(), `UPDATE invitations SET status='revoked' WHERE id=$1 AND org_id=$2 AND status='pending'`, inv.ID, org); err != nil {
@@ -318,7 +318,7 @@ func (h System) Revoke(w http.ResponseWriter, r *http.Request) {
 
 func (h System) Accept(w http.ResponseWriter, r *http.Request) {
 	if auth.ViaAPIKey(r.Context()) {
-		http.Error(w, "invitation acceptance requires a signed-in session", http.StatusForbidden)
+		httpx.Error(w, r, http.StatusForbidden, httpx.Code("accept_session_required", "invitation acceptance requires a signed-in session"))
 		return
 	}
 	userID, signedIn := auth.UserID(r.Context())
@@ -335,38 +335,38 @@ func (h System) Accept(w http.ResponseWriter, r *http.Request) {
 		if inv.acceptedBy == userID {
 			w.WriteHeader(http.StatusNoContent)
 		} else {
-			http.Error(w, "invitation has already been accepted", http.StatusGone)
+			httpx.Error(w, r, http.StatusGone, httpx.Code("invite_accepted", "invitation has already been accepted"))
 		}
 		return
 	}
 	if inv.Status != "pending" || time.Now().After(inv.ExpiresAt) {
-		http.Error(w, "invitation is no longer pending", http.StatusGone)
+		httpx.Error(w, r, http.StatusGone, httpx.Code("invite_not_pending", "invitation is no longer pending"))
 		return
 	}
 	verified, err := h.hasVerifiedEmail(r.Context(), userID, inv.EmailAddress)
 	if err != nil {
-		writeClerkErr(w, "load invitation recipient", err)
+		writeClerkErr(w, r, "load invitation recipient", err)
 		return
 	}
 	if !verified {
-		http.Error(w, "signed-in account must have the invited verified email address", http.StatusForbidden)
+		httpx.Error(w, r, http.StatusForbidden, httpx.Code("invite_email_mismatch", "signed-in account must have the invited verified email address"))
 		return
 	}
 	clerkInvite, err := h.invitations.Get(r.Context(), &organizationinvitation.GetParams{OrganizationID: inv.OrgID, ID: inv.clerkID})
 	if err != nil {
-		writeClerkErr(w, "inspect organization invitation", err)
+		writeClerkErr(w, r, "inspect organization invitation", err)
 		return
 	}
 	if clerkInvite.Status == "revoked" || clerkInvite.Status == "expired" {
-		http.Error(w, "Clerk invitation is no longer valid", http.StatusGone)
+		httpx.Error(w, r, http.StatusGone, httpx.Code("clerk_invite_invalid", "Clerk invitation is no longer valid"))
 		return
 	}
 	if clerkInvite.Status != "accepted" {
-		http.Error(w, "accept the organization invitation through Clerk before completing this invitation", http.StatusConflict)
+		httpx.Error(w, r, http.StatusConflict, httpx.Code("accept_clerk_first", "accept the organization invitation through Clerk before completing this invitation"))
 		return
 	}
 	if clerkInvite.OrganizationID != inv.OrgID || !strings.EqualFold(clerkInvite.EmailAddress, inv.EmailAddress) {
-		http.Error(w, "invitation details do not match", http.StatusConflict)
+		httpx.Error(w, r, http.StatusConflict, httpx.Code("invite_mismatch", "invitation details do not match"))
 		return
 	}
 	limit := int64(1)
@@ -374,20 +374,20 @@ func (h System) Accept(w http.ResponseWriter, r *http.Request) {
 		OrganizationID: inv.OrgID, UserIDs: []string{userID}, ListParams: clerk.ListParams{Limit: &limit},
 	})
 	if err != nil {
-		writeClerkErr(w, "verify organization membership", err)
+		writeClerkErr(w, r, "verify organization membership", err)
 		return
 	}
 	if !hasMembership(members, userID) {
-		http.Error(w, "organization membership is not active yet", http.StatusConflict)
+		httpx.Error(w, r, http.StatusConflict, httpx.Code("membership_not_active", "organization membership is not active yet"))
 		return
 	}
 	err = h.complete(r.Context(), inv.ID, userID)
 	if errors.Is(err, errInvitationConsumed) {
-		http.Error(w, "invitation has already been accepted", http.StatusGone)
+		httpx.Error(w, r, http.StatusGone, httpx.Code("invite_accepted", "invitation has already been accepted"))
 		return
 	}
 	if errors.Is(err, errInvitationUnavailable) || errors.Is(err, pgx.ErrNoRows) {
-		http.Error(w, "invitation is no longer available", http.StatusGone)
+		httpx.Error(w, r, http.StatusGone, httpx.Code("invite_unavailable", "invitation is no longer available"))
 		return
 	}
 	if err != nil {
@@ -583,7 +583,7 @@ func writeStoreErr(w http.ResponseWriter, r *http.Request, err error) {
 	http.Error(w, "internal error", http.StatusInternalServerError)
 }
 
-func writeClerkErr(w http.ResponseWriter, action string, err error) {
+func writeClerkErr(w http.ResponseWriter, r *http.Request, action string, err error) {
 	if httpx.Canceled(err) {
 		return // the client left: nobody to answer, nothing to report
 	}
@@ -599,7 +599,7 @@ func writeClerkErr(w http.ResponseWriter, action string, err error) {
 		if reason == "" {
 			reason = apiErr.Errors[0].Message
 		}
-		http.Error(w, "Clerk refused to "+action+": "+reason, http.StatusUnprocessableEntity)
+		httpx.Error(w, r, http.StatusUnprocessableEntity, httpx.Code("clerk_refused", "Clerk refused to "+action+": "+reason))
 		return
 	}
 	http.Error(w, "could not "+action, http.StatusBadGateway)

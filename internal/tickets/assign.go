@@ -19,7 +19,7 @@ import (
 	"github.com/tracklines/backend/internal/httpx"
 )
 
-var ErrUnknownAssignee = errors.New("assignee must be an active organization member or AI agent")
+var ErrUnknownAssignee = httpx.Code("unknown_assignee", "assignee must be an active organization member or AI agent")
 
 type membershipLister interface {
 	List(ctx context.Context, params *organizationmembership.ListParams) (*clerk.OrganizationMembershipList, error)
@@ -99,7 +99,7 @@ func (h System) Assign(w http.ResponseWriter, r *http.Request) {
 	// a service key can't put anyone's name on a ticket, same as it can't claim one (TL-271); a
 	// personal key is its owner, so it can (TL-450)
 	if auth.ViaAPIKey(r.Context()) && auth.APIKeyKind(r.Context()) == "service" {
-		http.Error(w, "only people and AI keys can assign tickets", http.StatusForbidden)
+		httpx.Error(w, r, http.StatusForbidden, httpx.Code("service_key_assign", "only people and AI keys can assign tickets"))
 		return
 	}
 	user, _ := auth.UserID(r.Context())
@@ -110,13 +110,13 @@ func (h System) Assign(w http.ResponseWriter, r *http.Request) {
 		member, err = h.isOrganizationMember(r.Context(), org, *in.Assignee)
 		if err != nil {
 			logs.Errorf("tickets: check assignee organization membership: %v", err)
-			http.Error(w, "could not verify organization membership", http.StatusBadGateway)
+			httpx.Error(w, r, http.StatusBadGateway, httpx.ErrVerifyMembership)
 			return
 		}
 	}
 	t, err := h.store.Assign(r.Context(), org, user, r.PathValue("id"), in.Assignee, member)
 	if err != nil {
-		writeErr(w, err)
+		writeErr(w, r, err)
 		return
 	}
 	if in.Assignee != nil {
@@ -136,12 +136,12 @@ func (h System) Assignees(w http.ResponseWriter, r *http.Request) {
 		if !httpx.Canceled(err) {
 			logs.Errorf("tickets: list assignable organization members: %v", err)
 		}
-		http.Error(w, "could not load organization members", http.StatusBadGateway)
+		httpx.Error(w, r, http.StatusBadGateway, httpx.ErrLoadMembers)
 		return
 	}
 	out, err := h.store.Assignees(r.Context(), org, user)
 	if err != nil {
-		writeErr(w, err)
+		writeErr(w, r, err)
 		return
 	}
 	// someone else's agent says whose it is: "Claude (keloran)"

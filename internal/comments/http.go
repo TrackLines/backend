@@ -71,7 +71,7 @@ func (h System) Mentions(w http.ResponseWriter, r *http.Request) {
 	}
 	out, _, err := h.mentioned(r, limit, 0)
 	if err != nil {
-		writeErr(w, err)
+		writeErr(w, r, err)
 		return
 	}
 	httpx.JSON(w, http.StatusOK, out)
@@ -97,7 +97,7 @@ func (h System) PageMentions(w http.ResponseWriter, r *http.Request) {
 	}
 	out, total, err := h.mentioned(r, perPage, (page-1)*perPage)
 	if err != nil {
-		writeErr(w, err)
+		writeErr(w, r, err)
 		return
 	}
 	httpx.JSON(w, http.StatusOK, MentionsPage{Mentions: out, Total: total, Page: page, PerPage: perPage})
@@ -111,7 +111,7 @@ func intParam(w http.ResponseWriter, r *http.Request, name string, def, max int)
 	}
 	n, err := strconv.Atoi(raw)
 	if err != nil || n < 1 || n > max {
-		http.Error(w, fmt.Sprintf("%s must be 1–%d", name, max), http.StatusBadRequest)
+		httpx.Error(w, r, http.StatusBadRequest, httpx.Code("bad_number_param", fmt.Sprintf("%s must be 1–%d", name, max)))
 		return 0, false
 	}
 	return n, true
@@ -159,7 +159,7 @@ func (h System) WithMentions(n notifications.Notifier, people func(ctx context.C
 	return h
 }
 
-func writeErr(w http.ResponseWriter, err error) {
+func writeErr(w http.ResponseWriter, r *http.Request, err error) {
 	if httpx.Canceled(err) {
 		return // the client left: nobody to answer, nothing to report
 	}
@@ -167,7 +167,7 @@ func writeErr(w http.ResponseWriter, err error) {
 	case errors.Is(err, ErrNotFound):
 		http.Error(w, "not found", http.StatusNotFound)
 	case errors.Is(err, ErrBadParent), errors.Is(err, ErrBadBody):
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		httpx.Error(w, r, http.StatusBadRequest, err)
 	default:
 		logs.Errorf("comments: %v", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
@@ -179,7 +179,7 @@ func (h System) List(w http.ResponseWriter, r *http.Request) {
 	org := auth.OrgID(r.Context())
 	out, err := h.store.List(r.Context(), org, r.PathValue("id"))
 	if err != nil {
-		writeErr(w, err)
+		writeErr(w, r, err)
 		return
 	}
 	httpx.JSON(w, http.StatusOK, out)
@@ -198,13 +198,13 @@ func (h System) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if utf8.RuneCountInString(in.Body) > maxBody { // TL-251
-		http.Error(w, "comment must be "+strconv.Itoa(maxBody)+" characters or fewer", http.StatusBadRequest)
+		httpx.Error(w, r, http.StatusBadRequest, httpx.Code("comment_too_long", "comment must be "+strconv.Itoa(maxBody)+" characters or fewer"))
 		return
 	}
 	org := auth.OrgID(r.Context())
 	c, err := h.store.Create(r.Context(), org, auth.ActorID(r.Context()), r.PathValue("id"), in.Body, in.ParentID)
 	if err != nil {
-		writeErr(w, err)
+		writeErr(w, r, err)
 		return
 	}
 	h.mentions(r, org, c, in.Body)

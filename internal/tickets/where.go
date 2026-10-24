@@ -27,13 +27,13 @@ func (h System) Where(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		writeErr(w, err)
+		writeErr(w, r, err)
 		return
 	}
 	member, err := h.isOrganizationMember(r.Context(), org, user)
 	if err != nil {
 		logs.Errorf("tickets: where: check membership: %v", err)
-		http.Error(w, "could not verify organization membership", http.StatusBadGateway)
+		httpx.Error(w, r, http.StatusBadGateway, httpx.ErrVerifyMembership)
 		return
 	}
 	if !member {
