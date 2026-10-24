@@ -82,6 +82,35 @@ func TestBacklogStatusFilter(t *testing.T) {
 		t.Errorf("unknown status: %v", err)
 	}
 
+	// planned (TL-583): a ticket planned into an upcoming sprint can be hidden, or shown alone
+	planned := mk("planned")
+	var boardID, planID string
+	if err := db.QueryRow(ctx, `INSERT INTO boards (owner_clerk_id, project_id, name) VALUES ('bst1', $1, 'B') RETURNING id`, pid).Scan(&boardID); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(ctx, `INSERT INTO planned_sprints (board_id, position, length_days) VALUES ($1, 1, 14) RETURNING id`, boardID).Scan(&planID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(ctx, `UPDATE tickets SET planned_sprint_id = $2 WHERE id = $1`, planned, planID); err != nil {
+		t.Fatal(err)
+	}
+	for p, want := range map[string]string{"": "open,planned", "exclude": "open", "only": "planned"} {
+		pg, err := s.PageBacklogPlanned(ctx, "bst1", pid, "", "", "", p, nil, 1, 25, "oldest")
+		if err != nil {
+			t.Fatalf("planned %q: %v", p, err)
+		}
+		var got []string
+		for _, tk := range pg.Tickets {
+			got = append(got, tk.Title)
+		}
+		if strings.Join(got, ",") != want || pg.Counts["all"] != len(got) {
+			t.Errorf("planned %q: %v (count %d), want %s", p, got, pg.Counts["all"], want)
+		}
+	}
+	if _, err := s.PageBacklogPlanned(ctx, "bst1", pid, "", "", "", "maybe", nil, 1, 25, ""); !errors.Is(err, ErrBadBacklogPlanned) {
+		t.Errorf("unknown planned: %v", err)
+	}
+
 	// over HTTP: status passes through, a bad one is a 400, another org gets a 404
 	h := NewSystem(db)
 	get := func(org, query string) *httptest.ResponseRecorder {
@@ -97,6 +126,12 @@ func TestBacklogStatusFilter(t *testing.T) {
 	}
 	if rec := get("bst1", "status=nope"); rec.Code != 400 {
 		t.Errorf("http bad status: %d", rec.Code)
+	}
+	if rec := get("bst1", "planned=exclude"); rec.Code != 200 || strings.Contains(rec.Body.String(), `"title":"planned"`) || !strings.Contains(rec.Body.String(), `"title":"open"`) {
+		t.Errorf("http planned=exclude: %d %s", rec.Code, rec.Body)
+	}
+	if rec := get("bst1", "planned=nope"); rec.Code != 400 {
+		t.Errorf("http bad planned: %d", rec.Code)
 	}
 	if rec := get("bst-other", "status=closed"); rec.Code != 404 {
 		t.Errorf("another org: %d", rec.Code)

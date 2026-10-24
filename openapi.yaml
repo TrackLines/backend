@@ -1966,6 +1966,7 @@ paths:
         - $ref: '#/components/parameters/ProjectId'
         - { name: type, in: query, schema: { type: string, enum: [bug, feature, task, epic, spike] } }
         - { name: sort, in: query, description: Order tickets globally before pagination. Defaults to the manual backlog order., schema: { type: string, enum: [manual, newest, oldest], default: manual } }
+        - { name: planned, in: query, description: "exclude hides tickets planned into an upcoming sprint; only shows just those. Omitted shows both. Counts follow it.", schema: { type: string, enum: [exclude, only] } }
         - name: label
           in: query
           description: Repeatable; a ticket matches if it has any of them (case-insensitive).
@@ -4524,6 +4525,7 @@ components:
         bad_assignee_filter: "assignee must be unassigned or me"
         bad_backlog_sort: "sort must be manual, newest or oldest"
         bad_backlog_status: "status must be open, done, wont_do, duplicate or closed"
+        bad_backlog_planned: "planned must be exclude or only"
         bad_blocked_filter: "blocked must be exclude"
         bad_board_style: "style must be sprints or kanban"
         bad_bugfixes_token: "token is required; base_url must be an https address like https://bugfix.es"
