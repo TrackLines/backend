@@ -3341,6 +3341,31 @@ paths:
             application/json:
               schema: { type: object }
 
+  /mcp/prompts:
+    get:
+      tags: [System]
+      operationId: getMCPPrompts
+      summary: What the MCP server tells agents
+      description: Public; no key needed. The server's instructions and each tool's name, title and description, exactly as MCP clients get them.
+      security: []
+      responses:
+        '200':
+          description: The instructions and tool prompts.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  instructions: { type: string }
+                  tools:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        name: { type: string }
+                        title: { type: string }
+                        description: { type: string }
+
   /live/sessions:
     get:
       tags: [Live]

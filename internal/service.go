@@ -427,6 +427,7 @@ func (s *Service) Handler() http.Handler {
 		w.Header().Set("Content-Type", "application/yaml")
 		_, _ = w.Write(backend.OpenAPIYAML)
 	}))
+	mux.Handle("GET /api/mcp/prompts", public("mcp-prompts", 60, mcp.Prompts)) // what agents are told, for the docs (TL-565)
 	mux.Handle("GET /api/openapi.json", public("openapi", 60, func(w http.ResponseWriter, _ *http.Request) {
 		if specJSON == nil {
 			http.Error(w, "the API description is unavailable", http.StatusServiceUnavailable)
