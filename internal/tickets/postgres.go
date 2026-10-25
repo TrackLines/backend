@@ -19,7 +19,7 @@ import (
 var (
 	ErrNotFound            = errors.New("ticket not found")
 	ErrInvalidType         = httpx.Code("bad_type", "type must be bug, feature or task")
-	ErrBadBacklogSort      = httpx.Code("bad_backlog_sort", "sort must be manual, newest or oldest")
+	ErrBadBacklogSort      = httpx.Code("bad_backlog_sort", "sort must be manual, newest, oldest or due")
 	ErrAlreadyAssigned     = httpx.Code("already_assigned", "ticket is already assigned")
 	ErrNotAssignedToCaller = httpx.Code("not_assigned_to_you", "ticket is not assigned to caller")
 	ErrSelfParent          = httpx.Code("self_parent", "a ticket can't be its own parent")
@@ -227,7 +227,7 @@ func (s Store) PageBacklogPlanned(ctx context.Context, owner, projectID, epic, t
 	if sortBy == "" {
 		sortBy = "manual"
 	}
-	if sortBy != "manual" && sortBy != "newest" && sortBy != "oldest" {
+	if sortBy != "manual" && sortBy != "newest" && sortBy != "oldest" && sortBy != "due" {
 		return nil, ErrBadBacklogSort
 	}
 	if !ValidPriorities(priorities) {
@@ -285,6 +285,8 @@ func (s Store) PageBacklogPlanned(ctx context.Context, owner, projectID, epic, t
 		order = `t.created_at DESC, t.position, t.id`
 	case "oldest":
 		order = `t.created_at, t.position, t.id`
+	case "due": // soonest due first; undated last, in backlog order (TL-631)
+		order = `t.due_date NULLS LAST, t.position, t.id`
 	}
 	rows, err = s.DB.Query(ctx, `SELECT `+boards.TicketCols+` FROM tickets t
 		WHERE `+where+` AND ($5 = '' OR t.type::text = $5)
@@ -327,6 +329,16 @@ func (s Store) SetTimebox(ctx context.Context, owner, id string, days, hours int
 	}
 	return exec(s.DB.Exec(ctx, `UPDATE tickets t SET timebox_days = $3, timebox_hours = $4, updated_at = now()
 		FROM projects p WHERE t.id = $1 AND p.id = t.project_id AND p.owner_clerk_id = $2`, id, owner, d, h))
+}
+
+// SetDueDate sets a ticket's due date (TL-631): a YYYY-MM-DD day, or "" to clear it.
+func (s Store) SetDueDate(ctx context.Context, owner, id, day string) error {
+	var d *string
+	if day != "" {
+		d = &day
+	}
+	return exec(s.DB.Exec(ctx, `UPDATE tickets t SET due_date = $3::date, updated_at = now()
+		FROM projects p WHERE t.id = $1 AND p.id = t.project_id AND p.owner_clerk_id = $2`, id, owner, d))
 }
 
 // becomeEpic gets ticket id ready to be an epic (TL-213): no epic above or below it, off its board (to

@@ -1014,6 +1014,8 @@ paths:
         - { name: assignee, in: query, schema: { type: string }, description: "me (the caller), unassigned, or a user id / agent name." }
         - { name: creator, in: query, schema: { type: string }, description: "me (the caller) or a user id / agent name: tickets they created." }
         - { name: status, in: query, schema: { type: string, enum: [open, done] } }
+        - { name: due, in: query, description: "overdue (past its due date, open), soon (due today or tomorrow, open) or none (no due date), by the caller's local day (Tracklines-Timezone).", schema: { type: string, enum: [overdue, soon, none] } }
+        - { name: sort, in: query, description: "due: soonest due first, undated last.", schema: { type: string, enum: [due] } }
         - { name: match, in: query, description: 'any: a ticket matching any word (of three letters or more) will do, most matches first, for spotting duplicates despite typos. Default: every word must match.', schema: { type: string, enum: [any] } }
         - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 50, default: 20 } }
         - { name: page, in: query, schema: { type: integer, minimum: 1, default: 1 }, description: '1-based, with limit. "My work" is assignee=me&status=open across every board and project.' }
@@ -2064,7 +2066,7 @@ paths:
         - { name: priority, in: query, schema: { type: array, items: { type: string, enum: [low, medium, high, urgent] } }, style: form, explode: true, description: Any of these priorities; counts follow it. }
         - $ref: '#/components/parameters/ProjectId'
         - { name: type, in: query, schema: { type: string, enum: [bug, feature, task, epic, spike] } }
-        - { name: sort, in: query, description: Order tickets globally before pagination. Defaults to the manual backlog order., schema: { type: string, enum: [manual, newest, oldest], default: manual } }
+        - { name: sort, in: query, description: Order tickets globally before pagination. Defaults to the manual backlog order., schema: { type: string, enum: [manual, newest, oldest, due], default: manual } }
         - { name: planned, in: query, description: "exclude hides tickets planned into an upcoming sprint; only shows just those. Omitted shows both. Counts follow it.", schema: { type: string, enum: [exclude, only] } }
         - name: label
           in: query
@@ -4037,6 +4039,9 @@ components:
           minimum: 0
           maximum: 23
           description: A spike's timebox hours (0–23). Send with timebox_days.
+        due_date:
+          type: string
+          description: The ticket's due date, YYYY-MM-DD (TL-631). "" clears it; omitted = unchanged.
     CreateBugfixTicket:
       type: object
       required: [board_id, column_id, title]
@@ -4153,6 +4158,7 @@ components:
         planned_sprint_id: { type: [string, 'null'], format: uuid, description: A backlog ticket planned into a board's upcoming sprint (refinement). }
         planned_sprint_number: { type: [integer, 'null'], description: "The number the planned sprint will get, e.g. 6; null when unplanned." }
         planned_board_name: { type: [string, 'null'], description: The board of the planned sprint; null when unplanned. }
+        due_date: { type: [string, 'null'], format: date, description: "Due date (YYYY-MM-DD), or null (TL-631)." }
         key: { type: string, example: TL-123, description: "The project's key prefix and the ticket's number in the project, assigned on create. For branch names, PR titles and search." }
         external_source: { type: [string, 'null'], description: Where an integration made it (bugfixes); null for our own tickets. }
         external_url: { type: [string, 'null'], description: Link to it there (e.g. the Bugfixes report). }
@@ -4453,6 +4459,7 @@ components:
         epic_id: { type: [string, 'null'], description: "The epic this ticket is part of, at any depth (epics don't nest)." }
         timebox_days: { type: [integer, 'null'], description: "A spike's timebox, in days (with timebox_hours). Null when not a spike or not yet timed." }
         timebox_hours: { type: [integer, 'null'], description: "A spike's timebox hours (0–23)." }
+        due_date: { type: [string, 'null'], format: date, description: "Due date (YYYY-MM-DD), or null (TL-631)." }
         epic: { $ref: '#/components/schemas/EpicProgress' }
         duplicates:
           type: array
@@ -4758,7 +4765,7 @@ components:
         approve_required: "approve (true or false) is required"
         backlog_estimate: "backlog tickets can't be estimated; estimates follow the board's scale"
         bad_assignee_filter: "assignee must be unassigned or me"
-        bad_backlog_sort: "sort must be manual, newest or oldest"
+        bad_backlog_sort: "sort must be manual, newest, oldest or due"
         bad_backlog_status: "status must be open, done, wont_do, duplicate or closed"
         bad_backlog_planned: "planned must be exclude or only"
         bad_blocked_filter: "blocked must be exclude"
@@ -4810,6 +4817,9 @@ components:
         bad_resolution: "resolution must be done or wont_do"
         bad_search_limit: "limit must be 1–50"
         bad_search_status: "status must be open or done"
+        bad_search_sort: "sort must be due, or left out"
+        bad_due: "due must be overdue, soon or none"
+        bad_due_date: "due_date must be a date (YYYY-MM-DD), or empty to clear it"
         bad_sprint_length: "length_days must be between 1 and 365"
         bad_sprint_start: "next_starts_at must be in the future"
         bad_standup_action: "action must be next, previous, jump, pause, resume or end"
