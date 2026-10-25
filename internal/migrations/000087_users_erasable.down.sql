@@ -1,0 +1,1 @@
+-- the foreign key isn't restored: owners whose users row was erased would break it

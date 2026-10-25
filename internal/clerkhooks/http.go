@@ -113,6 +113,18 @@ func (s System) apply(ctx context.Context, e event) error {
 			`DELETE FROM team_members WHERE user_clerk_id = $1`,
 			`UPDATE api_keys SET revoked_at = now() WHERE owner_clerk_id = $1 AND revoked_at IS NULL`,
 			`DELETE FROM chat_dms WHERE user_clerk_id = $1`, // no more Chat messages to them (TL-289)
+			// their personal data goes too (TL-594, UK GDPR erasure); their id stays on tickets and
+			// comments they made, which show as an unknown person. Stripe keeps its own billing records.
+			`UPDATE org_billing SET billing_email = '' WHERE billing_email <> ''
+				AND lower(billing_email) = (SELECT lower(email) FROM users WHERE clerk_id = $1)`,
+			`DELETE FROM notifications WHERE user_id = $1`,
+			`DELETE FROM push_subscriptions WHERE user_id = $1`,
+			`DELETE FROM ticket_mentions WHERE user_id = $1`,
+			`DELETE FROM ticket_watch_mutes WHERE user_id = $1`,
+			`DELETE FROM time_away WHERE user_id = $1`,
+			`DELETE FROM project_members WHERE user_clerk_id = $1`,
+			`DELETE FROM invitations WHERE accepted_user_clerk_id = $1`, // they hold the email address
+			`DELETE FROM users WHERE clerk_id = $1`,
 		}
 	case "organization.deleted":
 		if e.Data.ID == "" {

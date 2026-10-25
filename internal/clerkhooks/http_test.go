@@ -167,12 +167,61 @@ func TestWebhook(t *testing.T) {
 		t.Fatal("membership removal touched other orgs or users")
 	}
 
-	// bob is deleted: his rows and keys go everywhere
-	if code := send(`{"type":"user.deleted","data":{"id":"bob"}}`); code != http.StatusNoContent || live(bobA) || member("org_a", "bob") {
-		t.Fatalf("user deleted: %d", code)
+	// personal data for bob and alice (TL-594): bob's goes when he's deleted, alice's stays
+	var pid, tid string
+	_ = db.QueryRow(ctx, `INSERT INTO projects (owner_clerk_id, name) VALUES ('org_a', 'p') RETURNING id`).Scan(&pid)
+	_ = db.QueryRow(ctx, `INSERT INTO tickets (project_id, created_by, assigned_to, title, position) VALUES ($1, 'bob', 'bob', 'his', 0) RETURNING id`, pid).Scan(&tid)
+	exec(`INSERT INTO ticket_comments (ticket_id, body, author) VALUES ($1, 'hi', 'bob')`, tid)
+	exec(`INSERT INTO calendar_connections (org_id, domain, admin_email, connected_by) VALUES ('org_a', 'x.y', 'alice@x.y', 'alice')`)
+	exec(`INSERT INTO org_billing (org_id, billing_email) VALUES ('org_a', 'Bob@x.y'), ('org_b', 'alice@x.y')`)
+	for i, u := range []string{"bob", "alice"} {
+		exec(`INSERT INTO notifications (org_id, user_id, kind, text) VALUES ('org_a', $1, 'mention', 'x')`, u)
+		exec(`INSERT INTO push_subscriptions (user_id, endpoint, p256dh, auth) VALUES ($1, 'https://push/' || $1, 'k', 'a')`, u)
+		exec(`INSERT INTO ticket_mentions (org_id, user_id, ticket_id) VALUES ('org_a', $1, $2)`, u, tid)
+		exec(`INSERT INTO ticket_watch_mutes (org_id, user_id, ticket_id) VALUES ('org_a', $1, $2)`, u, tid)
+		exec(`INSERT INTO time_away (org_id, user_id, starts_at, ends_at, source_id) VALUES ('org_a', $1, now(), now() + interval '1 day', $1)`, u)
+		exec(`INSERT INTO project_members (project_id, user_clerk_id, invited_by) VALUES ($1, $2, 'carol')`, pid, u)
+		exec(`INSERT INTO invitations (org_id, clerk_invitation_id, email_address, scope, invited_by, status, accepted_user_clerk_id, expires_at)
+			VALUES ('org_a', $1, $2 || '@x.y', 'organization', 'carol', 'accepted', $2, now())`, fmt.Sprint("inv_", i), u)
 	}
-	if !live(aliceB) || !live(carolC) {
+	personal := func(u string) int {
+		total := 0
+		for _, q := range []string{
+			`SELECT count(*) FROM users WHERE clerk_id = $1`,
+			`SELECT count(*) FROM notifications WHERE user_id = $1`,
+			`SELECT count(*) FROM push_subscriptions WHERE user_id = $1`,
+			`SELECT count(*) FROM ticket_mentions WHERE user_id = $1`,
+			`SELECT count(*) FROM ticket_watch_mutes WHERE user_id = $1`,
+			`SELECT count(*) FROM time_away WHERE user_id = $1`,
+			`SELECT count(*) FROM project_members WHERE user_clerk_id = $1`,
+			`SELECT count(*) FROM invitations WHERE accepted_user_clerk_id = $1`,
+			`SELECT count(*) FROM org_billing WHERE lower(billing_email) = $1 || '@x.y'`,
+		} {
+			total += count(q, u)
+		}
+		return total
+	}
+	if personal("bob") != 9 || personal("alice") != 9 {
+		t.Fatalf("seeded: bob %d, alice %d", personal("bob"), personal("alice"))
+	}
+
+	// bob is deleted: his rows, keys and personal data go everywhere; a replay is a no-op
+	for range 2 {
+		if code := send(`{"type":"user.deleted","data":{"id":"bob"}}`); code != http.StatusNoContent || live(bobA) || member("org_a", "bob") {
+			t.Fatalf("user deleted: %d", code)
+		}
+	}
+	if n := personal("bob"); n != 0 {
+		t.Fatalf("bob's personal data left: %d rows", n)
+	}
+	if !live(aliceB) || !live(carolC) || personal("alice") != 9 {
 		t.Fatal("user deletion touched other users")
+	}
+	// his work stays, under his id; his revoked key stays on record
+	if count(`SELECT count(*) FROM tickets WHERE created_by = 'bob' AND assigned_to = 'bob'`) != 1 ||
+		count(`SELECT count(*) FROM ticket_comments WHERE author = 'bob'`) != 1 ||
+		count(`SELECT count(*) FROM api_keys WHERE owner_clerk_id = 'bob' AND revoked_at IS NOT NULL`) != 1 {
+		t.Fatal("bob's tickets, comments or revoked key went")
 	}
 
 	// org_c is deleted: its admins, teams and keys go; org_b is untouched
