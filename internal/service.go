@@ -356,7 +356,9 @@ func (s *Service) Handler() http.Handler {
 	// Short links for "Copy link": our own site's links only, through 1tn, each made once
 	sl := shortlinks.System{DB: s.DB, API: config.Get(s.Config).ShortLinkAPI, Base: config.Get(s.Config).ShortLinkBase, Sites: config.Get(s.Config).AuthorizedParties()}
 	mux.Handle("POST /api/short-links", signedIn(sl.Create))
-	mux.Handle("GET /api/mentions/page", signedIn(cm.PageMentions)) // the same, a page at a time with a total; hide_done=true
+	mux.Handle("GET /api/mentions/page", signedIn(cm.PageMentions))     // the same, a page at a time with a total; hide_done=true
+	mux.Handle("PUT /api/mentions/{ticket}/mute", signedIn(cm.Mute))    // stop watching a ticket (TL-587)
+	mux.Handle("DELETE /api/mentions/{ticket}/mute", signedIn(cm.Mute)) // watch it again
 
 	// Attachments — files live on UploadThing (browser uploads via the Next.js route); we keep the records
 	at := attachments.NewSystem(s.DB)

@@ -204,6 +204,7 @@ func (h System) Resolve(w http.ResponseWriter, r *http.Request) {
 				text += ": " + reason
 			}
 			h.tell(r, []string{d.CreatedBy}, "wont_do", text, d)
+			h.watchers(r, d, []string{d.CreatedBy}, text)
 		} else {
 			h.finished(r, d, "resolved")
 		}

@@ -33,6 +33,17 @@ func (h System) tell(r *http.Request, to []string, kind, text string, d *Detail)
 	})
 }
 
+// watchers tell the ticket's watchers (TL-587: people @mentioned on it, not muted) what happened,
+// leaving out who the event already told.
+func (h System) watchers(r *http.Request, d *Detail, told []string, text string) {
+	if h.notify == nil || d == nil {
+		return
+	}
+	notifications.Watch(r.Context(), h.notify, h.store.DB, auth.OrgID(r.Context()), d.ID, told, notifications.Event{
+		Kind: "watching", Text: text, Actor: auth.ActorID(r.Context()),
+	})
+}
+
 // created tells the project's spaces (Google Chat, TL-288) a ticket was made: on a board or in the backlog.
 func (h System) created(r *http.Request, id string) {
 	d := h.detail(r.Context(), auth.OrgID(r.Context()), id)
@@ -68,6 +79,7 @@ func (h System) detail(ctx context.Context, org, id string) *Detail {
 func (h System) finished(r *http.Request, d *Detail, verb string) {
 	if d != nil {
 		h.tell(r, []string{d.CreatedBy}, "finished", verb+" "+ref(d), d)
+		h.watchers(r, d, []string{d.CreatedBy}, verb+" "+ref(d))
 	}
 }
 
@@ -80,6 +92,7 @@ func (h System) reviewers(r *http.Request, d *Detail) {
 	if err == nil {
 		h.tell(r, to, "review", "finished "+ref(d)+", and it needs your review", d)
 	}
+	h.watchers(r, d, to, "finished "+ref(d)+", and it waits for review")
 }
 
 // People are the org's members by the names they can be @mentioned with: their full name, first

@@ -76,6 +76,7 @@ var OrgData = []string{
 	`DELETE FROM invitations WHERE org_id = $1`,
 	`DELETE FROM notifications WHERE org_id = $1`,
 	`DELETE FROM ticket_mentions WHERE org_id = $1`,
+	`DELETE FROM ticket_watch_mutes WHERE org_id = $1`,
 	`DELETE FROM teams WHERE org_id = $1`,
 	`DELETE FROM org_admins WHERE org_id = $1`,
 	`DELETE FROM api_keys WHERE org_id = $1`,

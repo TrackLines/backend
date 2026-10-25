@@ -70,6 +70,7 @@ func (h System) ReviewTicket(w http.ResponseWriter, r *http.Request) {
 				h.finished(r, d, "approved and finished")
 			} else if d.AssignedTo != nil {
 				h.tell(r, []string{*d.AssignedTo}, "sent_back", "sent back "+ref(d)+": "+in.Comment, d)
+				h.watchers(r, d, []string{*d.AssignedTo}, "sent back "+ref(d))
 			}
 		}
 	}

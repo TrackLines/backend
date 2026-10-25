@@ -18,35 +18,35 @@ import (
 	"github.com/tracklines/backend/internal/notifications"
 )
 
-// mentions records and tells everyone the comment @mentions (not the author) that they were
-// mentioned on the ticket.
+// mentions records everyone the comment @mentions and tells them (not the author) they were
+// mentioned on the ticket; the ticket's other watchers hear there's a new comment (TL-587).
+// Authors can mention themselves: it's how you watch a ticket, without a notification.
 func (h System) mentions(r *http.Request, org string, c *Comment, body string) {
-	if h.people == nil || !strings.Contains(body, "@") {
-		return
+	var mentioned []string
+	if h.people != nil && strings.Contains(body, "@") {
+		people, err := h.people(r.Context(), org)
+		if err != nil {
+			logs.Errorf("comments: mention lookup: %v", err)
+		}
+		mentioned = notifications.Mentioned(body, people)
 	}
-	people, err := h.people(r.Context(), org)
-	if err != nil {
-		logs.Errorf("comments: mention lookup: %v", err)
-		return
-	}
-	var to []string
-	for _, id := range notifications.Mentioned(body, people) {
-		if id != c.Author {
-			to = append(to, id)
+	if len(mentioned) > 0 {
+		if _, err := h.store.DB.Exec(r.Context(), `INSERT INTO ticket_mentions (org_id, user_id, ticket_id, comment_id, actor)
+			SELECT $1, u, $3, $4, $5 FROM unnest($2::text[]) u`, org, mentioned, c.TicketID, c.ID, c.Author); err != nil {
+			logs.Errorf("comments: record mentions: %v", err)
 		}
 	}
-	if len(to) == 0 {
+	if h.notify == nil {
 		return
-	}
-	if _, err := h.store.DB.Exec(r.Context(), `INSERT INTO ticket_mentions (org_id, user_id, ticket_id, comment_id, actor)
-		SELECT $1, u, $3, $4, $5 FROM unnest($2::text[]) u`, org, to, c.TicketID, c.ID, c.Author); err != nil {
-		logs.Errorf("comments: record mentions: %v", err)
 	}
 	var name string
 	_ = h.store.DB.QueryRow(r.Context(), `SELECT coalesce(p.key_prefix || '-' || t.number || ': ', '') || t.title
 		FROM tickets t JOIN projects p ON p.id = t.project_id WHERE t.id = $1`, c.TicketID).Scan(&name)
-	notifications.Send(r.Context(), h.notify, org, to, notifications.Event{
+	notifications.Send(r.Context(), h.notify, org, mentioned, notifications.Event{ // never the author: Send's notifiers skip the actor
 		Kind: "mention", Text: "mentioned you on " + name, Actor: c.Author, TicketID: c.TicketID,
+	})
+	notifications.Watch(r.Context(), h.notify, h.store.DB, org, c.TicketID, mentioned, notifications.Event{
+		Kind: "watching", Text: "commented on " + name, Actor: c.Author,
 	})
 }
 
@@ -60,6 +60,33 @@ type Mention struct {
 	Actor       string `json:"actor"`        // who mentioned them last
 	CommentID   string `json:"comment_id"`   // "" for mentions from before they were recorded
 	MentionedAt string `json:"mentioned_at"` // UTC
+	Muted       bool   `json:"muted"`        // not watching it any more (TL-587); it stays listed
+}
+
+// Mute: PUT /api/mentions/{ticket}/mute stops the caller watching the ticket; DELETE watches it again
+// (TL-587). Either way it stays on their Mentions list. 404 for a ticket outside the caller's org.
+func (h System) Mute(w http.ResponseWriter, r *http.Request) {
+	user, _ := auth.UserID(r.Context())
+	org := auth.OrgID(r.Context())
+	var ok bool
+	if err := h.store.DB.QueryRow(r.Context(), `SELECT EXISTS (SELECT 1 FROM tickets t JOIN projects p ON p.id = t.project_id
+		WHERE t.id::text = $1 AND p.owner_clerk_id = $2)`, r.PathValue("ticket"), org).Scan(&ok); err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	if !ok {
+		writeErr(w, r, ErrNotFound)
+		return
+	}
+	query := `INSERT INTO ticket_watch_mutes (org_id, user_id, ticket_id) VALUES ($1, $2, $3::uuid) ON CONFLICT DO NOTHING`
+	if r.Method == http.MethodDelete {
+		query = `DELETE FROM ticket_watch_mutes WHERE org_id = $1 AND user_id = $2 AND ticket_id = $3::uuid`
+	}
+	if _, err := h.store.DB.Exec(r.Context(), query, org, user, r.PathValue("ticket")); err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // Mentions: GET /api/mentions?limit=&hide_done= — tickets that mention the caller, one per ticket, newest
@@ -124,7 +151,8 @@ func (h System) mentioned(r *http.Request, limit, offset int) ([]Mention, int, e
 	// newest first by the full timestamp, then the uuidv7 id, so same-second mentions keep their order
 	rows, err := h.store.DB.Query(r.Context(), `SELECT *, count(*) OVER () FROM (
 		SELECT DISTINCT ON (m.ticket_id) m.ticket_id::text, p.key_prefix || '-' || t.number, t.title, `+boards.TicketDoneSQL+` AS done, p.name,
-			m.actor, coalesce(m.comment_id::text, ''), to_char(m.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'), m.created_at, m.id
+			m.actor, coalesce(m.comment_id::text, ''), to_char(m.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'), m.created_at, m.id,
+			EXISTS (SELECT 1 FROM ticket_watch_mutes w WHERE w.user_id = m.user_id AND w.ticket_id = m.ticket_id) AS muted
 		FROM ticket_mentions m JOIN tickets t ON t.id = m.ticket_id JOIN projects p ON p.id = t.project_id
 		WHERE m.user_id = $1 AND m.org_id = $2 AND p.owner_clerk_id = $2
 		ORDER BY m.ticket_id, m.created_at DESC, m.id DESC) latest
@@ -136,7 +164,7 @@ func (h System) mentioned(r *http.Request, limit, offset int) ([]Mention, int, e
 	total := 0 // ponytail: counted with the rows, so a page past the end reports 0; count separately if that matters
 	out, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (Mention, error) {
 		var m Mention
-		return m, row.Scan(&m.TicketID, &m.Key, &m.Title, &m.Done, &m.ProjectName, &m.Actor, &m.CommentID, &m.MentionedAt, nil, nil, &total)
+		return m, row.Scan(&m.TicketID, &m.Key, &m.Title, &m.Done, &m.ProjectName, &m.Actor, &m.CommentID, &m.MentionedAt, nil, nil, &m.Muted, &total)
 	})
 	if out == nil {
 		out = []Mention{}

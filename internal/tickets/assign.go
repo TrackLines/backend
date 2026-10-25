@@ -122,6 +122,7 @@ func (h System) Assign(w http.ResponseWriter, r *http.Request) {
 	if in.Assignee != nil {
 		if d := h.detail(r.Context(), org, r.PathValue("id")); d != nil {
 			h.tell(r, []string{*in.Assignee}, "assigned", "assigned you "+ref(d), d)
+			h.watchers(r, d, []string{*in.Assignee}, "assigned "+ref(d))
 		}
 	}
 	httpx.JSON(w, http.StatusOK, t)

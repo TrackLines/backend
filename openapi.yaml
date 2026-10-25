@@ -2263,6 +2263,7 @@ paths:
                     actor: { type: string, description: Who mentioned the caller last (user id or agent name). }
                     comment_id: { type: string, description: 'The comment, or "" for mentions from before they were recorded.' }
                     mentioned_at: { type: string, format: date-time }
+                    muted: { type: boolean, description: The caller stopped watching this ticket (it stays listed). }
         '400': { description: limit is not 1–100. }
         '401': { $ref: '#/components/responses/Unauthorized' }
 
@@ -2290,6 +2291,28 @@ paths:
                   per_page: { type: integer }
         '400': { description: page or per_page is out of range. }
         '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /mentions/{ticketId}/mute:
+    parameters:
+      - $ref: '#/components/parameters/TicketId'
+    put:
+      tags: [Tickets]
+      operationId: muteMention
+      summary: Stop watching a ticket
+      description: Everyone @mentioned on a ticket (mentioning yourself counts) watches it, hearing about its comments, moves, assignment and finishing. Muting stops that; the ticket stays on the caller's mentions.
+      responses:
+        '204': { description: Muted (or already). }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [Tickets]
+      operationId: unmuteMention
+      summary: Watch a ticket again
+      description: Undoes a mute, without a new mention.
+      responses:
+        '204': { description: Watching again. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
 
   /tickets/{ticketId}/comments:
     parameters:

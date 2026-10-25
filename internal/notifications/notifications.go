@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/bugfixes/go-bugfixes/logs"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/tracklines/backend/inbox"
@@ -125,4 +126,29 @@ func hit(text, needle string) bool {
 func lastRune(s string) string {
 	r := []rune(s)
 	return string(r[len(r)-1])
+}
+
+// Watch tells the ticket's watchers about e (TL-587): everyone @mentioned on it who hasn't muted it,
+// except who the event already told (told) — the actor is never told anyway.
+func Watch(ctx context.Context, n Notifier, db *pgxpool.Pool, org, ticket string, told []string, e Event) {
+	if n == nil || db == nil {
+		return
+	}
+	if told == nil {
+		told = []string{} // <> ALL(NULL) matches nobody
+	}
+	rows, err := db.Query(ctx, `SELECT DISTINCT m.user_id FROM ticket_mentions m
+		WHERE m.org_id = $1 AND m.ticket_id::text = $2 AND m.user_id <> ALL($3::text[])
+			AND NOT EXISTS (SELECT 1 FROM ticket_watch_mutes w WHERE w.user_id = m.user_id AND w.ticket_id = m.ticket_id)`, org, ticket, told)
+	if err != nil {
+		logs.Errorf("notifications: watchers: %v", err)
+		return
+	}
+	to, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		logs.Errorf("notifications: watchers: %v", err)
+		return
+	}
+	e.TicketID = ticket
+	Send(ctx, n, org, to, e)
 }
