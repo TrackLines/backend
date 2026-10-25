@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/tracklines/backend/internal/httpx"
+	"github.com/tracklines/backend/internal/webhooks"
 )
 
 const MaxBody = 10000
@@ -93,5 +94,12 @@ func (s Store) Create(ctx context.Context, owner, author, ticketID, body string,
 	if err != nil {
 		return nil, err
 	}
+	_ = webhooks.Emit(ctx, s.DB, owner, "comment.created", func() (any, error) { // TL-635
+		var key string
+		err := s.DB.QueryRow(ctx, `SELECT p.key_prefix || '-' || t.number FROM tickets t JOIN projects p ON p.id = t.project_id
+			WHERE t.id = $1`, c.TicketID).Scan(&key)
+		return map[string]any{"ticket_id": c.TicketID, "ticket_key": key,
+			"comment": map[string]string{"id": c.ID, "author": c.Author, "body": c.Body, "created_at": c.CreatedAt}}, err
+	})
 	return &c, nil
 }

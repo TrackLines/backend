@@ -54,6 +54,7 @@ func (s Store) Assign(ctx context.Context, org, user, id string, assignee *strin
 			AND k.kind = 'ai' AND k.revoked_at IS NULL
 		)) RETURNING `+boards.TicketCols, id, org, assignee, user, member))
 	if err == nil {
+		_ = emit(ctx, s.DB, org, "ticket.assigned", t.ID)
 		return &t, nil
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {

@@ -53,6 +53,8 @@ tags:
     description: Bringing projects, boards and tickets over from another tracker (Jira), once.
   - name: Projects
     description: Create, list, inspect, update, and delete projects.
+  - name: Webhooks
+    description: An organization's outbound webhooks, signed and retried (Pro and Enterprise).
   - name: Organizations
     description: Inspect membership in the active Clerk organization.
   - name: Teams
@@ -191,6 +193,174 @@ paths:
         '403': { description: Not an org admin, or an API key. }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { description: Not finished (import_not_done), or someone has acted on it (import_changed). }
+
+  /org/webhooks:
+    get:
+      tags: [Webhooks]
+      operationId: listWebhooks
+      summary: The organization's webhook endpoints
+      description: >-
+        Org admins (signed in, or their own API key). Behind the webhooks flag; 404 when it's off. Allowed on
+        any plan, so an organization back on Free can still see, turn off and delete its endpoints (while on
+        Free nothing is queued or sent to them).
+      responses:
+        '200': { description: Endpoints, oldest first (never their secrets)., content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/WebhookEndpoint' } } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: Not an org admin (admins_only). }
+        '404': { description: Webhooks are off. }
+    post:
+      tags: [Webhooks]
+      operationId: createWebhook
+      summary: Add a webhook endpoint
+      description: |
+        Pro and Enterprise. The URL must be https and not a private, loopback or link-local address (checked
+        now where the host resolves, and again on every delivery). Up to 10 endpoints per organization.
+
+        Events: `ticket.created`, `ticket.updated`, `ticket.moved`, `ticket.assigned`, `ticket.done`,
+        `ticket.deleted`, `comment.created`, `sprint.started`, `sprint.closed`, `roadmap.update_published`
+        (and `ping`, sent by the test button, which isn't subscribable).
+
+        Each delivery is a POST of `{"id": "<delivery id>", "event": "ticket.moved", "created_at": "<RFC 3339>", "data": {…}}`
+        with `Content-Type: application/json`, `User-Agent: TrackLin.es-Webhooks`, `TrackLines-Event`,
+        `TrackLines-Delivery` (the delivery id; the same on every retry) and
+        `TrackLines-Signature: t=<unix seconds>,v1=<hex HMAC-SHA256(secret, "<t>.<body>")>`, keyed with the
+        whole secret (`whsec_…`) over the raw body. Check the signature and that t is recent.
+        `data`: for ticket events the ticket as the API returns it (with `project_id`; `ticket.moved` adds
+        `from_column_id` and `to_column_id`, null for the backlog); `comment.created`
+        `{ticket_id, ticket_key, comment: {id, author, body, created_at}}`; sprint events
+        `{board_id, sprint: {id, number, starts_at, ends_at, goal}}`; `roadmap.update_published`
+        `{roadmap_id, update: {id, health, note, published_at}}`; `ping` `{"message": "ping"}`.
+
+        A 2xx within 10 seconds is success. Anything else is retried after 1 minute, 5 minutes, 30 minutes,
+        2 hours and 12 hours (6 attempts), then the delivery has failed. 5 failed attempts in a row turn the
+        endpoint off (disabled_reason failures) and tell the org's admins; a success resets the count.
+        Deliveries are kept 30 days.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [url, events]
+              properties:
+                url: { type: string, format: uri, example: 'https://example.com/hooks/tracklines' }
+                events: { type: array, minItems: 1, items: { type: string }, example: [ticket.created, ticket.done] }
+      responses:
+        '201':
+          description: The endpoint and its signing secret, shown only here (and on rotating it).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [endpoint, secret]
+                properties:
+                  endpoint: { $ref: '#/components/schemas/WebhookEndpoint' }
+                  secret: { type: string, example: whsec_3q2-7wAbExample }
+        '400': { description: The URL isn't https or is a private address (bad_webhook_url), or no or unknown events (bad_webhook_events). }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { description: Webhooks need the Pro or Enterprise plan (webhooks_plan). }
+        '403': { description: Not an org admin (admins_only). }
+        '404': { description: Webhooks are off. }
+        '409': { description: The organization already has 10 endpoints (webhook_limit). }
+        '503': { description: The server has no secret key to seal the secret with. }
+  /org/webhooks/{webhookId}:
+    parameters:
+      - { name: webhookId, in: path, required: true, schema: { type: string, format: uuid } }
+    patch:
+      tags: [Webhooks]
+      operationId: updateWebhook
+      summary: Change a webhook's URL or events, or turn it off and on
+      description: Any of the fields. enabled false is a manual stop (disabled_reason manual); true clears the reason and the failure count.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                url: { type: string, format: uri }
+                events: { type: array, minItems: 1, items: { type: string } }
+                enabled: { type: boolean }
+      responses:
+        '200': { description: The endpoint., content: { application/json: { schema: { $ref: '#/components/schemas/WebhookEndpoint' } } } }
+        '400': { description: bad_webhook_url or bad_webhook_events. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: Not an org admin (admins_only). }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [Webhooks]
+      operationId: deleteWebhook
+      summary: Delete a webhook endpoint and its deliveries
+      responses:
+        '204': { description: Deleted. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: Not an org admin (admins_only). }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /org/webhooks/{webhookId}/secret:
+    parameters:
+      - { name: webhookId, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      tags: [Webhooks]
+      operationId: rotateWebhookSecret
+      summary: Rotate a webhook's signing secret
+      description: The old secret stops signing at once; the new one is shown only in this response.
+      responses:
+        '200': { description: The new secret., content: { application/json: { schema: { type: object, required: [secret], properties: { secret: { type: string } } } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: Not an org admin (admins_only). }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /org/webhooks/{webhookId}/test:
+    parameters:
+      - { name: webhookId, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      tags: [Webhooks]
+      operationId: testWebhook
+      summary: Send a ping
+      description: 'Queues a `ping` delivery (data `{"message": "ping"}`); it goes out within seconds. Pro and Enterprise.'
+      responses:
+        '202': { description: Queued. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { description: Webhooks need the Pro or Enterprise plan (webhooks_plan). }
+        '403': { description: Not an org admin (admins_only). }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /org/webhooks/{webhookId}/deliveries:
+    parameters:
+      - { name: webhookId, in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: page, in: query, schema: { type: integer, minimum: 1, default: 1 } }
+    get:
+      tags: [Webhooks]
+      operationId: listWebhookDeliveries
+      summary: An endpoint's deliveries, newest first, 25 a page
+      responses:
+        '200':
+          description: A page of deliveries, and whether more follow.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [deliveries, more]
+                properties:
+                  deliveries: { type: array, items: { $ref: '#/components/schemas/WebhookDelivery' } }
+                  more: { type: boolean }
+        '400': { description: page isn't 1 or more (bad_page). }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: Not an org admin (admins_only). }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /org/webhooks/{webhookId}/deliveries/{deliveryId}/redeliver:
+    parameters:
+      - { name: webhookId, in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: deliveryId, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      tags: [Webhooks]
+      operationId: redeliverWebhook
+      summary: Send a delivery again
+      description: The same payload (and delivery id), pending from now with its retries afresh. Pro and Enterprise.
+      responses:
+        '202': { description: Queued. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { description: Webhooks need the Pro or Enterprise plan (webhooks_plan). }
+        '403': { description: Not an org admin (admins_only). }
+        '404': { $ref: '#/components/responses/NotFound' }
 
   /board-templates:
     get:
@@ -4596,6 +4766,33 @@ components:
         author:
           type: string
           description: Who posted it, by name (an email-only name without its domain; an agent by its own name). Missing on updates from before TL-413.
+    WebhookEndpoint:
+      type: object
+      required: [id, url, events, enabled, disabled_reason, consecutive_failures, secret_hint, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        url: { type: string, format: uri }
+        events: { type: array, items: { type: string } }
+        enabled: { type: boolean }
+        disabled_reason: { type: [string, 'null'], enum: [failures, manual, null], description: Why it's off; null while on. }
+        consecutive_failures: { type: integer, description: Failed attempts in a row; 5 turns it off. }
+        secret_hint: { type: string, description: The secret's last 4 characters. }
+        created_at: { type: string, format: date-time }
+    WebhookDelivery:
+      type: object
+      required: [id, event, state, attempts, status_code, error, duration_ms, created_at, next_attempt_at, request_body, response_body]
+      properties:
+        id: { type: string, format: uuid, description: Also the body's id and the TrackLines-Delivery header. }
+        event: { type: string, example: ticket.moved }
+        state: { type: string, enum: [pending, ok, failed] }
+        attempts: { type: integer }
+        status_code: { type: [integer, 'null'], description: The last attempt's HTTP status; null when it got no response. }
+        error: { type: [string, 'null'], description: Why the last attempt got no response (timeout, refused, private address…). }
+        duration_ms: { type: [integer, 'null'] }
+        created_at: { type: string, format: date-time }
+        next_attempt_at: { type: [string, 'null'], format: date-time, description: When it's tried next; null once ok or failed. }
+        request_body: { type: string, description: The JSON body sent. }
+        response_body: { type: [string, 'null'], description: The first 2 KB of the last response. }
     Roadmap:
       type: object
       properties:
@@ -4785,6 +4982,10 @@ components:
         import_not_done: only a finished import can be scrapped
         import_changed: someone has worked on what this import created, so it can't be scrapped
         unknown_import_source: unknown import source
+        bad_webhook_url: "the URL must be https and not a private address"
+        bad_webhook_events: "pick at least one known event"
+        webhook_limit: "an organization can have up to 10 webhook endpoints"
+        webhooks_plan: "webhooks need the Pro or Enterprise plan"
         bad_email: "a valid email address is required"
         bad_estimate: "estimate isn't on this board's scale"
         bad_estimate_scale: "estimate_scale must be none, fibonacci, tshirt, powers or linear"

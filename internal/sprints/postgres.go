@@ -108,6 +108,9 @@ func (s Store) Start(ctx context.Context, owner, boardID string, lengthDays int)
 		if err := recordStart(ctx, tx, sp.ID, approved); err != nil { // for its report (TL-397)
 			return err
 		}
+		if err := emitSprint(ctx, tx, "sprint.started", sp); err != nil {
+			return err
+		}
 		over, err = startedOver(ctx, tx, sp, approved)
 		return err
 	})
@@ -208,8 +211,12 @@ func closeSprint(ctx context.Context, tx pgx.Tx, id string, options CloseOptions
 	if err := recordClose(ctx, tx, id); err != nil { // for its report (TL-397)
 		return Sprint{}, nil, err
 	}
-	var boardID string
-	if err := tx.QueryRow(ctx, `UPDATE sprints SET closed_at = now() WHERE id = $1 RETURNING board_id`, id).Scan(&boardID); err != nil {
+	closed, err := boards.ScanSprint(tx.QueryRow(ctx, `UPDATE sprints SET closed_at = now() WHERE id = $1 RETURNING `+boards.SprintCols, id))
+	if err != nil {
+		return Sprint{}, nil, err
+	}
+	boardID := closed.BoardID
+	if err := emitSprint(ctx, tx, "sprint.closed", closed); err != nil {
 		return Sprint{}, nil, err
 	}
 	if !options.StartNext { // closed by hand: unfinished tickets wait on the board for the next Start
@@ -247,6 +254,9 @@ func closeSprint(ctx context.Context, tx pgx.Tx, id string, options CloseOptions
 		}
 	}
 	if err := recordStart(ctx, tx, next.ID, approved); err != nil { // for its report (TL-397)
+		return Sprint{}, nil, err
+	}
+	if err := emitSprint(ctx, tx, "sprint.started", next); err != nil {
 		return Sprint{}, nil, err
 	}
 	over, err = startedOver(ctx, tx, next, approved)
