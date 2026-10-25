@@ -56,6 +56,9 @@ func TestImportReview(t *testing.T) {
 	if n := left(); n != 3 {
 		t.Fatalf("to review: %d", n)
 	}
+	if list, _ := bs.ListByProject(ctx, pid); len(list) != 2 || list[0].ToReview != 3 || list[1].ToReview != 0 {
+		t.Fatalf("the project's boards: %+v", list)
+	}
 	if list, err := s.Review(ctx, "ir1", imported.ID); err != nil || len(list) != 3 || list[0].Key == "" {
 		t.Fatalf("review list: %+v %v", list, err)
 	}

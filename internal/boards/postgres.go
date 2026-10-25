@@ -226,7 +226,9 @@ func (s Store) ListByProject(ctx context.Context, projectID string) ([]Board, er
 		count(t.tid) FILTER (WHERE t.done),
 		count(t.tid) FILTER (WHERE t.priority = 'urgent' AND NOT t.done),
 		to_char(greatest(boards.updated_at, max(t.changed)) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
-		sp.number, to_char(sp.ends_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')
+		sp.number, to_char(sp.ends_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
+		(SELECT count(*) FROM import_reviews r JOIN tickets rt ON rt.id = r.ticket_id
+			WHERE r.board_id = boards.id AND rt.board_id IS NULL AND NOT `+DoneSQL("rt")+`) -- as ToReview (TL-541)
 		FROM boards
 		LEFT JOIN sprints sp ON sp.board_id = boards.id AND sp.closed_at IS NULL
 		LEFT JOIN LATERAL (SELECT t.id AS tid, t.column_id, t.priority, t.updated_at AS changed, `+TicketDoneSQL+` AS done
@@ -238,7 +240,7 @@ func (s Store) ListByProject(ctx context.Context, projectID string) ([]Board, er
 	out, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (Board, error) {
 		b, st := Board{}, Stats{}
 		err := row.Scan(&b.ID, &b.ProjectID, &b.OwnerClerkID, &b.Name, &b.Description, &b.EstimateScale, &b.Style, &b.TeamID, &b.AgentReview, &b.DevComplete, &b.ReviewColumn, &b.ArchivedAt, &b.Deletable, &b.CreatedAt, &b.UpdatedAt,
-			&st.Open, &st.InProgress, &st.Done, &st.Urgent, &st.Active, &st.SprintNumber, &st.SprintEndsAt)
+			&st.Open, &st.InProgress, &st.Done, &st.Urgent, &st.Active, &st.SprintNumber, &st.SprintEndsAt, &b.ToReview)
 		b.Stats = &st
 		return b, err
 	})
