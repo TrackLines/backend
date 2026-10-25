@@ -2277,6 +2277,122 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /tickets/bulk:
+    post:
+      tags: [Tickets]
+      operationId: bulkEditTickets
+      summary: Change up to 200 tickets at once
+      description: >-
+        Each ticket goes through the same handler a single change uses (PATCH for priority, PUT labels, PUT assignee,
+        PUT parent, POST move, POST resolve, DELETE), with the same rules, history, notifications and webhooks. One
+        failing doesn't stop the rest; each result carries the status and error code a single change would give.
+        Moves land in the order sent, at the top of the column (TL-633).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ticket_ids, action]
+              properties:
+                ticket_ids: { type: array, minItems: 1, maxItems: 200, items: { type: string } }
+                action: { type: string, enum: [priority, labels, assign, parent, move, resolve, delete] }
+                priority: { type: string, enum: [low, medium, high, urgent], description: "priority" }
+                add: { type: array, items: { type: string }, description: "labels: added to each ticket's" }
+                remove: { type: array, items: { type: string }, description: "labels: removed (any case)" }
+                assignee: { type: [string, 'null'], description: "assign: a user id or agent name; null unassigns" }
+                parent_id: { type: [string, 'null'], description: "parent: the parent ticket; null detaches" }
+                column_id: { type: string, description: move }
+                estimate: { type: string, description: "move: on the target board's scale, when it needs one" }
+                resolution: { type: string, enum: [done, wont_do], description: resolve }
+                reason: { type: string, description: resolve }
+      responses:
+        '200':
+          description: One result per ticket, in the order sent.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  results:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string }
+                        ok: { type: boolean }
+                        status: { type: integer }
+                        code: { type: string }
+                        error: { type: string }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /projects/{projectId}/views:
+    parameters:
+      - $ref: '#/components/parameters/ProjectId'
+    get:
+      tags: [Projects]
+      operationId: listSavedViews
+      summary: The project's shared views and your own (TL-633)
+      responses:
+        '200':
+          description: Shared first, then by name.
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/SavedView' } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [Projects]
+      operationId: createSavedView
+      summary: Save the current filters as a view
+      description: Shared views are for organization admins and the project's team leaders.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SavedViewInput' }
+      responses:
+        '201':
+          description: The view.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SavedView' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: "view_share_managers: sharing is for admins and the project's team leaders" }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /views/{viewId}:
+    parameters:
+      - { name: viewId, in: path, required: true, schema: { type: string, format: uuid } }
+    patch:
+      tags: [Projects]
+      operationId: updateSavedView
+      summary: Rename, change or (un)share a view
+      description: Your own personal view, or a shared one if you manage the project.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SavedViewInput' }
+      responses:
+        '200':
+          description: The view.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SavedView' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: view_share_managers }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [Projects]
+      operationId: deleteSavedView
+      summary: Delete a view
+      responses:
+        '204': { description: Deleted. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: view_share_managers }
+        '404': { $ref: '#/components/responses/NotFound' }
   /projects/{projectId}/labels:
     get:
       tags: [Projects]
@@ -4301,6 +4417,23 @@ components:
             active: { type: string, format: date-time, description: "Latest ticket change, or the board's own update" }
             sprint_number: { type: [integer, 'null'] }
             sprint_ends_at: { type: [string, 'null'], format: date-time }
+    SavedView:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        project_id: { type: string, format: uuid }
+        name: { type: string }
+        shared: { type: boolean }
+        query: { type: object, description: "The web app's backlog/search filters, kept as given." }
+        mine: { type: boolean, description: You made it. }
+        can_edit: { type: boolean, description: You may rename, change or delete it. }
+        created_at: { type: string, format: date-time }
+    SavedViewInput:
+      type: object
+      properties:
+        name: { type: string, minLength: 1, maxLength: 80 }
+        shared: { type: boolean }
+        query: { type: object, description: At most 4 KB. }
     Ticket:
       type: object
       description: Agent origin is recorded in created_by and rendered in the ticket UI; assignment is shown in assigned_to.
@@ -5019,6 +5152,11 @@ components:
         bad_search_limit: "limit must be 1–50"
         bad_search_status: "status must be open or done"
         bad_search_sort: "sort must be due, or left out"
+        bulk_tickets: "send 1 to 200 ticket ids"
+        bulk_action: "action must be priority, labels, assign, parent, move, resolve or delete"
+        bad_view_name: "a view's name must be 1 to 80 characters"
+        bad_view_query: "a view's query must be a JSON object of at most 4 KB"
+        view_share_managers: "only organization admins and this project's team leaders can share views or change shared ones"
         bad_due: "due must be overdue, soon or none"
         bad_due_date: "due_date must be a date (YYYY-MM-DD), or empty to clear it"
         bad_sprint_length: "length_days must be between 1 and 365"

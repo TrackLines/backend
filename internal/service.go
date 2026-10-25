@@ -57,6 +57,7 @@ import (
 	"github.com/tracklines/backend/internal/teams"
 	"github.com/tracklines/backend/internal/tickets"
 	"github.com/tracklines/backend/internal/users"
+	"github.com/tracklines/backend/internal/views"
 	"github.com/tracklines/backend/internal/webhooks"
 )
 
@@ -355,7 +356,9 @@ func (s *Service) Handler() http.Handler {
 	mux.Handle("GET /api/assignees", signedIn(t.Assignees))
 	mux.Handle("DELETE /api/tickets/{id}", signedIn(t.Delete))
 	// moving an unassigned ticket assigns it to the mover, except a board's manager during its standup (TL-266)
-	mux.Handle("POST /api/tickets/{id}/move", signedIn(t.AssigningOnMove(o.AdminModel().IsBoardManager, live.New(s.Valkey, boards.Store{DB: s.DB}).StandupRunning).Move)) // also pulls a ticket out of the backlog
+	mover := t.AssigningOnMove(o.AdminModel().IsBoardManager, live.New(s.Valkey, boards.Store{DB: s.DB}).StandupRunning)
+	mux.Handle("POST /api/tickets/{id}/move", signedIn(mover.Move)) // also pulls a ticket out of the backlog
+	mux.Handle("POST /api/tickets/bulk", signedIn(mover.Bulk))      // many tickets at once, each as a single change (TL-633)
 	mux.Handle("POST /api/tickets/{id}/review", signedIn(t.ReviewTicket))
 	mux.Handle("POST /api/tickets/{id}/backlog", signedIn(t.ToBacklog))
 	mux.Handle("POST /api/tickets/{id}/resolve", signedIn(t.Resolve)) // close a backlog ticket in place; completes finished parents
@@ -464,6 +467,12 @@ func (s *Service) Handler() http.Handler {
 
 	// Roadmaps — GET by id is open: public ones are readable by anyone with the link
 	// writes: org admins and the project's team leaders (TL-413); updates name who posted them
+	// saved views (TL-633): a project's filters under a name; shared ones are its managers'
+	vw := views.System{DB: s.DB, Managers: o.AdminModel()}
+	mux.Handle("GET /api/projects/{id}/views", signedIn(vw.List))
+	mux.Handle("POST /api/projects/{id}/views", signedIn(vw.Create))
+	mux.Handle("PATCH /api/views/{id}", signedIn(vw.Update))
+	mux.Handle("DELETE /api/views/{id}", signedIn(vw.Delete))
 	r := roadmaps.NewSystem(s.DB).WithManagers(o.AdminModel()).WithPeople(t.People)
 	mux.Handle("GET /api/roadmaps/{id}", public("roadmap", 120, r.Get))
 	mux.Handle("GET /api/roadmaps", signedIn(r.List))
