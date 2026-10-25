@@ -10,7 +10,7 @@ import (
 )
 
 // Languages the frontend is translated into (TL-549); English is the source.
-var Languages = []string{"en", "nl"}
+var Languages = []string{"en", "nl", "de", "es", "pt", "fr", "tlh"} // pt: Brazilian; tlh: Klingon, an easter egg (TL-612)
 
 // Language is the user's chosen language, or nil to follow the browser.
 func (s Store) Language(ctx context.Context, clerkID string) (*string, error) {
@@ -45,7 +45,7 @@ func (s Store) PutLanguage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if in.Language != nil && !slices.Contains(Languages, *in.Language) {
-		httpx.Error(w, r, http.StatusBadRequest, httpx.Code("bad_language", "language must be one of en, nl, or null"))
+		httpx.Error(w, r, http.StatusBadRequest, httpx.Code("bad_language", "language must be one of en, nl, de, es, pt, fr, tlh, or null"))
 		return
 	}
 	id, _ := auth.UserID(r.Context())

@@ -4738,7 +4738,7 @@ components:
         bad_key_kind: "kind must be ai, service or personal"
         bad_key_prefix: "key prefix must be 2–6 capital letters or digits, starting with a letter"
         bad_labels: "invalid labels"
-        bad_language: "language must be one of en, nl, or null"
+        bad_language: "language must be one of en, nl, de, es, pt, fr, tlh, or null"
         bad_link_code: "this link has expired or was already used: message the TrackLin.es app in Google Chat for a new one"
         bad_member_limit: "limit must be between 1 and 500"
         bad_number_param: "{name} must be a whole number from 1 to {max}"

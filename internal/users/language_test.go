@@ -58,7 +58,12 @@ func TestLanguage(t *testing.T) {
 	if _, body := call("GET", "lang_b", ""); body != `{"language":null}` { // only the caller's own
 		t.Fatalf("another user changed: %s", body)
 	}
-	for _, bad := range []string{`{"language":"fr"}`, `{"language":"NL"}`, `{"language":""}`} {
+	for _, lang := range []string{"de", "es", "pt", "fr", "tlh"} { // TL-612
+		if code, _ := call("PUT", "lang_a", `{"language":"`+lang+`"}`); code != 204 {
+			t.Fatalf("set %s: %d", lang, code)
+		}
+	}
+	for _, bad := range []string{`{"language":"it"}`, `{"language":"NL"}`, `{"language":""}`, `{"language":"pt-BR"}`} {
 		if code, _ := call("PUT", "lang_a", bad); code != 400 {
 			t.Fatalf("%s: %d", bad, code)
 		}
