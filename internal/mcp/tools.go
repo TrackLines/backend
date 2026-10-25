@@ -151,7 +151,7 @@ var tools = []tool{
 			"timebox_days":  map[string]any{"type": "integer", "minimum": 0, "maximum": 60, "description": "Spike timebox days (with timebox_hours)"},
 			"timebox_hours": map[string]any{"type": "integer", "minimum": 0, "maximum": 23, "description": "Spike timebox hours (with timebox_days)"}},
 		required: []string{"ticket_id"}, prepare: keepTitleAndDescription},
-	{name: "claim_ticket", title: "Claim ticket", description: "Assign an unassigned, unblocked ticket to the caller, atomically. Fails if it's already assigned or blocked. Then follow the chain in the server instructions: read it in full, move it to the in-progress column, do the work with tests, run them, comment, and move it to the last column (review or Done).",
+	{name: "claim_ticket", title: "Claim ticket", description: "Assign an unassigned, unblocked ticket to the caller, atomically. Fails if it's already assigned or blocked. The response's in_progress_column_id is where to move it as you start (null: the board has only To do and Done, so leave it in To do). Then follow the chain in the server instructions: read it in full, move it to the in-progress column, do the work with tests, run them, comment, and move it to the last column (review or Done).",
 		method: "POST", path: "/api/tickets/{ticket_id}/claim", props: map[string]any{"ticket_id": id("Ticket")}, required: []string{"ticket_id"}},
 	{name: "release_ticket", title: "Release ticket", description: "Unassign a ticket the caller holds.",
 		method: "POST", path: "/api/tickets/{ticket_id}/release", props: map[string]any{"ticket_id": id("Ticket")}, required: []string{"ticket_id"}},

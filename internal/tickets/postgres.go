@@ -412,6 +412,20 @@ func (s Store) Claim(ctx context.Context, owner, actor, id string) (*Ticket, err
 	return nil, ErrAlreadyAssigned
 }
 
+// InProgressColumn is the column after To do on column's board, or nil when the board has only To do
+// and Done (TL-591: "the column after To do" would be Done, finishing it unstarted) or there's no column.
+func (s Store) InProgressColumn(ctx context.Context, column *string) *string {
+	if column == nil {
+		return nil
+	}
+	var id *string
+	if err := s.DB.QueryRow(ctx, `SELECT (array_agg(id::text ORDER BY position))[2] FROM columns
+		WHERE board_id = (SELECT board_id FROM columns WHERE id::text = $1) HAVING count(*) > 2`, *column).Scan(&id); err != nil {
+		return nil // no rows: two columns or fewer
+	}
+	return id
+}
+
 // Release clears an assignment only when the caller currently owns it.
 func (s Store) Release(ctx context.Context, owner, actor, id string) error {
 	tag, err := s.DB.Exec(ctx, `UPDATE tickets t SET assigned_to = NULL, updated_at = now()

@@ -48,7 +48,8 @@ const Instructions = "TrackLin.es boards, backlog and tickets. Work is organised
 	"(often a design, screenshot or log that explains the ticket better than its text; build what they show, and if they and the " +
 	"description disagree, ask or follow the newer one).\n" +
 	"2. Assign it to yourself: claim_ticket (it fails if someone else has it or it's blocked: pick another).\n" +
-	"3. Set it in progress: move_ticket to the board's in-progress column (the column after To do) as you start.\n" +
+	"3. Set it in progress: move_ticket to the board's in-progress column as you start: claim_ticket's in_progress_column_id, the column " +
+	"after To do. When it's null the board has only To do and Done: leave the ticket in To do while you work (never move it to Done to start it).\n" +
 	"4. Do the work, and write or update tests that cover it.\n" +
 	"5. Run the tests and make sure they pass (the whole suite, not just the new ones). Don't finish a ticket with failing or skipped tests.\n" +
 	"6. Comment what you did: add_comment with what changed, where, and the test results.\n" +
