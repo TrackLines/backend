@@ -343,11 +343,11 @@ func (s Store) build(ctx context.Context, tx pgx.Tx, owner, user, id, source str
 			}
 			var ticketID string
 			if err := tx.QueryRow(ctx, `INSERT INTO tickets (project_id, board_id, column_id, type, title, description, priority, position, created_by,
-					estimate, number, assigned_to, external_source, external_project, external_id, external_url, created_at, updated_at)
+					estimate, number, assigned_to, external_source, external_project, external_id, external_url, created_at, updated_at, due_date)
 				VALUES ($1, $2, $3, $4::ticket_type, $5, $6, $7::priority, $8, $9, $10, $11, $12, $13, $14, $15, nullif($16, ''),
-					coalesce($17, now()), coalesce($18, $17, now())) RETURNING id::text`,
+					coalesce($17, now()), coalesce($18, $17, now()), $19::date) RETURNING id::text`,
 				projectID, board, column, t.Type, t.Title, t.Description, priority, positions[key], user,
-				estimate, t.Number, t.Assignee, source, pr.SourceID, t.SourceID, t.URL, t.CreatedAt, t.UpdatedAt).Scan(&ticketID); err != nil {
+				estimate, t.Number, t.Assignee, source, pr.SourceID, t.SourceID, t.URL, t.CreatedAt, t.UpdatedAt, t.DueDate).Scan(&ticketID); err != nil {
 				return fmt.Errorf("%s-%d: %w", pr.Prefix, t.Number, err)
 			}
 			positions[key]++

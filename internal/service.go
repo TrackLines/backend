@@ -242,7 +242,7 @@ func (s *Service) Handler() http.Handler {
 	mux.Handle("DELETE /api/board-templates/{id}", signedIn(b.DeleteTemplate))
 
 	// Imports from other trackers (TL-536): org admins, signed in, behind the "imports" flag; the Jira source comes with TL-538
-	im := imports.NewSystem(s.DB, o.AdminModel(), s.flag("imports"), map[string]imports.Source{})
+	im := imports.NewSystem(s.DB, o.AdminModel(), s.flag("imports"), map[string]imports.Source{"csv": imports.CSV{}}) // TL-637
 	mux.Handle("POST /api/imports", signedIn(im.Preview))
 	mux.Handle("GET /api/imports", signedIn(im.List))
 	mux.Handle("GET /api/imports/{id}", signedIn(im.Get))
@@ -469,6 +469,7 @@ func (s *Service) Handler() http.Handler {
 	// writes: org admins and the project's team leaders (TL-413); updates name who posted them
 	// saved views (TL-633): a project's filters under a name; shared ones are its managers'
 	vw := views.System{DB: s.DB, Managers: o.AdminModel()}
+	mux.Handle("GET /api/projects/{id}/export.csv", signedIn(t.Export)) // every ticket as CSV (TL-637)
 	mux.Handle("GET /api/projects/{id}/views", signedIn(vw.List))
 	mux.Handle("POST /api/projects/{id}/views", signedIn(vw.Create))
 	mux.Handle("PATCH /api/views/{id}", signedIn(vw.Update))

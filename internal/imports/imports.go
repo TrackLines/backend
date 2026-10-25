@@ -66,6 +66,7 @@ type Ticket struct {
 	URL         string     `json:"url,omitempty"`      // the original, for external_url
 	CreatedAt   *time.Time `json:"created_at,omitempty"`
 	UpdatedAt   *time.Time `json:"updated_at,omitempty"`
+	DueDate     *string    `json:"due_date,omitempty"` // YYYY-MM-DD (TL-637)
 	Comments    []Comment  `json:"comments,omitempty"`
 }
 
