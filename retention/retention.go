@@ -22,17 +22,17 @@ const Retention = 30 * 24 * time.Hour
 
 // Result is what a nightly purge did.
 type Result struct {
-	Tickets, Orgs, Warned int
-	Expired, LinkCodes    int64
+	Tickets, Orgs, Warned          int
+	Expired, LinkCodes, JiraTokens int64
 }
 
 func (r Result) String() string {
-	return fmt.Sprintf("%d ticket(s) from the bin, %d deleted organization(s), %d attachment(s) warned about, %d expired, %d chat link code(s)",
-		r.Tickets, r.Orgs, r.Warned, r.Expired, r.LinkCodes)
+	return fmt.Sprintf("%d ticket(s) from the bin, %d deleted organization(s), %d attachment(s) warned about, %d expired, %d chat link code(s), %d Jira token(s)",
+		r.Tickets, r.Orgs, r.Warned, r.Expired, r.LinkCodes, r.JiraTokens)
 }
 
 // Purge is the nightly purge: the ticket bin, deleted organizations, old attachments (warning, then
-// deleting) and expired Chat link codes, in that order, stopping at the first failure. send delivers
+// deleting), expired Chat link codes and expired Jira tokens, in that order, stopping at the first failure. send delivers
 // the attachment warnings (ToInbox, or the backend's notifications).
 func Purge(ctx context.Context, db *pgxpool.Pool, send Send, now time.Time) (Result, error) {
 	var r Result
@@ -52,6 +52,9 @@ func Purge(ctx context.Context, db *pgxpool.Pool, send Send, now time.Time) (Res
 	}
 	if r.LinkCodes, err = PurgeLinkCodes(ctx, db, now); err != nil {
 		return r, fmt.Errorf("purge expired chat link codes: %w", err)
+	}
+	if r.JiraTokens, err = PurgeJiraTokens(ctx, db, now); err != nil {
+		return r, fmt.Errorf("purge expired jira tokens: %w", err)
 	}
 	return r, nil
 }
@@ -82,6 +85,7 @@ var OrgData = []string{
 	`DELETE FROM api_keys WHERE org_id = $1`,
 	`DELETE FROM expired_attachments WHERE org_id = $1`,
 	`DELETE FROM chat_webhooks WHERE org_id = $1`,
+	`DELETE FROM jira_connections WHERE org_id = $1`,
 	`DELETE FROM deleted_orgs WHERE org_id = $1`,
 }
 
@@ -202,6 +206,12 @@ func DeleteExpired(ctx context.Context, db *pgxpool.Pool, now time.Time) (int64,
 // PurgeLinkCodes deletes Google Chat link codes that expired unused (TL-289).
 func PurgeLinkCodes(ctx context.Context, db *pgxpool.Pool, now time.Time) (int64, error) {
 	tag, err := db.Exec(ctx, `DELETE FROM chat_link_codes WHERE expires_at < $1`, now)
+	return tag.RowsAffected(), err
+}
+
+// PurgeJiraTokens deletes Jira connections whose 30 days are up (TL-537); reading one deletes it too.
+func PurgeJiraTokens(ctx context.Context, db *pgxpool.Pool, now time.Time) (int64, error) {
+	tag, err := db.Exec(ctx, `DELETE FROM jira_connections WHERE expires_at <= $1`, now)
 	return tag.RowsAffected(), err
 }
 

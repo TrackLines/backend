@@ -148,6 +148,64 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { description: Not an org admin, or an API key. }
         '404': { description: Imports are off. }
+  /imports/jira/connection:
+    get:
+      tags: [Imports]
+      operationId: getJiraConnection
+      summary: The organization's Jira Cloud connection
+      description: The site, and whose email and API token it imports with (never the token). null when there's none; an expired one is deleted on reading. Org admins, signed in; behind the imports flag.
+      responses:
+        '200': { description: The connection, or null., content: { application/json: { schema: { $ref: '#/components/schemas/JiraConnection' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: Not an org admin, or an API key. }
+        '404': { description: Imports are off. }
+    put:
+      tags: [Imports]
+      operationId: connectJira
+      summary: Connect Jira Cloud
+      description: >-
+        Checked with Jira first (as the token's person), then kept, sealed, for 30 days, replacing any
+        connection. The site is a Jira Cloud address (https://<name>.atlassian.net; "<name>" or any page on
+        the site works too). The token is an Atlassian API token (id.atlassian.com → Security → API tokens).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [site, email, token]
+              properties:
+                site: { type: string, example: https://acme.atlassian.net }
+                email: { type: string, example: sam@acme.io }
+                token: { type: string }
+      responses:
+        '200': { description: Connected., content: { application/json: { schema: { $ref: '#/components/schemas/JiraConnection' } } } }
+        '400': { description: Not a Jira Cloud address (jira_site), no email or token (jira_login), or Jira refused them (jira_unauthorized). }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: Not an org admin, or an API key. }
+        '404': { description: Imports are off. }
+        '502': { description: Jira couldn't be reached at that address (jira_unreachable). }
+        '503': { description: The server has no key to seal tokens with (integration_not_configured). }
+    delete:
+      tags: [Imports]
+      operationId: deleteJiraConnection
+      summary: Forget the Jira connection and its token
+      responses:
+        '204': { description: Deleted (or there was none). }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: Not an org admin, or an API key. }
+        '404': { description: Imports are off. }
+  /imports/jira/connection/extend:
+    post:
+      tags: [Imports]
+      operationId: extendJiraConnection
+      summary: Keep the Jira token another 30 days from now
+      responses:
+        '200': { description: Extended., content: { application/json: { schema: { $ref: '#/components/schemas/JiraConnection' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: Not an org admin, or an API key. }
+        '404': { description: Imports are off. }
+        '409': { description: No connection, or it has expired (jira_not_connected). }
   /imports/{importId}:
     parameters:
       - { name: importId, in: path, required: true, schema: { type: string, format: uuid } }
@@ -4253,6 +4311,16 @@ components:
               name: { type: string, minLength: 1, maxLength: 80 }
               wip_limit: { type: [integer, 'null'], minimum: 1, maximum: 999 }
               review: { type: boolean, description: "The board's review column (at most one, between To do and Done). Built-in Scrum and Kanban flag their Review column." }
+    JiraConnection:
+      type: object
+      nullable: true
+      properties:
+        site: { type: string, example: https://acme.atlassian.net }
+        email: { type: string }
+        account: { type: string, description: The Jira user's name. }
+        created_by: { type: string }
+        created_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time, description: 30 days after saving or the last extension. }
     Import:
       type: object
       properties:
@@ -5145,6 +5213,11 @@ components:
         csv_options: "send the CSV, the new project's name and key prefix, and which column is the title"
         csv_unreadable: "that file couldn't be read as CSV"
         csv_column: "there's no column with that name"
+        jira_site: "enter your Jira Cloud address, like https://your-team.atlassian.net"
+        jira_login: "enter the email you sign in to Jira with, and an API token"
+        jira_not_connected: "connect Jira first: its token may have expired"
+        jira_unauthorized: "Jira refused that email and API token"
+        jira_unreachable: "couldn't reach Jira at that address"
         bad_webhook_url: "the URL must be https and not a private address"
         bad_webhook_events: "pick at least one known event"
         webhook_limit: "an organization can have up to 10 webhook endpoints"

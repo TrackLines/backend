@@ -40,6 +40,7 @@ import (
 	"github.com/tracklines/backend/internal/enquiries"
 	"github.com/tracklines/backend/internal/httpx"
 	"github.com/tracklines/backend/internal/imports"
+	"github.com/tracklines/backend/internal/imports/jira"
 	"github.com/tracklines/backend/internal/intake"
 	"github.com/tracklines/backend/internal/integrations"
 	"github.com/tracklines/backend/internal/invitations"
@@ -249,6 +250,13 @@ func (s *Service) Handler() http.Handler {
 	mux.Handle("POST /api/imports/{id}/run", signedIn(im.Run))
 	mux.Handle("POST /api/imports/{id}/cancel", signedIn(im.Cancel))
 	mux.Handle("POST /api/imports/{id}/scrap", signedIn(im.Scrap))
+	// Jira Cloud connection (TL-537): the site, email and API token an admin imports with, sealed, kept 30 days
+	jiraBox, _ := secrets.New(config.Get(s.Config).SecretKey) // no key: connecting says the integration isn't configured
+	jc := jira.System{Store: jira.NewStore(s.DB, jiraBox), Admins: o.AdminModel(), On: s.flag("imports")}
+	mux.Handle("GET /api/imports/jira/connection", signedIn(jc.Get))
+	mux.Handle("PUT /api/imports/jira/connection", signedIn(jc.Connect))
+	mux.Handle("DELETE /api/imports/jira/connection", signedIn(jc.Delete))
+	mux.Handle("POST /api/imports/jira/connection/extend", signedIn(jc.Extend))
 	mux.Handle("GET /api/boards/{id}", signedIn(b.Get))
 	mux.Handle("GET /api/boards/{id}/flow", signedIn(b.Flow))
 	mux.Handle("PATCH /api/boards/{id}", signedIn(b.Update))  // name and estimate_scale settings
