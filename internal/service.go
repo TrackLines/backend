@@ -39,6 +39,7 @@ import (
 	"github.com/tracklines/backend/internal/embed"
 	"github.com/tracklines/backend/internal/enquiries"
 	"github.com/tracklines/backend/internal/httpx"
+	"github.com/tracklines/backend/internal/imports"
 	"github.com/tracklines/backend/internal/intake"
 	"github.com/tracklines/backend/internal/integrations"
 	"github.com/tracklines/backend/internal/invitations"
@@ -232,6 +233,15 @@ func (s *Service) Handler() http.Handler {
 	mux.Handle("GET /api/board-templates", signedIn(b.ListTemplates)) // built-ins + the org's own
 	mux.Handle("POST /api/board-templates", signedIn(b.CreateTemplate))
 	mux.Handle("DELETE /api/board-templates/{id}", signedIn(b.DeleteTemplate))
+
+	// Imports from other trackers (TL-536): org admins, signed in, behind the "imports" flag; the Jira source comes with TL-538
+	im := imports.NewSystem(s.DB, o.AdminModel(), s.flag("imports"), map[string]imports.Source{})
+	mux.Handle("POST /api/imports", signedIn(im.Preview))
+	mux.Handle("GET /api/imports", signedIn(im.List))
+	mux.Handle("GET /api/imports/{id}", signedIn(im.Get))
+	mux.Handle("POST /api/imports/{id}/run", signedIn(im.Run))
+	mux.Handle("POST /api/imports/{id}/cancel", signedIn(im.Cancel))
+	mux.Handle("POST /api/imports/{id}/scrap", signedIn(im.Scrap))
 	mux.Handle("GET /api/boards/{id}", signedIn(b.Get))
 	mux.Handle("GET /api/boards/{id}/flow", signedIn(b.Flow))
 	mux.Handle("PATCH /api/boards/{id}", signedIn(b.Update))  // name and estimate_scale settings
