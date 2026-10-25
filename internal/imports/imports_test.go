@@ -297,6 +297,9 @@ func TestImports(t *testing.T) {
 	if author != "Old Name" {
 		t.Fatalf("comment author: %q", author)
 	}
+	if sc := get(im.ID).Scrappable; sc == nil || !*sc {
+		t.Fatalf("untouched import not scrappable: %v", sc)
+	}
 	// a ticket made by hand afterwards carries on after the highest imported number
 	var next int
 	_ = db.QueryRow(ctx, `INSERT INTO tickets (project_id, type, title, position, created_by) VALUES ($1, 'task', 'new', 0, 'u') RETURNING number`, projectID).Scan(&next)
@@ -305,6 +308,9 @@ func TestImports(t *testing.T) {
 	}
 	if rec := call(admin, h.Scrap, im.ID, ""); rec.Code != 409 || !strings.Contains(rec.Body.String(), "import_changed") {
 		t.Fatalf("scrap after adding a ticket: %d %s", rec.Code, rec.Body)
+	}
+	if sc := get(im.ID).Scrappable; sc == nil || *sc {
+		t.Fatalf("changed import still scrappable: %v", sc)
 	}
 	if _, err := db.Exec(ctx, `DELETE FROM tickets_all WHERE project_id = $1 AND number = 13`, projectID); err != nil {
 		t.Fatal(err)
