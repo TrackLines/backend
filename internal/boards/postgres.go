@@ -41,7 +41,7 @@ type Ticket struct {
 	// where a ticket made by another tool came from (e.g. a Bugfixes report); nil for our own
 	ExternalSource *string `json:"external_source"`
 	ExternalURL    *string `json:"external_url"`
-	// an agent finished it on a board with agent review: it waits (in the column before Done) for a person
+	// an agent finished it on a board with agent review: it waits (in the review column) for a person
 	ReviewRequestedAt *string `json:"review_requested_at"`
 	Resolution        *string `json:"resolution"` // a resolved backlog ticket: done (or null) or wont_do
 	DuplicateOfID     *string `json:"duplicate_of_id"`
@@ -145,6 +145,7 @@ type Board struct {
 	Style         string   `json:"style"`
 	AgentReview   bool     `json:"agent_review"`           // agents' moves into Done wait for a person's review
 	DevComplete   *string  `json:"dev_complete_column_id"` // set: merged PRs land here, a release moves them to Done (TL-531)
+	ReviewColumn  *string  `json:"review_column_id"`       // agent review waits here (TL-592); null: the column before Done
 	ArchivedAt    *string  `json:"archived_at"`            // archived: off the project\'s boards, history kept, no new work
 	Deletable     bool     `json:"deletable"`              // never used (no tickets, no sprints): can be deleted outright
 	TeamID        *string  `json:"team_id"`                // the team whose leaders run this board                 // sprints | kanban
@@ -171,7 +172,7 @@ type Stats struct {
 
 type Store struct{ DB *pgxpool.Pool }
 
-const cols = `id, project_id, owner_clerk_id, name, description, estimate_scale, style, team_id, agent_review, dev_complete_column_id,
+const cols = `id, project_id, owner_clerk_id, name, description, estimate_scale, style, team_id, agent_review, dev_complete_column_id, review_column_id,
 	to_char(archived_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
 	NOT EXISTS (SELECT 1 FROM tickets t WHERE t.board_id = boards.id) AND NOT EXISTS (SELECT 1 FROM sprints sp WHERE sp.board_id = boards.id),
 	to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
@@ -179,7 +180,7 @@ const cols = `id, project_id, owner_clerk_id, name, description, estimate_scale,
 
 func scan(row pgx.Row) (Board, error) {
 	var b Board
-	err := row.Scan(&b.ID, &b.ProjectID, &b.OwnerClerkID, &b.Name, &b.Description, &b.EstimateScale, &b.Style, &b.TeamID, &b.AgentReview, &b.DevComplete, &b.ArchivedAt, &b.Deletable, &b.CreatedAt, &b.UpdatedAt)
+	err := row.Scan(&b.ID, &b.ProjectID, &b.OwnerClerkID, &b.Name, &b.Description, &b.EstimateScale, &b.Style, &b.TeamID, &b.AgentReview, &b.DevComplete, &b.ReviewColumn, &b.ArchivedAt, &b.Deletable, &b.CreatedAt, &b.UpdatedAt)
 	return b, notFound(err)
 }
 
@@ -200,7 +201,7 @@ func (s Store) Create(ctx context.Context, owner, projectID, name, desc string) 
 
 // ListByProject lists a project's boards (without columns); callers check ownership.
 func (s Store) ListByProject(ctx context.Context, projectID string) ([]Board, error) {
-	rows, err := s.DB.Query(ctx, `SELECT boards.id, boards.project_id, boards.owner_clerk_id, boards.name, boards.description, boards.estimate_scale, boards.style, boards.team_id, boards.agent_review, boards.dev_complete_column_id,
+	rows, err := s.DB.Query(ctx, `SELECT boards.id, boards.project_id, boards.owner_clerk_id, boards.name, boards.description, boards.estimate_scale, boards.style, boards.team_id, boards.agent_review, boards.dev_complete_column_id, boards.review_column_id,
 		to_char(boards.archived_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
 		NOT EXISTS (SELECT 1 FROM tickets ut WHERE ut.board_id = boards.id) AND NOT EXISTS (SELECT 1 FROM sprints us WHERE us.board_id = boards.id),
 		to_char(boards.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
@@ -222,7 +223,7 @@ func (s Store) ListByProject(ctx context.Context, projectID string) ([]Board, er
 	}
 	out, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (Board, error) {
 		b, st := Board{}, Stats{}
-		err := row.Scan(&b.ID, &b.ProjectID, &b.OwnerClerkID, &b.Name, &b.Description, &b.EstimateScale, &b.Style, &b.TeamID, &b.AgentReview, &b.DevComplete, &b.ArchivedAt, &b.Deletable, &b.CreatedAt, &b.UpdatedAt,
+		err := row.Scan(&b.ID, &b.ProjectID, &b.OwnerClerkID, &b.Name, &b.Description, &b.EstimateScale, &b.Style, &b.TeamID, &b.AgentReview, &b.DevComplete, &b.ReviewColumn, &b.ArchivedAt, &b.Deletable, &b.CreatedAt, &b.UpdatedAt,
 			&st.Open, &st.InProgress, &st.Done, &st.Urgent, &st.Active, &st.SprintNumber, &st.SprintEndsAt)
 		b.Stats = &st
 		return b, err
@@ -291,12 +292,26 @@ func (s Store) SetAgentReview(ctx context.Context, id, owner string, on bool) er
 // ErrBadDevComplete: the Dev complete column must be one of the board's own, between To do and Done.
 var ErrBadDevComplete = httpx.Code("bad_dev_complete", "the Dev complete column must be one of this board's columns, other than To do and Done")
 
+// ErrBadReviewColumn: the review column must be one of the board's own, between To do and Done (TL-592).
+var ErrBadReviewColumn = httpx.Code("bad_review_column", "the review column must be one of this board's columns, other than To do and Done")
+
 // SetDevComplete picks the column merged PRs move tickets to ("" turns it off: merging finishes them).
 func (s Store) SetDevComplete(ctx context.Context, id, owner, column string) error {
+	return s.setMiddleColumn(ctx, id, owner, column, "dev_complete_column_id", ErrBadDevComplete)
+}
+
+// SetReviewColumn picks the column agents' finished work waits in for review ("": the column before Done).
+func (s Store) SetReviewColumn(ctx context.Context, id, owner, column string) error {
+	return s.setMiddleColumn(ctx, id, owner, column, "review_column_id", ErrBadReviewColumn)
+}
+
+// setMiddleColumn sets the board's field (a column setting; a constant, never input) to one of its
+// columns between To do and Done, or clears it for "". bad when column isn't one of those.
+func (s Store) setMiddleColumn(ctx context.Context, id, owner, column, field string, bad error) error {
 	tag, err := s.DB.Exec(ctx, `WITH pick AS (SELECT c.id FROM columns c WHERE c.board_id = $1 AND c.id::text = $3
 			AND c.position > (SELECT min(position) FROM columns WHERE board_id = $1)
 			AND c.position < (SELECT max(position) FROM columns WHERE board_id = $1))
-		UPDATE boards SET dev_complete_column_id = (SELECT id FROM pick), updated_at = now()
+		UPDATE boards SET `+field+` = (SELECT id FROM pick), updated_at = now()
 		WHERE id = $1 AND owner_clerk_id = $2 AND ($3 = '' OR EXISTS (SELECT 1 FROM pick))`,
 		id, owner, column)
 	if err != nil {
@@ -306,7 +321,7 @@ func (s Store) SetDevComplete(ctx context.Context, id, owner, column string) err
 		if err := s.DB.QueryRow(ctx, `SELECT id FROM boards WHERE id = $1 AND owner_clerk_id = $2`, id, owner).Scan(&id); err != nil {
 			return notFound(err)
 		}
-		return ErrBadDevComplete
+		return bad
 	}
 	return nil
 }

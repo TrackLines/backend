@@ -30,7 +30,7 @@ func writeErr(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, ErrNotFound):
 		http.Error(w, "not found", http.StatusNotFound)
-	case errors.Is(err, ErrBadDevComplete):
+	case errors.Is(err, ErrBadDevComplete), errors.Is(err, ErrBadReviewColumn):
 		httpx.Error(w, r, http.StatusBadRequest, err)
 	case errors.Is(err, ErrBoardUsed), errors.Is(err, ErrOpenTickets), errors.Is(err, ErrBoardArchived):
 		httpx.Error(w, r, http.StatusConflict, err)
@@ -114,12 +114,13 @@ func (h System) Update(w http.ResponseWriter, r *http.Request) {
 		Style         *string `json:"style"` // sprints | kanban
 		AgentReview   *bool   `json:"agent_review"`
 		DevComplete   *string `json:"dev_complete_column_id"` // "" turns finishing on release off
+		ReviewColumn  *string `json:"review_column_id"`       // "": the column before Done (TL-592)
 	}
 	if !httpx.Decode(w, r, &in) {
 		return
 	}
-	if in.Name == nil && in.EstimateScale == nil && in.Style == nil && in.AgentReview == nil && in.DevComplete == nil {
-		httpx.Error(w, r, http.StatusBadRequest, httpx.Code("board_update_empty", "name, estimate_scale, style, agent_review or dev_complete_column_id is required"))
+	if in.Name == nil && in.EstimateScale == nil && in.Style == nil && in.AgentReview == nil && in.DevComplete == nil && in.ReviewColumn == nil {
+		httpx.Error(w, r, http.StatusBadRequest, httpx.Code("board_update_empty", "name, estimate_scale, style, agent_review, dev_complete_column_id or review_column_id is required"))
 		return
 	}
 	name := ""
@@ -154,6 +155,12 @@ func (h System) Update(w http.ResponseWriter, r *http.Request) {
 	}
 	if in.DevComplete != nil {
 		if err := h.store.SetDevComplete(r.Context(), r.PathValue("id"), auth.OrgID(r.Context()), *in.DevComplete); err != nil {
+			writeErr(w, r, err)
+			return
+		}
+	}
+	if in.ReviewColumn != nil {
+		if err := h.store.SetReviewColumn(r.Context(), r.PathValue("id"), auth.OrgID(r.Context()), *in.ReviewColumn); err != nil {
 			writeErr(w, r, err)
 			return
 		}

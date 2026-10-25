@@ -167,3 +167,58 @@ func TestAgentReview(t *testing.T) {
 		t.Fatal("board agent_review not returned")
 	}
 }
+
+// TL-592: an agent's finished work waits in the board's review column, not just the column before Done.
+func TestAgentReviewColumn(t *testing.T) {
+	ctx := context.Background()
+	url := os.Getenv("TEST_DATABASE_URL")
+	m, err := migrate.New("file://../migrations", "pgx5"+url[len("postgres"):])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Up(); err != nil && !errors.Is(err, migrate.ErrNoChange) {
+		t.Fatal(err)
+	}
+	db, err := pgxpool.New(ctx, url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(ctx, `DELETE FROM boards WHERE owner_clerk_id = 'rc1'; DELETE FROM projects WHERE owner_clerk_id = 'rc1'`); err != nil {
+		t.Fatal(err)
+	}
+	var pid string
+	_ = db.QueryRow(ctx, `INSERT INTO projects (owner_clerk_id, name) VALUES ('rc1', 'Review') RETURNING id`).Scan(&pid)
+	bs := boards.Store{DB: db}
+	b, err := bs.CreateFrom(ctx, "rc1", pid, "web", "", boards.Template{Style: "sprints", EstimateScale: "none", Columns: []boards.TemplateColumn{
+		{Name: "To do"}, {Name: "Doing"}, {Name: "Review", Review: true}, {Name: "QA"}, {Name: "Done"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(ctx, `UPDATE boards SET agent_review = true WHERE id = $1`, b.ID); err != nil {
+		t.Fatal(err)
+	}
+	review, qa, done := b.Columns[2].ID, b.Columns[3].ID, b.Columns[4].ID
+	s := Store{DB: db}
+	h := NewSystem(db)
+	finish := func(id string) (string, string) {
+		req := httptest.NewRequest("POST", "/", strings.NewReader(`{"column_id":"`+done+`"}`)).WithContext(auth.WithAPIKeyUser(ctx, "rc1", "claude"))
+		req.SetPathValue("id", id)
+		rec := httptest.NewRecorder()
+		h.Move(rec, req)
+		tk, _ := s.Get(ctx, "rc1", id)
+		return *tk.ColumnID, rec.Body.String()
+	}
+	a, _ := s.Create(ctx, "rc1", b.Columns[1].ID, "task", "named", "")
+	if col, body := finish(a.ID); col != review || !strings.Contains(body, "needs_review") {
+		t.Fatalf("review column: %s %s", col, body)
+	}
+	// cleared: the column before Done, as before
+	if err := bs.SetReviewColumn(ctx, b.ID, "rc1", ""); err != nil {
+		t.Fatal(err)
+	}
+	c, _ := s.Create(ctx, "rc1", b.Columns[1].ID, "task", "fallback", "")
+	if col, _ := finish(c.ID); col != qa {
+		t.Fatalf("no review column: %s, want QA", col)
+	}
+}

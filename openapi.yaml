@@ -730,6 +730,9 @@ paths:
                     Finish tickets on release: a merged GitHub PR moves its ticket to this column (one of the board's,
                     not Done), and a published release that contains the merge moves it to Done. "" turns it off, so
                     merging finishes tickets.
+                review_column_id:
+                  type: string
+                  description: Where agents' finished work waits for review on a board with agent review (one of the board's columns between To do and Done). "" goes back to the column before Done.
       responses:
         '204': { description: Board updated. }
         '400': { $ref: '#/components/responses/BadRequest' }
@@ -3809,6 +3812,7 @@ components:
             properties:
               name: { type: string, minLength: 1, maxLength: 80 }
               wip_limit: { type: [integer, 'null'], minimum: 1, maximum: 999 }
+              review: { type: boolean, description: "The board's review column (at most one, between To do and Done). Built-in Scrum and Kanban flag their Review column." }
     NameInput:
       type: object
       required: [name]
@@ -4510,6 +4514,7 @@ components:
         style: { type: string, enum: [sprints, kanban] }
         agent_review: { type: boolean, description: "Agents' moves into Done wait for a person's review." }
         dev_complete_column_id: { type: [string, 'null'], format: uuid, description: "Set: merged GitHub PRs move tickets here and a release finishes them; null: merging finishes them." }
+        review_column_id: { type: [string, 'null'], format: uuid, description: "Where agents' finished work waits for review (agent_review); null: the column before Done." }
         archived_at: { type: [string, 'null'], format: date-time, description: Archived boards are off the project page and take no new work. }
         deletable: { type: boolean, description: 'Never used (no tickets, no sprints): DELETE works; otherwise archive it.' }
         hidden_done: { type: integer, description: "Kanban only. Done tickets finished more than 14 days ago, left off the board." }
@@ -4566,6 +4571,7 @@ components:
         bad_connect_state: "the connect link has expired or wasn't for this organization; start again"
         bad_date_range: "from and to are dates (YYYY-MM-DD), from before to, at most two years apart"
         bad_dev_complete: "the Dev complete column must be one of this board's columns, other than To do and Done"
+        bad_review_column: "the review column must be one of this board's columns, other than To do and Done"
         bad_email: "a valid email address is required"
         bad_estimate: "estimate isn't on this board's scale"
         bad_estimate_scale: "estimate_scale must be none, fibonacci, tshirt, powers or linear"
@@ -4612,7 +4618,7 @@ components:
         block_cycle: "that would make tickets block each other in a loop"
         blocked: "ticket is blocked by tickets that aren't done yet"
         board_archived: "this board is archived; restore it first"
-        board_update_empty: "name, estimate_scale, style, agent_review or dev_complete_column_id is required"
+        board_update_empty: "name, estimate_scale, style, agent_review, dev_complete_column_id or review_column_id is required"
         board_used: "this board has been used; archive it instead, so its history is kept"
         builtin_template: "built-in templates can't be deleted"
         calendar_admin_email: "the admin email must be an address at {domain}"
