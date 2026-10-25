@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -58,6 +59,26 @@ func keysIn(prefix string, texts ...string) []int {
 				seen[n] = true
 				out = append(out, n)
 			}
+		}
+	}
+	return out
+}
+
+// closeWords: "closes TL-1", "fixes: TL-1", "resolved TL-1, TL-2" and so on, the words GitHub uses.
+var closeWords = regexp.MustCompile(`(?i)\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?):?\s+([^\s,]+(?:(?:\s*,\s*(?:and\s+)?|\s+and\s+)[^\s,]+)*)`)
+
+// closers is the text whose mentions a merge finishes (TL-651): the branch, the title and each
+// commit's subject line, and only what follows a closing word in the description and commit bodies.
+// Any other mention just links the PR, so "builds on TL-538" doesn't close TL-538.
+func closers(pr PullRequest, commits []string) []string {
+	out := []string{pr.Branch, pr.Title}
+	for _, text := range append([]string{pr.body}, commits...) {
+		if text != pr.body {
+			subject, _, _ := strings.Cut(text, "\n")
+			out = append(out, subject)
+		}
+		for _, m := range closeWords.FindAllStringSubmatch(text, -1) {
+			out = append(out, m[1])
 		}
 	}
 	return out
@@ -142,6 +163,10 @@ func (h System) linkPR(ctx context.Context, orgs []string, pr PullRequest) error
 		if err != nil {
 			return err
 		}
+		closing, err := h.mentioned(ctx, project, prefix, closers(pr, commits)...)
+		if err != nil {
+			return err
+		}
 		for _, ticket := range mentioned {
 			var was *string
 			_ = h.store.DB.QueryRow(ctx, `SELECT state FROM ticket_prs WHERE ticket_id = $1 AND provider = $2 AND repo = $3 AND number = $4`,
@@ -153,7 +178,7 @@ func (h System) linkPR(ctx context.Context, orgs []string, pr PullRequest) error
 				ticket, pr.Provider, pr.Repo, pr.Number, pr.URL, pr.Title, pr.State, pr.Author, pr.Branch, pr.mergeSHA); err != nil {
 				return err
 			}
-			if pr.State == "merged" && (was == nil || *was != "merged") { // once, on the merge (redeliveries are no-ops)
+			if pr.State == "merged" && (was == nil || *was != "merged") && slices.Contains(closing, ticket) { // once, on the merge (redeliveries are no-ops)
 				if err := h.finishByPR(ctx, org, ticket, pr); err != nil {
 					return err
 				}
