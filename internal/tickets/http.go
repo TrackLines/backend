@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/bugfixes/go-bugfixes/logs"
@@ -64,9 +65,12 @@ type ticketInput struct {
 	Estimate    *string   `json:"estimate"` // on the board's scale; omitted = unchanged, "" clears
 	External    *External `json:"external"` // backlog create from an API key (e.g. Bugfixes): where it came from
 	// a spike's timebox (TL-502): set together; both 0 clears; both omitted = unchanged
-	TimeboxDays  *int `json:"timebox_days"`
-	TimeboxHours *int `json:"timebox_hours"`
+	TimeboxDays  *int    `json:"timebox_days"`
+	TimeboxHours *int    `json:"timebox_hours"`
+	DueDate      *string `json:"due_date"` // YYYY-MM-DD; omitted = unchanged, "" clears (TL-631)
 }
+
+var ErrBadDueDate = httpx.Code("bad_due_date", "due_date must be a date (YYYY-MM-DD), or empty to clear it")
 
 // intOr0 reads a *int sent on the input, treating "not sent" as 0.
 func intOr0(p *int) int {
@@ -108,6 +112,12 @@ func (in *ticketInput) valid(w http.ResponseWriter, r *http.Request) bool {
 			return false
 		}
 		in.Labels = &labels
+	}
+	if in.DueDate != nil && *in.DueDate != "" {
+		if _, err := time.Parse(time.DateOnly, *in.DueDate); err != nil {
+			httpx.Error(w, r, http.StatusBadRequest, ErrBadDueDate)
+			return false
+		}
 	}
 	if in.TimeboxDays != nil || in.TimeboxHours != nil {
 		if d, h := intOr0(in.TimeboxDays), intOr0(in.TimeboxHours); d < 0 || d > 60 || h < 0 || h > 23 {
@@ -155,6 +165,23 @@ func (h System) applyTimebox(r *http.Request, user, id string, in ticketInput, t
 			t.TimeboxDays, t.TimeboxHours = nil, nil
 		} else {
 			t.TimeboxDays, t.TimeboxHours = &days, &hours
+		}
+	}
+	return nil
+}
+
+// applyDueDate stores a due date sent with a create/update (TL-631); "" clears it; t may be nil.
+func (h System) applyDueDate(r *http.Request, user, id string, in ticketInput, t *Ticket) error {
+	if in.DueDate == nil {
+		return nil
+	}
+	if err := h.store.SetDueDate(r.Context(), user, id, *in.DueDate); err != nil {
+		return err
+	}
+	if t != nil {
+		t.DueDate = nil
+		if *in.DueDate != "" {
+			t.DueDate = in.DueDate
 		}
 	}
 	return nil
@@ -230,6 +257,9 @@ func (h System) Create(w http.ResponseWriter, r *http.Request) {
 	if err == nil {
 		err = h.applyTimebox(r, org, t.ID, in, t)
 	}
+	if err == nil {
+		err = h.applyDueDate(r, org, t.ID, in, t)
+	}
 	if err != nil {
 		writeErr(w, r, err)
 		return
@@ -260,6 +290,9 @@ func (h System) Update(w http.ResponseWriter, r *http.Request) {
 	}
 	if err == nil {
 		err = h.applyTimebox(r, org, r.PathValue("id"), in, nil)
+	}
+	if err == nil {
+		err = h.applyDueDate(r, org, r.PathValue("id"), in, nil)
 	}
 	if err != nil {
 		writeErr(w, r, err)
@@ -402,6 +435,9 @@ func (h System) CreateBacklog(w http.ResponseWriter, r *http.Request) {
 	}
 	if err == nil {
 		err = h.applyTimebox(r, org, t.ID, in, t)
+	}
+	if err == nil {
+		err = h.applyDueDate(r, org, t.ID, in, t)
 	}
 	if err != nil {
 		writeErr(w, r, err)

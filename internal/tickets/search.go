@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/tracklines/backend/internal/auth"
@@ -42,7 +43,12 @@ type SearchQuery struct {
 	Page       int    // 1-based; with Limit, for "load more" (stable: rank, then updated, then id)
 	AnyWord    bool   // any word may match, most matches first (similar tickets: one typo mustn't hide them, TL-275)
 	Epic       string // an epic's sub-tickets at any depth (TL-215)
+	Due        string // overdue | soon (due today or tomorrow) | none (no due date) | "" (TL-631); open tickets for overdue and soon
+	Today      string // the caller's local day (YYYY-MM-DD), for Due; defaults to UTC's
+	SortDue    bool   // soonest due first, undated last
 }
+
+var ErrBadDue = httpx.Code("bad_due", "due must be overdue, soon or none")
 
 const maxSearchResults = 50
 
@@ -91,6 +97,9 @@ func (s Store) SearchTotal(ctx context.Context, owner string, q SearchQuery) ([]
 	if number < 0 {
 		number = 0
 	}
+	if q.Today == "" {
+		q.Today = time.Now().UTC().Format(time.DateOnly)
+	}
 	query := tsQuery(q.Text, q.AnyWord)
 	if keyID != "" {
 		query = "" // the key is the search
@@ -122,10 +131,13 @@ func (s Store) SearchTotal(ctx context.Context, owner string, q SearchQuery) ([]
 			AND ($11 = '' OR ($11 = 'done') = `+boards.TicketDoneSQL+`)
 			AND ($16 = '' OR t.created_by = $16)
 			AND `+inEpic("$15::text")+`
-		ORDER BY t.number = $14 DESC NULLS LAST, CASE WHEN q.query IS NULL THEN 0 ELSE ts_rank(t.search, q.query) END DESC, t.updated_at DESC, t.id
+			AND ($17 = '' OR ($17 = 'none' AND t.due_date IS NULL)
+				OR ($17 = 'overdue' AND t.due_date < $18::date AND NOT `+boards.TicketDoneSQL+`)
+				OR ($17 = 'soon' AND t.due_date BETWEEN $18::date AND $18::date + 1 AND NOT `+boards.TicketDoneSQL+`))
+		ORDER BY CASE WHEN $19 THEN t.due_date END ASC NULLS LAST, t.number = $14 DESC NULLS LAST, CASE WHEN q.query IS NULL THEN 0 ELSE ts_rank(t.search, q.query) END DESC, t.updated_at DESC, t.id
 		LIMIT $12 OFFSET $13`,
 		owner, query, keyID, q.ProjectID, q.BoardID, nonNil(q.Types), nonNil(q.Priorities), lower(q.Labels),
-		q.Assignee, q.Unassigned, q.Status, q.Limit, (max(q.Page, 1)-1)*q.Limit, number, q.Epic, q.Creator)
+		q.Assignee, q.Unassigned, q.Status, q.Limit, (max(q.Page, 1)-1)*q.Limit, number, q.Epic, q.Creator, q.Due, q.Today, q.SortDue)
 	if err != nil {
 		return nil, 0, notFound(err)
 	}
@@ -202,6 +214,21 @@ func (h System) Search(w http.ResponseWriter, r *http.Request) {
 		q.Creator = auth.ActorID(r.Context())
 	} else {
 		q.Creator = c
+	}
+	switch q.Due = v.Get("due"); q.Due {
+	case "", "overdue", "soon", "none":
+	default:
+		httpx.Error(w, r, http.StatusBadRequest, ErrBadDue)
+		return
+	}
+	q.Today = time.Now().In(httpx.Zone(r.Context())).Format(time.DateOnly) // overdue is by the caller's own day
+	switch v.Get("sort") {
+	case "":
+	case "due":
+		q.SortDue = true
+	default:
+		httpx.Error(w, r, http.StatusBadRequest, httpx.Code("bad_search_sort", "sort must be due, or left out"))
+		return
 	}
 	if p := v.Get("page"); p != "" {
 		n, err := strconv.Atoi(p)

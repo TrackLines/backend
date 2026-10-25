@@ -20,6 +20,7 @@ var (
 	priority   = map[string]any{"type": "string", "enum": []string{"low", "medium", "high", "urgent"}}
 	labels     = map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Free-form labels; [] clears"}
 	estimate   = str("Estimate on the board's scale (see the board's estimate_scale); \"\" clears")
+	dueDate    = map[string]any{"type": "string", "description": "Due date, YYYY-MM-DD; \"\" clears (TL-631)"}
 	position   = map[string]any{"type": "integer", "minimum": 0, "description": "0 = top of the column"}
 	goal       = map[string]any{"type": "string", "maxLength": 200, "description": "One line the sprint is for"}
 )
@@ -44,7 +45,7 @@ var tools = []tool{
 		method: "GET", path: "/api/projects/{project_id}/backlog/page", query: []string{"type", "label", "priority", "sort", "page", "per_page", "epic", "status"},
 		props: map[string]any{"project_id": id("Project"), "type": ticketType, "epic": str("Epic id: only its sub-tickets, at any depth"),
 			"status":   map[string]any{"type": "string", "enum": []string{"open", "done", "wont_do", "duplicate", "closed"}, "description": "Defaults to open"},
-			"sort":     map[string]any{"type": "string", "enum": []string{"manual", "newest", "oldest"}},
+			"sort":     map[string]any{"type": "string", "enum": []string{"manual", "newest", "oldest", "due"}},
 			"priority": map[string]any{"type": "array", "items": priority, "description": "Only tickets with any of these priorities"},
 			"label":    map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Only tickets with any of these labels"},
 			"page":     map[string]any{"type": "integer", "minimum": 1},
@@ -64,8 +65,10 @@ var tools = []tool{
 	{name: "search_tickets", title: "Search tickets", description: "Find tickets in the caller's organization by words in their title, description or comments " +
 		"(every word, matched as a prefix), or by key (TL-123, found exactly). Ranked by relevance, then most recently changed; with no q it just filters. " +
 		"Each result says where the ticket lives (project, board/column or backlog) and whether it's done.",
-		method: "GET", path: "/api/search", query: []string{"q", "project", "board", "type", "priority", "label", "assignee", "status", "limit", "page", "epic"},
-		props: map[string]any{"q": str("Words, a ticket key (TL-123) or just its number (123)"), "epic": str("Epic id: only its sub-tickets, at any depth"), "project": id("Project"), "board": id("Board"),
+		method: "GET", path: "/api/search", query: []string{"q", "project", "board", "type", "priority", "label", "assignee", "status", "limit", "page", "epic", "due", "sort"},
+		props: map[string]any{"due": map[string]any{"type": "string", "enum": []string{"overdue", "soon", "none"}, "description": "overdue (past its due date, open), soon (due today or tomorrow, open) or none (no due date)"},
+			"sort": map[string]any{"type": "string", "enum": []string{"due"}, "description": "due: soonest due first"},
+			"q":    str("Words, a ticket key (TL-123) or just its number (123)"), "epic": str("Epic id: only its sub-tickets, at any depth"), "project": id("Project"), "board": id("Board"),
 			"type":     map[string]any{"type": "array", "items": ticketType, "description": "Any of these types"},
 			"priority": map[string]any{"type": "array", "items": priority, "description": "Any of these priorities"},
 			"label":    map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Any of these labels"},
@@ -148,16 +151,16 @@ var tools = []tool{
 	{name: "create_ticket", title: "Create ticket", description: "Create a ticket in a board column (joins the board's open sprint). " +
 		"On the sprint's last day its scope is locked: the ticket goes to the bottom of the backlog instead (redirected_to_backlog: true, column_id null). " +
 		"On a board with an estimate scale, estimate is required.",
-		method: "POST", path: "/api/columns/{column_id}/tickets", body: []string{"title", "description", "type", "priority", "labels", "estimate"},
-		props:    map[string]any{"column_id": id("Column"), "title": str("Title"), "description": str("Details (markdown)"), "type": ticketType, "priority": priority, "labels": labels, "estimate": estimate},
+		method: "POST", path: "/api/columns/{column_id}/tickets", body: []string{"title", "description", "type", "priority", "labels", "estimate", "due_date"},
+		props:    map[string]any{"column_id": id("Column"), "title": str("Title"), "description": str("Details (markdown)"), "type": ticketType, "priority": priority, "labels": labels, "estimate": estimate, "due_date": dueDate},
 		required: []string{"column_id", "title"}},
 	{name: "create_backlog_ticket", title: "Create backlog ticket", description: "Add a ticket to the bottom of a project's backlog (no estimate until it reaches a board).",
-		method: "POST", path: "/api/projects/{project_id}/backlog", body: []string{"title", "description", "type", "priority", "labels"},
-		props:    map[string]any{"project_id": id("Project"), "title": str("Title"), "description": str("Details (markdown)"), "type": ticketType, "priority": priority, "labels": labels},
+		method: "POST", path: "/api/projects/{project_id}/backlog", body: []string{"title", "description", "type", "priority", "labels", "due_date"},
+		props:    map[string]any{"project_id": id("Project"), "title": str("Title"), "description": str("Details (markdown)"), "type": ticketType, "priority": priority, "labels": labels, "due_date": dueDate},
 		required: []string{"project_id", "title"}},
 	{name: "update_ticket", title: "Update ticket", description: "Change a ticket's title, description, type, priority, labels, estimate or (spikes only) timebox. Omitted fields stay as they are. For a spike's timebox, send timebox_days and timebox_hours together; 0 and 0 clears it.",
-		method: "PATCH", path: "/api/tickets/{ticket_id}", body: []string{"title", "description", "type", "priority", "labels", "estimate", "timebox_days", "timebox_hours"},
-		props: map[string]any{"ticket_id": id("Ticket"), "title": str("New title"), "description": str("New description (markdown)"), "type": ticketType, "priority": priority, "labels": labels, "estimate": estimate,
+		method: "PATCH", path: "/api/tickets/{ticket_id}", body: []string{"title", "description", "type", "priority", "labels", "estimate", "timebox_days", "timebox_hours", "due_date"},
+		props: map[string]any{"ticket_id": id("Ticket"), "due_date": dueDate, "title": str("New title"), "description": str("New description (markdown)"), "type": ticketType, "priority": priority, "labels": labels, "estimate": estimate,
 			"timebox_days":  map[string]any{"type": "integer", "minimum": 0, "maximum": 60, "description": "Spike timebox days (with timebox_hours)"},
 			"timebox_hours": map[string]any{"type": "integer", "minimum": 0, "maximum": 23, "description": "Spike timebox hours (with timebox_days)"}},
 		required: []string{"ticket_id"}, prepare: keepTitleAndDescription},

@@ -151,6 +151,8 @@ func (s *Service) Start() error {
 	// that starts over capacity tells the board's managers (TL-149)
 	_, _, _, _, notify := s.notifiers()
 	go sprints.Store{DB: s.DB, Notify: notify}.RunAutoClose(ctx, time.Minute)
+	// due dates: the day before and on the day, assignees and watchers are reminded (TL-631)
+	go tickets.DueReminders{Store: tickets.Store{DB: s.DB}, Notify: notify}.Run(ctx, time.Hour)
 	// every organization's Clerk member cap matches its plan: 20 on Free and Pro, unlimited on Enterprise (TL-418)
 	go billing.SyncAllMemberCaps(ctx, s.DB, billing.Skip{OrgUpdater: organization.NewClient(&clerk.ClientConfig{}), Orgs: config.Get(s.Config).ClerkUncappedOrgs})
 	// a new version of the Terms or Privacy policy on the web app: everyone's told once, in-app (TL-424)
