@@ -48,6 +48,7 @@ type Progress struct {
 // LinkedTicket is a ticket delivering a roadmap item; Done uses the board's-last-column rule.
 type LinkedTicket struct {
 	ID    string `json:"id"`
+	Key   string `json:"key,omitempty"` // e.g. TL-123
 	Title string `json:"title"`
 	Done  bool   `json:"done"`
 	Type  string `json:"type"` // epic: the milestone counts its sub-tickets, not it (TL-216)
@@ -113,8 +114,9 @@ func (s Store) Get(ctx context.Context, id string) (*Roadmap, error) {
 	for n, i := range r.Items {
 		idx[i.ID] = n
 	}
-	links, err := s.DB.Query(ctx, `SELECT l.item_id, t.id, t.title, `+boards.TicketDoneSQL+`, t.type::text
+	links, err := s.DB.Query(ctx, `SELECT l.item_id, t.id, COALESCE(p.key_prefix || '-' || t.number, ''), t.title, `+boards.TicketDoneSQL+`, t.type::text
 		FROM roadmap_item_tickets l JOIN roadmap_items ri ON ri.id = l.item_id JOIN tickets t ON t.id = l.ticket_id
+		JOIN projects p ON p.id = t.project_id
 		WHERE ri.roadmap_id = $1 ORDER BY t.title`, id)
 	if err != nil {
 		return nil, err
@@ -122,7 +124,7 @@ func (s Store) Get(ctx context.Context, id string) (*Roadmap, error) {
 	for links.Next() {
 		var itemID string
 		var lt LinkedTicket
-		if err := links.Scan(&itemID, &lt.ID, &lt.Title, &lt.Done, &lt.Type); err != nil {
+		if err := links.Scan(&itemID, &lt.ID, &lt.Key, &lt.Title, &lt.Done, &lt.Type); err != nil {
 			links.Close()
 			return nil, err
 		}
@@ -135,15 +137,7 @@ func (s Store) Get(ctx context.Context, id string) (*Roadmap, error) {
 	}
 	// progress counts what delivers the milestone: linked tickets, and for a linked epic its sub-tickets
 	// (the same ones its own progress counts), as they are now, so ones added later count too (TL-216)
-	counted, err := s.DB.Query(ctx, `SELECT DISTINCT ON (c.item_id, c.id) c.item_id, c.id, c.title, c.done FROM (
-			SELECT l.item_id, t.id, t.title, `+boards.TicketDoneSQL+` AS done
-			FROM roadmap_item_tickets l JOIN roadmap_items ri ON ri.id = l.item_id JOIN tickets t ON t.id = l.ticket_id
-			WHERE ri.roadmap_id = $1 AND t.type <> 'epic'
-			UNION ALL
-			SELECT l.item_id, t.id, t.title, `+boards.TicketDoneSQL+`
-			FROM roadmap_item_tickets l JOIN roadmap_items ri ON ri.id = l.item_id JOIN tickets e ON e.id = l.ticket_id AND e.type = 'epic'
-			JOIN tickets t ON t.parent_id = e.id AND t.duplicate_of IS NULL
-			WHERE ri.roadmap_id = $1) c`, id)
+	counted, err := s.DB.Query(ctx, `SELECT DISTINCT ON (c.item_id, c.id) c.item_id, c.id, c.title, c.done FROM `+countedSQL+` c`, id)
 	if err != nil {
 		return nil, err
 	}
@@ -168,6 +162,20 @@ func (s Store) Get(ctx context.Context, id string) (*Roadmap, error) {
 	r.Progress = AggregateProgress(allTickets)
 	return &r, counted.Err()
 }
+
+// countedSQL: the tickets that count towards a roadmap's ($1) progress, per item: linked tickets, and
+// for a linked epic its sub-tickets. done_at: when a done one was done (best guess if unstamped).
+var countedSQL = `(
+	SELECT l.item_id, t.id, t.title, ` + boards.TicketDoneSQL + ` AS done, t.created_at,
+		CASE WHEN ` + boards.TicketDoneSQL + ` THEN COALESCE(t.done_at, t.resolved_at, t.updated_at) END AS done_at
+	FROM roadmap_item_tickets l JOIN roadmap_items ri ON ri.id = l.item_id JOIN tickets t ON t.id = l.ticket_id
+	WHERE ri.roadmap_id = $1 AND t.type <> 'epic'
+	UNION ALL
+	SELECT l.item_id, t.id, t.title, ` + boards.TicketDoneSQL + `, t.created_at,
+		CASE WHEN ` + boards.TicketDoneSQL + ` THEN COALESCE(t.done_at, t.resolved_at, t.updated_at) END
+	FROM roadmap_item_tickets l JOIN roadmap_items ri ON ri.id = l.item_id JOIN tickets e ON e.id = l.ticket_id AND e.type = 'epic'
+	JOIN tickets t ON t.parent_id = e.id AND t.duplicate_of IS NULL
+	WHERE ri.roadmap_id = $1)`
 
 // DeriveItemStatus follows linked ticket completion while preserving the owner's manual status
 // for items that have no linked tickets.

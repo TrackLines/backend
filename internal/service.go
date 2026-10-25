@@ -468,6 +468,7 @@ func (s *Service) Handler() http.Handler {
 	mux.Handle("PUT /api/roadmaps/{id}/items/{item}/tickets", signedIn(r.SetItemTickets))       // item progress = linked tickets done
 	mux.Handle("GET /api/roadmaps/{id}/updates", public("roadmap-updates", 120, r.ListUpdates)) // public according to roadmap visibility
 	mux.Handle("POST /api/roadmaps/{id}/updates", signedIn(r.PublishUpdate))
+	mux.Handle("GET /api/roadmaps/{id}/report", signedIn(r.Report)) // burn-up JSON, or ?format=md the Markdown report (TL-616)
 
 	// Embedding (TL-494): an org's admins list the origins its public roadmap/request-form widgets may
 	// be loaded on; those origins get dynamic CORS on the public routes above (wired at the bottom).
