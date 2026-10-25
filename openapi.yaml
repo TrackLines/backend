@@ -132,8 +132,16 @@ paths:
               type: object
               required: [source]
               properties:
-                source: { type: string, example: jira }
-                options: { type: object, description: The source's own (credentials, which projects…). }
+                source: { type: string, enum: [csv], example: csv }
+                options:
+                  type: object
+                  description: >-
+                    The source's own. csv (TL-637): {"csv": the file's text, "name": the new project, "prefix": its key prefix,
+                    "mapping": {field: column header}} with fields title (required), description, type, priority, labels
+                    (split on ; , |), status (becomes the board's columns, a done-like one last; without it everything goes to
+                    the backlog), due and created. Common types and priorities from other tools are understood (story → feature,
+                    blocker → urgent…); unknown types import as tasks and are listed as skipped. The file travels in this
+                    request, so it's limited to about 1 MB.
       responses:
         '201': { description: The preview., content: { application/json: { schema: { $ref: '#/components/schemas/Import' } } } }
         '400': { description: Unknown source, or the source couldn't plan (it says why). }
@@ -2326,6 +2334,25 @@ paths:
                         error: { type: string }
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+  /projects/{projectId}/export.csv:
+    get:
+      tags: [Projects]
+      operationId: exportProjectCSV
+      summary: Every ticket in the project as CSV (TL-637)
+      description: >-
+        Backlog and boards, open and closed, oldest first, with the columns Key, Title, Description, Type, Priority, Estimate,
+        Labels (joined with "; "), Board, Column, State (open, done, wont_do, duplicate), Assignee (by name where known),
+        Parent, Created, Done and Due. Cells that a spreadsheet would run as a formula (starting = + - @) get a leading '; the
+        CSV import takes it off again.
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+      responses:
+        '200':
+          description: The CSV, as a download named after the project.
+          content:
+            text/csv: { schema: { type: string } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
   /projects/{projectId}/views:
     parameters:
       - $ref: '#/components/parameters/ProjectId'
@@ -5115,6 +5142,9 @@ components:
         import_not_done: only a finished import can be scrapped
         import_changed: someone has worked on what this import created, so it can't be scrapped
         unknown_import_source: unknown import source
+        csv_options: "send the CSV, the new project's name and key prefix, and which column is the title"
+        csv_unreadable: "that file couldn't be read as CSV"
+        csv_column: "there's no column with that name"
         bad_webhook_url: "the URL must be https and not a private address"
         bad_webhook_events: "pick at least one known event"
         webhook_limit: "an organization can have up to 10 webhook endpoints"
