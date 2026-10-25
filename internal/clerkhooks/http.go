@@ -15,7 +15,27 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/tracklines/backend/internal/billing"
+	"github.com/tracklines/backend/internal/boards"
 )
+
+// Author is who a comment the system writes is by (shown as recorded: it's not a person's id).
+const Author = "TrackLin.es"
+
+// unassign frees the open tickets assigned to $user (in projects owned by $org, unless org is
+// empty: everywhere) and says why on each, in a comment (TL-608). Done tickets keep their assignee.
+// A replay finds nothing still assigned, so it never comments twice.
+func unassign(org, user, why string) string {
+	scope := ""
+	if org != "" {
+		scope = ` AND t.project_id IN (SELECT id FROM projects WHERE owner_clerk_id = ` + org + `)`
+	}
+	return `WITH freed AS (
+		UPDATE tickets_all t SET assigned_to = NULL, updated_at = now()
+		WHERE t.assigned_to = ` + user + scope + ` AND NOT ` + boards.TicketDoneSQL + `
+		RETURNING t.id)
+	INSERT INTO ticket_comments (ticket_id, body, author)
+	SELECT id, '` + why + `', '` + Author + `' FROM freed`
+}
 
 type System struct {
 	DB     *pgxpool.Pool
@@ -76,7 +96,7 @@ func (s System) Webhook(now func() time.Time) http.HandlerFunc {
 
 // apply runs one event's cleanup in a transaction. A deleted org's projects, boards, tickets and files
 // are kept 30 days (recoverable; nobody can reach them without the org), then Purge removes them for
-// good. Ticket assignments are kept too.
+// good. A leaver's open tickets are unassigned; done ones keep their assignee.
 func (s System) apply(ctx context.Context, e event) error {
 	if e.Type == "organization.created" { // a new organization starts on Free: up to 20 members (TL-418)
 		return billing.SyncMemberCap(ctx, s.DB, s.ClerkOrgs, e.Data.ID)
@@ -102,6 +122,7 @@ func (s System) apply(ctx context.Context, e event) error {
 			`DELETE FROM org_admins WHERE org_id = $1 AND user_clerk_id = $2`,
 			`DELETE FROM team_members WHERE user_clerk_id = $2 AND team_id IN (SELECT id FROM teams WHERE org_id = $1)`,
 			`UPDATE api_keys SET revoked_at = now() WHERE org_id = $1 AND owner_clerk_id = $2 AND revoked_at IS NULL`,
+			unassign("$1", "$2", "Unassigned automatically: the assignee left the organization, so this ticket is free to pick up."),
 		}
 	case "user.deleted":
 		if e.Data.ID == "" {
@@ -112,6 +133,7 @@ func (s System) apply(ctx context.Context, e event) error {
 			`DELETE FROM org_admins WHERE user_clerk_id = $1`,
 			`DELETE FROM team_members WHERE user_clerk_id = $1`,
 			`UPDATE api_keys SET revoked_at = now() WHERE owner_clerk_id = $1 AND revoked_at IS NULL`,
+			unassign("", "$1", "Unassigned automatically: the assignee’s account was deleted, so this ticket is free to pick up."),
 			`DELETE FROM chat_dms WHERE user_clerk_id = $1`, // no more Chat messages to them (TL-289)
 			// their personal data goes too (TL-594, UK GDPR erasure); their id stays on tickets and
 			// comments they made, which show as an unknown person. Stripe keeps its own billing records.

@@ -217,8 +217,8 @@ func TestWebhook(t *testing.T) {
 	if !live(aliceB) || !live(carolC) || personal("alice") != 9 {
 		t.Fatal("user deletion touched other users")
 	}
-	// his work stays, under his id; his revoked key stays on record
-	if count(`SELECT count(*) FROM tickets WHERE created_by = 'bob' AND assigned_to = 'bob'`) != 1 ||
+	// his work stays, under his id (his open ticket is unassigned: TL-608); his revoked key stays on record
+	if count(`SELECT count(*) FROM tickets WHERE created_by = 'bob' AND assigned_to IS NULL`) != 1 ||
 		count(`SELECT count(*) FROM ticket_comments WHERE author = 'bob'`) != 1 ||
 		count(`SELECT count(*) FROM api_keys WHERE owner_clerk_id = 'bob' AND revoked_at IS NOT NULL`) != 1 {
 		t.Fatal("bob's tickets, comments or revoked key went")
