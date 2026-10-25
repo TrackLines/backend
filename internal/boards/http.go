@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/bugfixes/go-bugfixes/logs"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -84,7 +85,8 @@ func (h System) Get(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusOK, b)
 }
 
-// Flow reports completed tickets, cycle-time percentiles, and weekly throughput for a board.
+// Flow reports completed tickets, cycle-time percentiles, weekly throughput, WIP and work mix for a
+// board; ?format=md sends it as a Markdown download.
 func (h System) Flow(w http.ResponseWriter, r *http.Request) {
 	weeks := 12
 	if raw := r.URL.Query().Get("weeks"); raw != "" {
@@ -98,6 +100,11 @@ func (h System) Flow(w http.ResponseWriter, r *http.Request) {
 	f, err := h.store.Flow(r.Context(), auth.OrgID(r.Context()), r.PathValue("id"), weeks)
 	if err != nil {
 		writeErr(w, r, err)
+		return
+	}
+	if wantsMarkdown(r) { // TL-621
+		loc, now := httpx.Zone(r.Context()), time.Now()
+		sendMarkdown(w, f.BoardName, now.In(loc), FlowMarkdown(f, loc, now))
 		return
 	}
 	httpx.JSON(w, http.StatusOK, f)
