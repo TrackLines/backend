@@ -123,3 +123,48 @@ func TestSendMarkdown(t *testing.T) {
 		t.Error("slug, cell or label")
 	}
 }
+
+// TL-618: share charts as Mermaid pies, each ahead of its table; zero slices dropped, none drawn when all zero.
+func TestMarkdownPies(t *testing.T) {
+	md := BoardMarkdown(mdReport, mdFrom, mdTo, time.UTC, mdNow)
+	for _, s := range []string{
+		"## Work mix\n\n```mermaid\npie showData\n    title Delivered points by type\n    \"Bugs\" : 2\n    \"Features\" : 1\n```\n\n| Type | Tickets | Points |",
+		// the running sprint's goal counts neither way
+		"## Sprint goals\n\n```mermaid\npie showData\n    title Sprint goals met\n    \"Met\" : 1\n    \"Not met\" : 1\n```\n\n| Sprint | Goal |",
+	} {
+		if !strings.Contains(md, s) {
+			t.Errorf("missing %q\n%s", s, md)
+		}
+	}
+
+	r := &Rollup{Name: "Shop",
+		Boards:  []Report{{BoardName: "Backend", Unit: "points", Totals: ReportTotals{Done: 8}}, {BoardName: "Web", Unit: "points", Totals: ReportTotals{Done: 4}}, {BoardName: "Design", Unit: "tickets", Totals: ReportTotals{Done: 1}}},
+		Overall: OverallTotals{GoalsSet: 3, GoalsMet: 2},
+	}
+	md = RollupMarkdown(r, mdFrom, mdTo, time.UTC, mdNow)
+	for _, s := range []string{
+		"title Points delivered by board\n    \"Backend\" : 8\n    \"Web\" : 4\n```",
+		"title Tickets delivered by board\n    \"Design\" : 1\n```\n\n| Board | Sprints |",
+		"## Sprint goals\n\n```mermaid\npie showData\n    title Sprint goals met\n    \"Met\" : 2\n    \"Not met\" : 1\n```\n\n| Met | Not met |\n| --- | --- |\n| 2 | 1 |",
+	} {
+		if !strings.Contains(md, s) {
+			t.Errorf("missing %q\n%s", s, md)
+		}
+	}
+	r.Projects, r.Boards = []Rollup{{Name: "Shop", Points: &ReportTotals{Done: 5}, Tickets: &ReportTotals{Done: 2}}, {Name: "Ops", Tickets: &ReportTotals{Done: 3}}}, nil
+	if md = RollupMarkdown(r, mdFrom, mdTo, time.UTC, mdNow); !strings.Contains(md, "title Points delivered by project\n    \"Shop\" : 5\n```") || !strings.Contains(md, "title Tickets delivered by project\n    \"Shop\" : 2\n    \"Ops\" : 3\n```") {
+		t.Errorf("org pies:\n%s", md)
+	}
+
+	// nothing delivered, no goals: tables only
+	r = &Rollup{Name: "Shop", Boards: []Report{{BoardName: "Backend", Unit: "points"}}}
+	if md = RollupMarkdown(r, mdFrom, mdTo, time.UTC, mdNow); strings.Contains(md, "pie") || strings.Contains(md, "## Sprint goals") || !strings.Contains(md, "| Backend |") {
+		t.Errorf("all-zero pies drawn:\n%s", md)
+	}
+
+	var d mdDoc
+	d.pie("x", []slice{{"say \"hi\": now\nok", 3}, {"empty", 0}})
+	if got := d.b.String(); !strings.Contains(got, "    \"say 'hi': now ok\" : 3\n") || strings.Contains(got, "empty") {
+		t.Errorf("pie labels:\n%s", got)
+	}
+}
