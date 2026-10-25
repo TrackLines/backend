@@ -89,8 +89,8 @@ func (h System) Mute(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// Mentions: GET /api/mentions?limit=&hide_done= — tickets that mention the caller, one per ticket, newest
-// mention first (limit 1–100, default 10). hide_done=true leaves out done and closed tickets.
+// Mentions: GET /api/mentions?limit=&status= — tickets that mention the caller, one per ticket, newest
+// mention first (limit 1–100, default 10). status=open|done|all (default all; hide_done=true still means open).
 func (h System) Mentions(w http.ResponseWriter, r *http.Request) {
 	limit, ok := intParam(w, r, "limit", 10, 100)
 	if !ok {
@@ -112,7 +112,7 @@ type MentionsPage struct {
 	PerPage  int       `json:"per_page"`
 }
 
-// PageMentions: GET /api/mentions/page?page=&per_page=&hide_done= — Mentions a page at a time (per_page 1–100, default 25).
+// PageMentions: GET /api/mentions/page?page=&per_page=&status= — Mentions a page at a time (per_page 1–100, default 25).
 func (h System) PageMentions(w http.ResponseWriter, r *http.Request) {
 	page, ok := intParam(w, r, "page", 1, 100_000)
 	if !ok {
@@ -144,10 +144,31 @@ func intParam(w http.ResponseWriter, r *http.Request, name string, def, max int)
 	return n, true
 }
 
+// ErrBadStatus is a mentions status that isn't open, done or all.
+var ErrBadStatus = httpx.Code("bad_mention_status", "status must be open, done or all")
+
+// mentionStatus is which mentioned tickets to list: status=open|done|all (TL-589), else
+// hide_done=true for open ones (older clients), else all.
+func mentionStatus(r *http.Request) (string, error) {
+	switch s := r.URL.Query().Get("status"); s {
+	case "open", "done", "all":
+		return s, nil
+	case "":
+		if r.URL.Query().Get("hide_done") == "true" {
+			return "open", nil
+		}
+		return "all", nil
+	}
+	return "", ErrBadStatus
+}
+
 // mentioned lists the caller's mentioned tickets (latest mention each, newest first) and how many in all.
 func (h System) mentioned(r *http.Request, limit, offset int) ([]Mention, int, error) {
 	user, _ := auth.UserID(r.Context())
-	hideDone := r.URL.Query().Get("hide_done") == "true"
+	status, err := mentionStatus(r)
+	if err != nil {
+		return nil, 0, err
+	}
 	// newest first by the full timestamp, then the uuidv7 id, so same-second mentions keep their order
 	rows, err := h.store.DB.Query(r.Context(), `SELECT *, count(*) OVER () FROM (
 		SELECT DISTINCT ON (m.ticket_id) m.ticket_id::text, p.key_prefix || '-' || t.number, t.title, `+boards.TicketDoneSQL+` AS done, p.name,
@@ -156,8 +177,8 @@ func (h System) mentioned(r *http.Request, limit, offset int) ([]Mention, int, e
 		FROM ticket_mentions m JOIN tickets t ON t.id = m.ticket_id JOIN projects p ON p.id = t.project_id
 		WHERE m.user_id = $1 AND m.org_id = $2 AND p.owner_clerk_id = $2
 		ORDER BY m.ticket_id, m.created_at DESC, m.id DESC) latest
-		WHERE NOT ($5 AND done)
-		ORDER BY 9 DESC, 10 DESC LIMIT $3 OFFSET $4`, user, auth.OrgID(r.Context()), limit, offset, hideDone)
+		WHERE $5 = 'all' OR done = ($5 = 'done')
+		ORDER BY 9 DESC, 10 DESC LIMIT $3 OFFSET $4`, user, auth.OrgID(r.Context()), limit, offset, status)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -194,7 +215,7 @@ func writeErr(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, ErrNotFound):
 		http.Error(w, "not found", http.StatusNotFound)
-	case errors.Is(err, ErrBadParent), errors.Is(err, ErrBadBody):
+	case errors.Is(err, ErrBadParent), errors.Is(err, ErrBadBody), errors.Is(err, ErrBadStatus):
 		httpx.Error(w, r, http.StatusBadRequest, err)
 	default:
 		logs.Errorf("comments: %v", err)

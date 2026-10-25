@@ -117,7 +117,21 @@ func TestMentionNotifications(t *testing.T) {
 	if _, p := paged("?page=5"); len(p.Mentions) != 0 {
 		t.Fatalf("past the end: %+v", p)
 	}
-	for _, q := range []string{"?page=0", "?per_page=101", "?page=x"} {
+	// status=open|done|all (TL-589); hide_done=true is the older status=open
+	for q, want := range map[string]string{"?status=done": "MN-2", "?status=open": "MN-1", "?status=all": "MN-1,MN-2", "?status=open&hide_done=false": "MN-1"} {
+		var keys []string
+		_, p := paged(q)
+		for _, m := range p.Mentions {
+			keys = append(keys, m.Key)
+		}
+		if got := strings.Join(keys, ","); got != want || p.Total != len(keys) {
+			t.Fatalf("%s: %s (total %d)", q, got, p.Total)
+		}
+	}
+	if code, _ := mine("user_ava", "?status=closed"); code != 400 {
+		t.Fatalf("bad status: %d", code)
+	}
+	for _, q := range []string{"?page=0", "?per_page=101", "?page=x", "?status=nope"} {
 		if code, _ := paged(q); code != 400 {
 			t.Fatalf("%s: %d", q, code)
 		}
