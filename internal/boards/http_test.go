@@ -117,6 +117,19 @@ func TestBoardHandlers(t *testing.T) {
 	expect(400, "update", org, "admin-u", used.ID, `{"name":"  "}`)
 	expect(400, "update", org, "admin-u", used.ID, `{"estimate_scale":"bananas"}`)
 	expect(400, "update", org, "admin-u", used.ID, `{"style":"waterfall"}`)
+	// Review column (TL-592): the same rules as Dev complete; "" goes back to the column before Done
+	expect(204, "update", org, "admin-u", used.ID, `{"review_column_id":"`+used.Columns[1].ID+`"}`)
+	if got, _ := s.Get(ctx, used.ID, org); got.ReviewColumn == nil || *got.ReviewColumn != used.Columns[1].ID {
+		t.Fatalf("review column saved: %+v", got.ReviewColumn)
+	}
+	expect(400, "update", org, "admin-u", used.ID, `{"review_column_id":"`+used.Columns[0].ID+`"}`)
+	expect(400, "update", org, "admin-u", used.ID, `{"review_column_id":"`+used.Columns[len(used.Columns)-1].ID+`"}`)
+	expect(400, "update", org, "admin-u", used.ID, `{"review_column_id":"`+led.Columns[1].ID+`"}`)
+	expect(404, "update", other, "admin-x", used.ID, `{"review_column_id":""}`)
+	expect(204, "update", org, "admin-u", used.ID, `{"review_column_id":""}`)
+	if got, _ := s.Get(ctx, used.ID, org); got.ReviewColumn != nil {
+		t.Fatalf("review column cleared: %+v", got.ReviewColumn)
+	}
 	// Dev complete (TL-531): one of the board's own columns, not Done; "" turns it off
 	expect(204, "update", org, "admin-u", used.ID, `{"dev_complete_column_id":"`+used.Columns[1].ID+`"}`)
 	if got, _ := s.Get(ctx, used.ID, org); got.DevComplete == nil || *got.DevComplete != used.Columns[1].ID {

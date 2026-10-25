@@ -52,6 +52,36 @@ func TestTemplates(t *testing.T) {
 	if full.Style != "kanban" || len(full.Columns) != 4 || full.Columns[1].WIPLimit == nil || *full.Columns[1].WIPLimit != 3 || full.Columns[3].Name != "Done" {
 		t.Fatalf("kanban board: %+v", full)
 	}
+	// TL-592: Kanban's and Scrum's Review column is the board's review column
+	if full.ReviewColumn == nil || *full.ReviewColumn != full.Columns[2].ID {
+		t.Fatalf("kanban review column: %v", full.ReviewColumn)
+	}
+	scrum, _ := s.Template(ctx, org, "builtin:scrum")
+	if sb, _ := s.CreateFrom(ctx, org, pid, "Sprints", "", scrum); sb.ReviewColumn == nil || *sb.ReviewColumn != sb.Columns[2].ID {
+		t.Fatalf("scrum review column: %+v", sb)
+	}
+	// saved from a board, the flag comes along; it must sit between To do and Done, once
+	if from, err := s.TemplateFromBoard(ctx, org, b.ID); err != nil || !from.Columns[2].Review || from.Columns[1].Review {
+		t.Fatalf("from board: %+v %v", from.Columns, err)
+	}
+	for _, cols := range [][]TemplateColumn{
+		{{Name: "To do", Review: true}, {Name: "Done"}},
+		{{Name: "To do"}, {Name: "Done", Review: true}},
+		{{Name: "To do"}, {Name: "A", Review: true}, {Name: "B", Review: true}, {Name: "Done"}},
+	} {
+		bad := Template{Name: "x", Style: "sprints", EstimateScale: "none", Columns: cols}
+		if bad.valid() == nil {
+			t.Fatalf("accepted %+v", cols)
+		}
+	}
+	// deleting the review column clears the setting
+	gone, _ := s.CreateFrom(ctx, org, pid, "Gone", "", kanban)
+	if _, err := db.Exec(ctx, `DELETE FROM columns WHERE id = $1`, gone.Columns[2].ID); err != nil {
+		t.Fatal(err)
+	}
+	if again, _ := s.Get(ctx, gone.ID, org); again.ReviewColumn != nil {
+		t.Fatalf("deleted review column: %v", again.ReviewColumn)
+	}
 	// plain Create is still Simple
 	if simple, _ := s.Create(ctx, org, pid, "Plain", ""); len(simple.Columns) != 3 || simple.Style != "sprints" {
 		t.Fatalf("simple board: %+v", simple)

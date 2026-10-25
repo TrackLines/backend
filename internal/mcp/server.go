@@ -53,7 +53,7 @@ const Instructions = "TrackLin.es boards, backlog and tickets. Work is organised
 	"5. Run the tests and make sure they pass (the whole suite, not just the new ones). Don't finish a ticket with failing or skipped tests.\n" +
 	"6. Comment what you did: add_comment with what changed, where, and the test results.\n" +
 	"7. Finish it: move_ticket to the board's last column. On a board with agent review (get_board: agent_review) this puts it " +
-	"in review instead (the response says needs_review) and a person approves it; otherwise it's Done. Never leave finished work in To do or In progress.\n" +
+	"in the board's review column instead (get_board: review_column_id; the column before Done when that's null; the response says needs_review) and a person approves it; otherwise it's Done. Never leave finished work in To do or In progress.\n" +
 	"If you stop before finishing, say why in a comment and release_ticket so someone else can pick it up."
 
 func Handler(api http.Handler, version string) http.Handler {

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
@@ -26,6 +27,7 @@ type Template struct {
 type TemplateColumn struct {
 	Name     string `json:"name"`
 	WIPLimit *int   `json:"wip_limit"`
+	Review   bool   `json:"review,omitempty"` // the board's review column (TL-592): one at most, between To do and Done
 }
 
 func wip(n int) *int { return &n }
@@ -35,9 +37,9 @@ var Builtins = []Template{
 	{ID: "builtin:simple", Name: "Simple", Builtin: true, Style: "sprints", EstimateScale: "none",
 		Columns: []TemplateColumn{{Name: "To do"}, {Name: "In progress"}, {Name: "Done"}}},
 	{ID: "builtin:scrum", Name: "Scrum", Builtin: true, Style: "sprints", EstimateScale: "fibonacci",
-		Columns: []TemplateColumn{{Name: "To do"}, {Name: "In progress"}, {Name: "Review"}, {Name: "Done"}}},
+		Columns: []TemplateColumn{{Name: "To do"}, {Name: "In progress"}, {Name: "Review", Review: true}, {Name: "Done"}}},
 	{ID: "builtin:kanban", Name: "Kanban", Builtin: true, Style: "kanban", EstimateScale: "none",
-		Columns: []TemplateColumn{{Name: "Ready"}, {Name: "In progress", WIPLimit: wip(3)}, {Name: "Review", WIPLimit: wip(2)}, {Name: "Done"}}},
+		Columns: []TemplateColumn{{Name: "Ready"}, {Name: "In progress", WIPLimit: wip(3)}, {Name: "Review", WIPLimit: wip(2), Review: true}, {Name: "Done"}}},
 }
 
 var ErrBadTemplate = httpx.Code("bad_template", "invalid template")
@@ -63,6 +65,12 @@ func (t *Template) valid() error {
 		}
 		if c.WIPLimit != nil && (*c.WIPLimit < 1 || *c.WIPLimit > 999) {
 			return errors.New("wip_limit must be between 1 and 999")
+		}
+		if c.Review && (i == 0 || i == len(t.Columns)-1) {
+			return errors.New("the review column goes between To do and Done")
+		}
+		if c.Review && slices.ContainsFunc(t.Columns[:i], func(o TemplateColumn) bool { return o.Review }) {
+			return errors.New("only one column can be the review column")
 		}
 	}
 	return nil
@@ -113,13 +121,14 @@ func (s Store) TemplateFromBoard(ctx context.Context, org, boardID string) (Temp
 		Scan(&t.Style, &t.EstimateScale); err != nil {
 		return t, notFound(err)
 	}
-	rows, err := s.DB.Query(ctx, `SELECT name, wip_limit FROM columns WHERE board_id::text = $1 ORDER BY position`, boardID)
+	rows, err := s.DB.Query(ctx, `SELECT c.name, c.wip_limit, (c.id = b.review_column_id) IS TRUE FROM columns c JOIN boards b ON b.id = c.board_id
+		WHERE c.board_id::text = $1 ORDER BY c.position`, boardID)
 	if err != nil {
 		return t, err
 	}
 	t.Columns, err = pgx.CollectRows(rows, func(row pgx.CollectableRow) (TemplateColumn, error) {
 		var c TemplateColumn
-		return c, row.Scan(&c.Name, &c.WIPLimit)
+		return c, row.Scan(&c.Name, &c.WIPLimit, &c.Review)
 	})
 	return t, err
 }
@@ -150,6 +159,13 @@ func (s Store) CreateFrom(ctx context.Context, owner, projectID, name, desc stri
 				return err
 			}
 			b.Columns = append(b.Columns, col)
+			if c.Review {
+				b.ReviewColumn = &col.ID
+			}
+		}
+		if b.ReviewColumn != nil {
+			_, err := tx.Exec(ctx, `UPDATE boards SET review_column_id = $2 WHERE id = $1`, b.ID, *b.ReviewColumn)
+			return err
 		}
 		return nil
 	})

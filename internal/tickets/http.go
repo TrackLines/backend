@@ -311,7 +311,7 @@ func (h System) Move(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if review { // an agent finished it on a board with agent review: a person has to approve it
-		httpx.JSON(w, http.StatusOK, map[string]any{"needs_review": true, "message": "Moved to the column before Done to wait for a person's review."})
+		httpx.JSON(w, http.StatusOK, map[string]any{"needs_review": true, "message": "Moved to the board's review column to wait for a person's review."})
 		return
 	}
 	if len(alsoMoved) > 0 { // it left its board and took its open sub-tickets with it (TL-218)

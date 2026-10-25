@@ -575,11 +575,11 @@ func (s Store) moveTx(ctx context.Context, tx pgx.Tx, owner, id, toColumn string
 				estimate = nil
 			}
 		}
-		// Needs review: an agent's move into Done on a review board stops one column short (a board
-		// with a single column has nowhere to wait, so it goes through)
+		// Needs review: an agent's move into Done on a review board waits in its review column (TL-592),
+		// else one column short (a board with a single column has nowhere to wait, so it goes through)
 		if o.agent {
 			var reviewCol *string
-			if err := tx.QueryRow(ctx, `SELECT (SELECT c.id FROM columns c WHERE c.board_id = b.id ORDER BY c.position DESC OFFSET 1 LIMIT 1)
+			if err := tx.QueryRow(ctx, `SELECT COALESCE(b.review_column_id, (SELECT c.id FROM columns c WHERE c.board_id = b.id ORDER BY c.position DESC OFFSET 1 LIMIT 1))
 				FROM boards b WHERE b.id = $1 AND b.agent_review
 					AND $2 = (SELECT d.id FROM columns d WHERE d.board_id = b.id ORDER BY d.position DESC LIMIT 1)`, boardID, toColumn).Scan(&reviewCol); err != nil && !errors.Is(err, pgx.ErrNoRows) {
 				return err
