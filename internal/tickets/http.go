@@ -424,7 +424,10 @@ func (h System) Claim(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, r, err)
 		return
 	}
-	httpx.JSON(w, http.StatusOK, t)
+	httpx.JSON(w, http.StatusOK, struct {
+		*Ticket
+		InProgressColumnID *string `json:"in_progress_column_id"` // where to move it as you start; null: none (TL-591)
+	}{t, h.store.InProgressColumn(r.Context(), t.ColumnID)})
 }
 
 // Release clears the current caller's assignment.

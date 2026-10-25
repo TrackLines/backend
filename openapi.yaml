@@ -1825,10 +1825,15 @@ paths:
         - $ref: '#/components/parameters/TicketId'
       responses:
         '200':
-          description: Claimed ticket.
+          description: Claimed ticket, with where to move it as work starts.
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/Ticket' }
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Ticket'
+                  - type: object
+                    properties:
+                      in_progress_column_id: { type: [string, 'null'], format: uuid, description: "The column after To do, to move it to as you start; null when the board has only To do and Done (leave it in To do) or the ticket is in the backlog." }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { description: Server/service API keys cannot claim tickets. }
         '404': { $ref: '#/components/responses/NotFound' }

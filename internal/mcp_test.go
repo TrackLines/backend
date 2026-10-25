@@ -87,7 +87,7 @@ func TestMCP(t *testing.T) {
 
 	// agents are told the whole chain on connect: read, claim, in progress, tests that pass, comment, review/Done
 	got := cs.InitializeResult().Instructions
-	for _, step := range []string{"claim_ticket", "in-progress column", "write or update tests", "make sure they pass", "add_comment", "last column", "needs_review", "release_ticket", "list_attachments"} {
+	for _, step := range []string{"claim_ticket", "in-progress column", "write or update tests", "make sure they pass", "add_comment", "last column", "needs_review", "release_ticket", "list_attachments", "in_progress_column_id", "only To do and Done"} {
 		if !strings.Contains(got, step) {
 			t.Fatalf("instructions miss %q:\n%s", step, got)
 		}
