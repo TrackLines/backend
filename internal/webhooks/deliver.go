@@ -75,13 +75,14 @@ type job struct {
 	secret               []byte
 }
 
-// claim takes up to n due deliveries of enabled endpoints.
+// claim takes up to n due deliveries of enabled endpoints of orgs on Pro or Enterprise.
 func (w Worker) claim(ctx context.Context, n int) ([]job, error) {
 	rows, err := w.DB.Query(ctx, `UPDATE webhook_outbox d SET next_attempt_at = now() + $2::interval
 		FROM webhook_endpoints e
 		WHERE e.id = d.endpoint_id AND d.id IN (
 			SELECT x.id FROM webhook_outbox x JOIN webhook_endpoints xe ON xe.id = x.endpoint_id
 			WHERE x.state = 'pending' AND x.next_attempt_at <= now() AND xe.enabled
+				AND `+paidSQL("xe.org_id")+` -- back on Free: they wait, unsent and not failed
 			ORDER BY x.next_attempt_at LIMIT $1 FOR UPDATE OF x SKIP LOCKED)
 		RETURNING d.id::text, d.event, to_char(d.created_at AT TIME ZONE 'UTC', `+utc+`), d.data, d.attempts,
 			e.id::text, e.org_id, e.url, e.secret`, n, lease)

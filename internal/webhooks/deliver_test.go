@@ -234,3 +234,47 @@ func TestClaimSkipsLocked(t *testing.T) {
 		t.Fatalf("sent %d requests for %d deliveries", len(rc.got), len(seen))
 	}
 }
+
+// An org back on Free gets nothing: no new events queued, and what was queued isn't sent (or failed).
+func TestFreeOrgSendsNothing(t *testing.T) {
+	ctx := context.Background()
+	h := setupOrgs(t)
+	db := h.store.DB
+	rc := &receiver{status: 200}
+	srv := httptest.NewTLSServer(rc)
+	defer srv.Close()
+	e, _, err := h.store.Create(ctx, "wh2", "user_other", srv.URL, []string{"ticket.created"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	created := func() error {
+		return Emit(ctx, db, "wh2", "ticket.created", func() (any, error) { return map[string]string{"id": "t"}, nil })
+	}
+	if err := created(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(ctx, `UPDATE org_billing SET stripe_status = 'canceled' WHERE org_id = 'wh2'`); err != nil {
+		t.Fatal(err)
+	}
+	if err := created(); err != nil {
+		t.Fatal(err)
+	}
+	ds, _, _ := h.store.Deliveries(ctx, "wh2", e.ID, 1)
+	if len(ds) != 1 {
+		t.Fatalf("queued on Free: %d", len(ds))
+	}
+	w := Worker{DB: db, Box: h.store.Box, Client: srv.Client()}
+	if _, err := w.Tick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if ds, _, _ = h.store.Deliveries(ctx, "wh2", e.ID, 1); rc.count() != 0 || ds[0].State != "pending" || ds[0].Attempts != 0 {
+		t.Fatalf("sent for a Free org: %d requests, %+v", rc.count(), ds[0])
+	}
+	// paying again: it goes
+	if _, err := db.Exec(ctx, `UPDATE org_billing SET stripe_status = 'active' WHERE org_id = 'wh2'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.Tick(ctx); err != nil || rc.count() != 1 {
+		t.Fatalf("after upgrading: %d %v", rc.count(), err)
+	}
+}

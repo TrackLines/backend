@@ -110,7 +110,9 @@ func (s Store) closeOnBoard(ctx context.Context, owner, id, resolution string) e
 	var current string
 	_ = s.DB.QueryRow(ctx, `SELECT coalesce(column_id::text, '') FROM tickets WHERE id = $1`, id).Scan(&current)
 	if current != done {
-		if err := s.Move(ctx, owner, id, done, 0); err != nil {
+		// closed as it moves, so its webhook events carry the resolution (TL-635); its parent is
+		// completed by afterResolve
+		if err := s.move(ctx, owner, id, done, 0, &moveOpts{lock: true, resolution: resolution}); err != nil {
 			return err
 		}
 	}

@@ -533,7 +533,8 @@ func (s Store) MoveGroup(ctx context.Context, owner, id, toColumn string, pos in
 type moveOpts struct {
 	lock, require bool
 	estimate      *string
-	agent         bool // set by: an API key; review is set when its move into Done became a review request
+	resolution    string // closing it into Done as done or wont_do (closeOnBoard); "" for any other move
+	agent         bool   // set by: an API key; review is set when its move into Done became a review request
 	review        bool
 	left          *string // set by the move: the board it left for another one (its sub-tickets follow, TL-218)
 	toBoard       string
@@ -637,7 +638,7 @@ func (s Store) moveTx(ctx context.Context, tx pgx.Tx, owner, id, toColumn string
 		}
 		pos = max(0, min(pos, len(ids)))
 		ids = append(ids[:pos], append([]string{id}, ids[pos:]...)...)
-		if err := tx.QueryRow(ctx, `UPDATE tickets t SET board_id = $2, column_id = $3, sprint_id = $4, resolved_at = NULL, resolution = NULL, updated_at = now(),
+		if err := tx.QueryRow(ctx, `UPDATE tickets t SET board_id = $2, column_id = $3, sprint_id = $4, resolved_at = CASE WHEN $7 <> '' THEN now() END, resolution = NULLIF($7, ''), updated_at = now(),
 				planned_sprint_id = NULL, -- on a board now: out of any plan
 				estimate = $5,
 				-- waiting for review only while an agent's finish is held; any other move clears it
@@ -651,7 +652,7 @@ func (s Store) moveTx(ctx context.Context, tx pgx.Tx, owner, id, toColumn string
 				-- ponytail: reordering columns doesn't restamp; Done is still decided by DoneSQL
 				done_at = CASE WHEN $3 = (SELECT dc.id FROM columns dc WHERE dc.board_id = $2 ORDER BY dc.position DESC LIMIT 1)
 					THEN COALESCE(t.done_at, now()) END
-			WHERE t.id = $1 RETURNING t.done_at IS NOT NULL`, id, boardID, toColumn, sprint, estimate, o.review).Scan(&done); err != nil {
+			WHERE t.id = $1 RETURNING t.done_at IS NOT NULL`, id, boardID, toColumn, sprint, estimate, o.review, o.resolution).Scan(&done); err != nil {
 			return err
 		}
 		if fromBoard != nil && *fromBoard != boardID {

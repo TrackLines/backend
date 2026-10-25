@@ -60,6 +60,10 @@ func emit(ctx context.Context, q Querier, org, event string, data func() (any, e
 		org, event).Scan(&wanted); err != nil || !wanted {
 		return err
 	}
+	// webhooks are Pro and Enterprise: an org back on Free keeps its endpoints but gets nothing
+	if err := q.QueryRow(ctx, `SELECT `+paidSQL("$1"), org).Scan(&wanted); err != nil || !wanted {
+		return err
+	}
 	v, err := data()
 	if err != nil {
 		return err
@@ -71,6 +75,13 @@ func emit(ctx context.Context, q Querier, org, event string, data func() (any, e
 	_, err = q.Exec(ctx, `INSERT INTO webhook_outbox (endpoint_id, event, data)
 		SELECT id, $2, $3::jsonb FROM webhook_endpoints WHERE org_id = $1 AND enabled AND $2 = ANY (events)`, org, event, string(b))
 	return err
+}
+
+// paidSQL: org (an SQL expression) is on Pro or Enterprise, as billing.PlanOf decides it: a live
+// subscription whose plan isn't free (a live one with no plan predates tiers: Enterprise).
+func paidSQL(org string) string {
+	return `EXISTS (SELECT 1 FROM org_billing ob WHERE ob.org_id = ` + org + `
+		AND ob.stripe_status IN ('active', 'trialing') AND COALESCE(ob.plan, 'enterprise') <> 'free')`
 }
 
 // Endpoint is one of an org's webhook URLs; never its secret.

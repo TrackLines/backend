@@ -201,7 +201,8 @@ paths:
       summary: The organization's webhook endpoints
       description: >-
         Org admins (signed in, or their own API key). Behind the webhooks flag; 404 when it's off. Allowed on
-        any plan, so an organization back on Free can still see, turn off and delete its endpoints.
+        any plan, so an organization back on Free can still see, turn off and delete its endpoints (while on
+        Free nothing is queued or sent to them).
       responses:
         '200': { description: Endpoints, oldest first (never their secrets)., content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/WebhookEndpoint' } } } } }
         '401': { $ref: '#/components/responses/Unauthorized' }

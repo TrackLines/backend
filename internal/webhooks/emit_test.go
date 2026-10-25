@@ -3,8 +3,13 @@ package webhooks_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"net/http/httptest"
 	"slices"
+	"strings"
 	"testing"
+
+	"github.com/clerk/clerk-sdk-go/v2"
 
 	"github.com/tracklines/backend/internal/boards"
 	"github.com/tracklines/backend/internal/comments"
@@ -18,7 +23,8 @@ import (
 func TestEmit(t *testing.T) {
 	ctx := context.Background()
 	db, box := webhooks.OpenDB(t)
-	if _, err := db.Exec(ctx, `DELETE FROM webhook_endpoints WHERE org_id IN ('wh4', 'wh5'); DELETE FROM projects WHERE owner_clerk_id IN ('wh4', 'wh5')`); err != nil {
+	if _, err := db.Exec(ctx, `DELETE FROM webhook_endpoints WHERE org_id IN ('wh4', 'wh5'); DELETE FROM projects WHERE owner_clerk_id IN ('wh4', 'wh5');
+		DELETE FROM org_billing WHERE org_id IN ('wh4', 'wh5'); INSERT INTO org_billing (org_id, plan, stripe_status) VALUES ('wh4', 'pro', 'active')`); err != nil {
 		t.Fatal(err)
 	}
 	subscribed := slices.DeleteFunc(slices.Clone(webhooks.Events), func(e string) bool { return e == "ticket.assigned" })
@@ -120,6 +126,33 @@ func TestEmit(t *testing.T) {
 		t.Fatalf("comment: %+v", q)
 	}
 
+	// one PATCH: one ticket.updated, with the new values
+	patch := httptest.NewRequest("PATCH", "/", strings.NewReader(`{"title":"Hooked","priority":"high","labels":["api"]}`)).WithContext(
+		clerk.ContextWithSessionClaims(ctx, &clerk.SessionClaims{RegisteredClaims: clerk.RegisteredClaims{Subject: "user_a"}, Claims: clerk.Claims{ActiveOrganizationID: "wh4"}}))
+	patch.SetPathValue("id", tk.ID)
+	rec := httptest.NewRecorder()
+	tickets.NewSystem(db).Update(rec, patch)
+	if q := next(); rec.Code != 204 || len(q) != 1 || q[0].event != "ticket.updated" || q[0].data["title"] != "Hooked" || q[0].data["priority"] != "high" ||
+		fmt.Sprint(q[0].data["labels"]) != "[api]" {
+		t.Fatalf("updated: %d %+v", rec.Code, q)
+	}
+
+	// a board ticket closed as won't do: moved and done, already marked wont_do
+	nope, err := ts.CreateAs(ctx, "wh4", "user_a", todo, "feature", "Nope", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ts.ResolveAs(ctx, "wh4", "user_a", nope.ID, tickets.ResolutionWontDo, ""); err != nil {
+		t.Fatal(err)
+	}
+	if q := next(); !slices.Equal(events(q), []string{"ticket.created", "ticket.moved", "ticket.done"}) ||
+		q[1].data["resolution"] != "wont_do" || q[2].data["resolution"] != "wont_do" || q[2].data["to_column_id"] != nil {
+		t.Fatalf("won't do: %+v", q)
+	}
+	if got, _ := ts.Get(ctx, "wh4", nope.ID); got == nil || got.Resolution == nil || *got.Resolution != "wont_do" || got.ResolvedAt == nil {
+		t.Fatalf("won't do stored: %+v", got)
+	}
+
 	// sprints: started; closing starts the next
 	sp, err := sprints.Store{DB: db}.Start(ctx, "wh4", b.ID, 14)
 	if err != nil {
@@ -179,6 +212,17 @@ func TestEmit(t *testing.T) {
 	_ = tx.Rollback(ctx)
 	if q := next(); len(q) != 0 {
 		t.Fatalf("rolled back, still queued: %+v", q)
+	}
+
+	// back on Free: its endpoints stay, but nothing more is queued
+	if _, err := db.Exec(ctx, `UPDATE org_billing SET stripe_status = 'canceled' WHERE org_id = 'wh4'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ts.CreateAs(ctx, "wh4", "user_a", todo, "task", "Unpaid", ""); err != nil {
+		t.Fatal(err)
+	}
+	if q := next(); len(q) != 0 {
+		t.Fatalf("queued for a Free org: %+v", q)
 	}
 
 	// an org without endpoints: nothing queued, and the data isn't even built
