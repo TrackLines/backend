@@ -161,6 +161,14 @@ func TestMCP(t *testing.T) {
 	if res := call("get_roadmap", map[string]any{"roadmap_id": rm.ID}); res.IsError || !strings.Contains(text(res), tk.ID) {
 		t.Fatalf("get roadmap linked tickets: %s", text(res))
 	}
+	// TL-616: the roadmap report, burn-up JSON by default, or the Markdown document
+	if res := call("get_roadmap_report", map[string]any{"roadmap_id": rm.ID}); res.IsError || !strings.Contains(text(res), `"burnup":[{"week_start"`) {
+		t.Fatalf("get_roadmap_report: %s", text(res))
+	}
+	if res := call("get_roadmap_report", map[string]any{"roadmap_id": rm.ID, "format": "markdown"}); res.IsError ||
+		!strings.Contains(text(res), "# Roadmap report: Launch") || !strings.Contains(text(res), "| "+tk.Key+" | Broken | No |") {
+		t.Fatalf("get_roadmap_report markdown: %s", text(res))
+	}
 	if res := call("claim_ticket", map[string]any{"ticket_id": tk.ID}); res.IsError || !strings.Contains(text(res), `"assigned_to":"claude"`) {
 		t.Fatalf("claim as the key's agent: %s", text(res))
 	}

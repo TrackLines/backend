@@ -3359,6 +3359,36 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /roadmaps/{roadmapId}/report:
+    parameters:
+      - { name: roadmapId, in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: format, in: query, schema: { type: string, enum: [json, md, markdown] }, description: "md (or markdown): the whole report as a Markdown download (text/markdown, attachment, named <roadmap-slug>-roadmap-<YYYY-MM-DD>.md): progress, latest health update, items with dates, status and linked tickets, and Mermaid charts (status pie, gantt, tickets per item, burn-up) each followed by a table of the same numbers, plus health over time (TL-616)." }
+    get:
+      tags: [Roadmaps]
+      operationId: roadmapReport
+      summary: "A roadmap's report (TL-616): its weekly burn-up, or as Markdown. Org admins and the project's team leaders (their API keys too)."
+      responses:
+        '200':
+          description: "The burn-up: one row per week (weeks start Monday, in the caller's Tracklines-Timezone) from the week of the earliest counted ticket's creation, at most 12 weeks back, to this week; empty without linked tickets. Counts the tickets progress counts (linked tickets; for a linked epic, its sub-tickets) that existed, and were done, by each week's end."
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  burnup:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        week_start: { type: string, format: date }
+                        done: { type: integer }
+                        total: { type: integer }
+            text/markdown:
+              schema: { type: string }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: "Not an org admin or one of the project's team leaders (roadmap_admins_or_leaders)." }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /projects/{projectId}/roadmaps:
     post:
       tags: [Roadmaps]
@@ -4566,6 +4596,7 @@ components:
                 type: object
                 properties:
                   id: { type: string, format: uuid }
+                  key: { type: string, example: TL-123 }
                   title: { type: string }
                   done: { type: boolean }
                   type: { type: string, enum: [bug, feature, task, epic, spike], description: "An epic counts its sub-tickets towards progress." }
