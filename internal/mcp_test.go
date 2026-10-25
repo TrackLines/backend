@@ -129,6 +129,14 @@ func TestMCP(t *testing.T) {
 	if res := call("get_board", map[string]any{"board_id": b.ID}); res.IsError || !strings.Contains(text(res), "Broken") {
 		t.Fatalf("get_board: %s", text(res))
 	}
+	// the flow report comes as Markdown (TL-621): WIP counts the open ticket in To do
+	if res := call("get_flow_report", map[string]any{"board_id": b.ID, "weeks": 4}); res.IsError || !strings.HasPrefix(text(res), "# Flow report: Backend") ||
+		!strings.Contains(text(res), "Last 4 weeks") || !strings.Contains(text(res), "| To do | 1 |") || !strings.Contains(text(res), "xychart-beta") {
+		t.Fatalf("get_flow_report: %s", text(res))
+	}
+	if res := call("get_flow_report", map[string]any{"board_id": "00000000-0000-0000-0000-000000000000"}); !res.IsError {
+		t.Fatalf("get_flow_report on an unknown board: %s", text(res))
+	}
 	// agents never publish a roadmap: that's a signed-in org admin's call (TL-432)
 	if res := call("create_roadmap", map[string]any{"project_id": pid, "title": "Launch", "visibility": "public"}); !res.IsError || !strings.Contains(text(res), "organization admin") {
 		t.Fatalf("an agent creating a public roadmap: %s", text(res))

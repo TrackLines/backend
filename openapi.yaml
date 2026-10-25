@@ -2716,22 +2716,26 @@ paths:
     get:
       tags: [Boards]
       operationId: getBoardFlow
-      summary: Cycle time and weekly throughput for finished tickets
+      summary: Cycle time, weekly throughput, WIP and work mix for a board (the Kanban flow report)
       description: >-
         Returns tickets completed during the requested rolling window of UTC calendar weeks, including
         empty throughput weeks. Cycle-time percentiles include only tickets with a recorded started_at;
         older tickets without an exact start time remain in throughput but have a null cycle_days.
+        Also open tickets per column now (wip) and done tickets by type (mix) (TL-621). Team figures only.
       parameters:
         - name: weeks
           in: query
           description: Number of UTC calendar weeks including the current week.
           schema: { type: integer, minimum: 1, maximum: 52, default: 12 }
+        - { name: format, in: query, schema: { type: string, enum: [json, md, markdown] }, description: "md (or markdown): the report as a Markdown download (text/markdown, attachment named <board>-flow-<date>.md) with Mermaid charts, each followed by a table (TL-621)." }
       responses:
         '200':
-          description: Finished tickets, cycle-time percentiles, and throughput by week.
+          description: Finished tickets, cycle-time percentiles, throughput by week, WIP and work mix.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/BoardFlow' }
+            text/markdown:
+              schema: { type: string }
         '400': { description: weeks must be between 1 and 52. }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
@@ -4173,7 +4177,7 @@ components:
                   value: { type: number }
     BoardFlow:
       type: object
-      required: [weeks, tickets, median_cycle_days, p85_cycle_days, throughput]
+      required: [weeks, tickets, median_cycle_days, p85_cycle_days, throughput, wip, mix]
       properties:
         weeks: { type: integer, description: Number of UTC calendar weeks included, including the current week. }
         tickets:
@@ -4196,9 +4200,30 @@ components:
           description: Counts by UTC Monday week start, including weeks with no completed tickets.
           items:
             type: object
-            required: [week_start, tickets]
+            required: [week_start, tickets, median_cycle_days, p85_cycle_days]
             properties:
               week_start: { type: string, format: date }
+              tickets: { type: integer }
+              median_cycle_days: { type: [number, 'null'], description: Median cycle days of that week's done tickets with a known start; null without any. }
+              p85_cycle_days: { type: [number, 'null'], description: 85th percentile cycle days of that week's done tickets with a known start. }
+        wip:
+          type: array
+          description: Open tickets in each column now, in column order, every column but the last (Done); empty columns included.
+          items:
+            type: object
+            required: [column_id, column, tickets]
+            properties:
+              column_id: { type: string, format: uuid }
+              column: { type: string, example: In progress }
+              tickets: { type: integer }
+        mix:
+          type: array
+          description: Tickets done in the window by type, most first (then by type).
+          items:
+            type: object
+            required: [type, tickets]
+            properties:
+              type: { type: string, example: bug }
               tickets: { type: integer }
     ProjectRepo:
       type: object
