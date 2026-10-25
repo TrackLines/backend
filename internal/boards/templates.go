@@ -144,33 +144,38 @@ func (s Store) DeleteTemplate(ctx context.Context, org, id string) error {
 // CreateFrom inserts a board into the owner's project set up from t. ErrNotFound when the
 // project isn't the owner's.
 func (s Store) CreateFrom(ctx context.Context, owner, projectID, name, desc string, t Template) (*Board, error) {
-	var b Board
+	var b *Board
 	err := pgx.BeginFunc(ctx, s.DB, func(tx pgx.Tx) error {
 		var err error
-		if b, err = scan(tx.QueryRow(ctx, `INSERT INTO boards (project_id, owner_clerk_id, name, description, style, estimate_scale)
-			SELECT id, owner_clerk_id, $3, $4, $5, $6 FROM projects WHERE id = $1 AND owner_clerk_id = $2
-			RETURNING `+cols, projectID, owner, name, desc, t.Style, t.EstimateScale)); err != nil {
-			return err
-		}
-		for pos, c := range t.Columns {
-			col := Column{Tickets: []Ticket{}}
-			if err := tx.QueryRow(ctx, `INSERT INTO columns (board_id, name, position, wip_limit) VALUES ($1, $2, $3, $4)
-				RETURNING id, name, position, wip_limit`, b.ID, c.Name, pos, c.WIPLimit).Scan(&col.ID, &col.Name, &col.Position, &col.WIPLimit); err != nil {
-				return err
-			}
-			b.Columns = append(b.Columns, col)
-			if c.Review {
-				b.ReviewColumn = &col.ID
-			}
-		}
-		if b.ReviewColumn != nil {
-			_, err := tx.Exec(ctx, `UPDATE boards SET review_column_id = $2 WHERE id = $1`, b.ID, *b.ReviewColumn)
-			return err
-		}
-		return nil
+		b, err = CreateFromTx(ctx, tx, owner, projectID, name, desc, t)
+		return err
 	})
+	return b, err
+}
+
+// CreateFromTx is CreateFrom inside the caller's transaction (an import builds whole projects in one).
+func CreateFromTx(ctx context.Context, tx pgx.Tx, owner, projectID, name, desc string, t Template) (*Board, error) {
+	b, err := scan(tx.QueryRow(ctx, `INSERT INTO boards (project_id, owner_clerk_id, name, description, style, estimate_scale)
+		SELECT id, owner_clerk_id, $3, $4, $5, $6 FROM projects WHERE id = $1 AND owner_clerk_id = $2
+		RETURNING `+cols, projectID, owner, name, desc, t.Style, t.EstimateScale))
 	if err != nil {
 		return nil, err
+	}
+	for pos, c := range t.Columns {
+		col := Column{Tickets: []Ticket{}}
+		if err := tx.QueryRow(ctx, `INSERT INTO columns (board_id, name, position, wip_limit) VALUES ($1, $2, $3, $4)
+			RETURNING id, name, position, wip_limit`, b.ID, c.Name, pos, c.WIPLimit).Scan(&col.ID, &col.Name, &col.Position, &col.WIPLimit); err != nil {
+			return nil, err
+		}
+		b.Columns = append(b.Columns, col)
+		if c.Review {
+			b.ReviewColumn = &col.ID
+		}
+	}
+	if b.ReviewColumn != nil {
+		if _, err := tx.Exec(ctx, `UPDATE boards SET review_column_id = $2 WHERE id = $1`, b.ID, *b.ReviewColumn); err != nil {
+			return nil, err
+		}
 	}
 	return &b, nil
 }

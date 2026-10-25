@@ -49,6 +49,8 @@ security:
 tags:
   - name: Contact
     description: The public contact form; messages go to the TrackLin.es team.
+  - name: Imports
+    description: Bringing projects, boards and tickets over from another tracker (Jira), once.
   - name: Projects
     description: Create, list, inspect, update, and delete projects.
   - name: Organizations
@@ -101,6 +103,95 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { description: No active organization in the caller's session or API key. }
         '502': { description: The identity provider could not return organization membership. }
+  /imports:
+    get:
+      tags: [Imports]
+      operationId: listImports
+      summary: The organization's imports, newest first
+      description: Org admins, signed in (not API keys). Behind the imports flag; 404 when it's off.
+      responses:
+        '200': { description: Imports (without their previews)., content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Import' } } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: Not an org admin, or an API key. }
+        '404': { description: Imports are off. }
+    post:
+      tags: [Imports]
+      operationId: previewImport
+      summary: Preview an import from another tracker
+      description: >-
+        The source (jira) works out what to create from its options. Nothing is written until the preview is
+        run; its problems (plan limits, key prefixes, ticket numbers, boards without To do and Done) must be
+        fixed first. Org admins, signed in; behind the imports flag.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [source]
+              properties:
+                source: { type: string, example: jira }
+                options: { type: object, description: The source's own (credentials, which projects…). }
+      responses:
+        '201': { description: The preview., content: { application/json: { schema: { $ref: '#/components/schemas/Import' } } } }
+        '400': { description: Unknown source, or the source couldn't plan (it says why). }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: Not an org admin, or an API key. }
+        '404': { description: Imports are off. }
+  /imports/{importId}:
+    parameters:
+      - { name: importId, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      tags: [Imports]
+      operationId: getImport
+      summary: An import's preview, progress or report
+      responses:
+        '200': { description: The import., content: { application/json: { schema: { $ref: '#/components/schemas/Import' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: Not an org admin, or an API key. }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /imports/{importId}/run:
+    parameters:
+      - { name: importId, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      tags: [Imports]
+      operationId: runImport
+      summary: Run a previewed import
+      description: Runs in the background, in one transaction, so a failed or cancelled run creates nothing. Poll the import for progress and the report.
+      responses:
+        '202': { description: Started., content: { application/json: { schema: { $ref: '#/components/schemas/Import' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: Not an org admin, or an API key. }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: The preview still has problems (import_problems), or it isn't a preview any more (import_not_previewing). }
+  /imports/{importId}/cancel:
+    parameters:
+      - { name: importId, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      tags: [Imports]
+      operationId: cancelImport
+      summary: Drop a preview, or stop a running import
+      responses:
+        '204': { description: Cancelled (a running import stops at its next step and keeps nothing). }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: Not an org admin, or an API key. }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Neither a preview nor running (import_not_running). }
+  /imports/{importId}/scrap:
+    parameters:
+      - { name: importId, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      tags: [Imports]
+      operationId: scrapImport
+      summary: Undo a finished import
+      description: Deletes every project the import created, with everything in it, while nobody has acted on its tickets (moved, edited, commented, assigned, estimated, labelled) or added tickets to its projects.
+      responses:
+        '204': { description: Scrapped. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: Not an org admin, or an API key. }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Not finished (import_not_done), or someone has acted on it (import_changed). }
+
   /board-templates:
     get:
       tags: [Boards]
@@ -3813,6 +3904,59 @@ components:
               name: { type: string, minLength: 1, maxLength: 80 }
               wip_limit: { type: [integer, 'null'], minimum: 1, maximum: 999 }
               review: { type: boolean, description: "The board's review column (at most one, between To do and Done). Built-in Scrum and Kanban flag their Review column." }
+    Import:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        source: { type: string }
+        state: { type: string, enum: [previewing, running, cancelling, done, failed, cancelled, scrapped] }
+        problems:
+          type: array
+          description: Previews only. Each must be fixed before it can run.
+          items: { type: object, properties: { code: { type: string, enum: [project_limit, bad_prefix, prefix_taken, board_columns, ticket_number] }, source_id: { type: string }, message: { type: string } } }
+        skipped:
+          type: array
+          description: Previews only. What a run will leave out, and why.
+          items: { $ref: '#/components/schemas/ImportSkip' }
+        planned: { $ref: '#/components/schemas/ImportCounts' }
+        projects:
+          type: array
+          description: Previews only. The projects it creates, with their boards and columns.
+          items:
+            type: object
+            properties:
+              source_id: { type: string }
+              name: { type: string }
+              prefix: { type: string }
+              tickets: { type: integer }
+              boards: { type: array, items: { type: object, properties: { source_id: { type: string }, name: { type: string }, team_id: { type: [string, 'null'] }, columns: { type: array, items: { type: string } } } } }
+        progress: { type: integer, description: Tickets created so far. }
+        total: { type: integer }
+        report:
+          type: [object, 'null']
+          description: A finished run's.
+          properties:
+            created: { $ref: '#/components/schemas/ImportCounts' }
+            skipped: { type: array, items: { $ref: '#/components/schemas/ImportSkip' } }
+        error: { type: string, description: Why it failed ("interrupted" when its server stopped). }
+        created_by: { type: string }
+        created_at: { type: string, format: date-time }
+        started_at: { type: [string, 'null'], format: date-time }
+        finished_at: { type: [string, 'null'], format: date-time }
+    ImportCounts:
+      type: object
+      properties:
+        projects: { type: integer }
+        boards: { type: integer }
+        columns: { type: integer }
+        tickets: { type: integer }
+        comments: { type: integer }
+    ImportSkip:
+      type: object
+      properties:
+        kind: { type: string, description: ticket, comment, estimate, parent… }
+        source_id: { type: string }
+        reason: { type: string }
     NameInput:
       type: object
       required: [name]
@@ -4572,6 +4716,12 @@ components:
         bad_date_range: "from and to are dates (YYYY-MM-DD), from before to, at most two years apart"
         bad_dev_complete: "the Dev complete column must be one of this board's columns, other than To do and Done"
         bad_review_column: "the review column must be one of this board's columns, other than To do and Done"
+        import_problems: fix the problems in the preview before running the import
+        import_not_previewing: only an import that's still a preview can be run
+        import_not_running: only a preview or a running import can be cancelled
+        import_not_done: only a finished import can be scrapped
+        import_changed: someone has worked on what this import created, so it can't be scrapped
+        unknown_import_source: unknown import source
         bad_email: "a valid email address is required"
         bad_estimate: "estimate isn't on this board's scale"
         bad_estimate_scale: "estimate_scale must be none, fibonacci, tshirt, powers or linear"
