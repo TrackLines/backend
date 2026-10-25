@@ -1,11 +1,13 @@
 package imports
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5"
@@ -262,7 +264,7 @@ func (s Store) build(ctx context.Context, tx pgx.Tx, owner, user, id, source str
 		_, err := tx.Exec(ctx, `INSERT INTO import_items (import_id, kind, source_id, target_id) VALUES ($1, $2, $3, $4)`, id, kind, sourceID, target)
 		return err
 	}
-	done := 0
+	done, now := 0, time.Now()
 	for _, pr := range p.Projects {
 		var projectID string
 		if err := tx.QueryRow(ctx, `INSERT INTO projects (owner_clerk_id, name, description, key_prefix) VALUES ($1, $2, $3, $4) RETURNING id::text`,
@@ -274,6 +276,7 @@ func (s Store) build(ctx context.Context, tx pgx.Tx, owner, user, id, source str
 		}
 		report.Created.Projects++
 		columns := map[string]string{} // board/column source ids → column id
+		lastOf := map[string]string{}  // board source id → its Done column's id
 		boardOf := map[string]string{} // board source id → board id
 		scales := map[string]string{}
 		for _, b := range pr.Boards {
@@ -294,7 +297,7 @@ func (s Store) build(ctx context.Context, tx pgx.Tx, owner, user, id, source str
 					return err
 				}
 			}
-			boardOf[b.SourceID], scales[b.SourceID] = nb.ID, t.EstimateScale
+			boardOf[b.SourceID], scales[b.SourceID], lastOf[b.SourceID] = nb.ID, t.EstimateScale, nb.Columns[len(nb.Columns)-1].ID
 			if err := item("board", b.SourceID, nb.ID); err != nil {
 				return err
 			}
@@ -341,13 +344,22 @@ func (s Store) build(ctx context.Context, tx pgx.Tx, owner, user, id, source str
 			if priority == "" {
 				priority = "medium"
 			}
+			// done: in its board's Done column (reports need when), or finished and in the backlog (resolved)
+			var doneAt *time.Time
+			resolved := column == nil && t.Done
+			if resolved || (column != nil && *column == lastOf[t.Board]) {
+				doneAt = cmp.Or(t.DoneAt, t.UpdatedAt, t.CreatedAt, &now)
+			}
 			var ticketID string
 			if err := tx.QueryRow(ctx, `INSERT INTO tickets (project_id, board_id, column_id, type, title, description, priority, position, created_by,
-					estimate, number, assigned_to, external_source, external_project, external_id, external_url, created_at, updated_at, due_date)
+					estimate, number, assigned_to, external_source, external_project, external_id, external_url, created_at, updated_at, due_date,
+					done_at, resolved_at, resolution)
 				VALUES ($1, $2, $3, $4::ticket_type, $5, $6, $7::priority, $8, $9, $10, $11, $12, $13, $14, $15, nullif($16, ''),
-					coalesce($17, now()), coalesce($18, $17, now()), $19::date) RETURNING id::text`,
+					coalesce($17, now()), coalesce($18, $17, now()), $19::date,
+					$20, CASE WHEN $21 THEN $20::timestamptz END, CASE WHEN $21 THEN 'done' END) RETURNING id::text`,
 				projectID, board, column, t.Type, t.Title, t.Description, priority, positions[key], user,
-				estimate, t.Number, t.Assignee, source, pr.SourceID, t.SourceID, t.URL, t.CreatedAt, t.UpdatedAt, t.DueDate).Scan(&ticketID); err != nil {
+				estimate, t.Number, t.Assignee, source, pr.SourceID, t.SourceID, t.URL, t.CreatedAt, t.UpdatedAt, t.DueDate,
+				doneAt, resolved).Scan(&ticketID); err != nil {
 				return fmt.Errorf("%s-%d: %w", pr.Prefix, t.Number, err)
 			}
 			positions[key]++
@@ -395,6 +407,17 @@ func (s Store) build(ctx context.Context, tx pgx.Tx, owner, user, id, source str
 				}
 			} else if child != "" && t.Parent != "" {
 				report.Skipped = append(report.Skipped, Skip{Kind: "parent", SourceID: t.SourceID, Reason: "its parent isn't in the import"})
+			}
+			// and what it waits on (TL-538); ponytail: a two-way block keeps one side, longer cycles aren't looked for
+			for _, b := range t.BlockedBy {
+				if child, blocker := ticketOf[t.SourceID], ticketOf[b]; child == "" {
+					break
+				} else if blocker == "" || blocker == child {
+					report.Skipped = append(report.Skipped, Skip{Kind: "blocked_by", SourceID: t.SourceID, Reason: fmt.Sprintf("what blocks it (%s) isn't in the project's import", b)})
+				} else if _, err := tx.Exec(ctx, `INSERT INTO ticket_dependencies (ticket_id, blocked_by_id) SELECT $1, $2
+					WHERE NOT EXISTS (SELECT 1 FROM ticket_dependencies WHERE ticket_id = $2 AND blocked_by_id = $1) ON CONFLICT DO NOTHING`, child, blocker); err != nil {
+					return err
+				}
 			}
 		}
 	}

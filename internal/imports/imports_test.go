@@ -100,8 +100,10 @@ func TestImports(t *testing.T) {
 			{SourceID: "100", Number: 7, Type: "epic", Title: "Checkout", Board: "1", Column: "1"},
 			{SourceID: "101", Number: 12, Type: "bug", Title: "Card declined", Description: "**boom**", Priority: "urgent", Estimate: "5",
 				Labels: []string{"payments", "", strings.Repeat("x", 51)}, Board: "1", Column: "3", Parent: "100", URL: "https://acme.atlassian.net/browse/SHOP-12",
-				CreatedAt: &when, Comments: []Comment{{SourceID: "c1", Author: "Old Name", Body: "seen it"}, {SourceID: "c2", Author: "x", Body: "  "}}},
-			{SourceID: "102", Number: 3, Type: "task", Title: "Sized wrong", Estimate: "4", Board: "1", Column: "10001"},
+				CreatedAt: &when, Comments: []Comment{{SourceID: "c1", Author: "Old Name", Body: "seen it"}, {SourceID: "c2", Author: "x", Body: "  "}},
+				BlockedBy: []string{"102", "999"}},
+			{SourceID: "102", Number: 3, Type: "task", Title: "Sized wrong", Estimate: "4", Board: "1", Column: "10001", BlockedBy: []string{"101"}},
+			{SourceID: "105", Number: 8, Type: "task", Title: "Shipped", Done: true, DoneAt: &when},
 			{SourceID: "103", Number: 5, Type: "feature", Title: "Backlog idea", Parent: "999"},
 			{SourceID: "104", Number: 6, Type: "story", Title: "Unknown type"},
 		},
@@ -160,7 +162,7 @@ func TestImports(t *testing.T) {
 	if code != 201 || im.State != "previewing" || len(im.Problems) != 1 || im.Problems[0].Code != "project_limit" {
 		t.Fatalf("preview: %d %+v", code, im)
 	}
-	if im.Planned == nil || *im.Planned != (Counts{Projects: 1, Boards: 1, Columns: 3, Tickets: 4, Comments: 2}) || len(im.Skipped) != 2 ||
+	if im.Planned == nil || *im.Planned != (Counts{Projects: 1, Boards: 1, Columns: 3, Tickets: 5, Comments: 2}) || len(im.Skipped) != 2 ||
 		len(im.Projects) != 1 || im.Projects[0].Prefix != "SHOP" || len(im.Projects[0].Boards[0].Columns) != 3 {
 		t.Fatalf("preview plan: %+v", im)
 	}
@@ -185,15 +187,15 @@ func TestImports(t *testing.T) {
 		t.Fatalf("run: %d %s", rec.Code, rec.Body)
 	}
 	done := get(im.ID)
-	if done.State != "done" || done.Progress != 4 || done.Total != 4 || done.Report == nil ||
-		done.Report.Created != (Counts{Projects: 1, Boards: 1, Columns: 3, Tickets: 4, Comments: 1}) {
+	if done.State != "done" || done.Progress != 5 || done.Total != 5 || done.Report == nil ||
+		done.Report.Created != (Counts{Projects: 1, Boards: 1, Columns: 3, Tickets: 5, Comments: 1}) {
 		t.Fatalf("done: %+v", done)
 	}
 	reasons := map[string]string{}
 	for _, s := range done.Report.Skipped {
 		reasons[s.Kind+":"+s.SourceID] = s.Reason
 	}
-	for _, k := range []string{"ticket:x", "ticket:104", "comment:c2", "estimate:102", "parent:103"} {
+	for _, k := range []string{"ticket:x", "ticket:104", "comment:c2", "estimate:102", "parent:103", "blocked_by:101"} {
 		if reasons[k] == "" {
 			t.Errorf("report misses %s: %+v", k, done.Report.Skipped)
 		}
@@ -228,6 +230,26 @@ func TestImports(t *testing.T) {
 	_ = db.QueryRow(ctx, `SELECT board_id IS NOT NULL FROM tickets WHERE project_id = $1 AND number = 7`, projectID).Scan(&epicOnBoard)
 	if epicOnBoard {
 		t.Fatal("an epic went on the board")
+	}
+	// done: in the Done column it has a done time; finished in the backlog it's resolved, when it was (TL-538)
+	var inDone, shipped string
+	_ = db.QueryRow(ctx, `SELECT (done_at IS NOT NULL AND resolution IS NULL)::text FROM tickets WHERE project_id = $1 AND number = 3`, projectID).Scan(&inDone)
+	_ = db.QueryRow(ctx, `SELECT resolution || ' ' || to_char(done_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') || ' ' || (resolved_at = done_at)::text
+		FROM tickets WHERE project_id = $1 AND number = 8`, projectID).Scan(&shipped)
+	if inDone != "true" || shipped != "done 2025-03-01 true" {
+		t.Fatalf("done: in Done %q, resolved %q", inDone, shipped)
+	}
+	// blocked-by: SHOP-12 waits on SHOP-3; SHOP-3's block back on SHOP-12 would be a cycle, so it's left out
+	var blocks []string
+	rows, _ := db.Query(ctx, `SELECT a.number || '<' || b.number FROM ticket_dependencies d JOIN tickets a ON a.id = d.ticket_id JOIN tickets b ON b.id = d.blocked_by_id
+		WHERE a.project_id = $1`, projectID)
+	for rows.Next() {
+		var b string
+		rows.Scan(&b)
+		blocks = append(blocks, b)
+	}
+	if len(blocks) != 1 || blocks[0] != "12<3" {
+		t.Fatalf("blocked by: %v", blocks)
 	}
 	var author string
 	_ = db.QueryRow(ctx, `SELECT c.author FROM ticket_comments c JOIN import_items i ON i.target_id = c.id WHERE i.import_id = $1 AND i.source_id = 'c1'`, im.ID).Scan(&author)

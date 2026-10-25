@@ -68,6 +68,11 @@ type Ticket struct {
 	UpdatedAt   *time.Time `json:"updated_at,omitempty"`
 	DueDate     *string    `json:"due_date,omitempty"` // YYYY-MM-DD (TL-637)
 	Comments    []Comment  `json:"comments,omitempty"`
+	BlockedBy   []string   `json:"blocked_by,omitempty"` // source ids of the tickets it waits on (TL-538)
+	// Done: finished in the source. On a board it's done by being in the last column; in the backlog
+	// it's resolved as done. DoneAt is when (default UpdatedAt).
+	Done   bool       `json:"done,omitempty"`
+	DoneAt *time.Time `json:"done_at,omitempty"`
 }
 
 type Comment struct {

@@ -132,7 +132,7 @@ paths:
               type: object
               required: [source]
               properties:
-                source: { type: string, enum: [csv], example: csv }
+                source: { type: string, enum: [csv, jira], example: jira }
                 options:
                   type: object
                   description: >-
@@ -142,6 +142,13 @@ paths:
                     the backlog), due and created. Common types and priorities from other tools are understood (story → feature,
                     blocker → urgent…); unknown types import as tasks and are listed as skipped. The file travels in this
                     request, so it's limited to about 1 MB.
+                    jira (TL-538, needs a connection): {"projects": [Jira project keys], "prefixes": {Jira key: prefix} for any
+                    whose key can't be used, "teams": {"board:<id>": team id}}. Each Jira project becomes a project (its key
+                    is the prefix, with a number added when it's taken, up to 6 characters; otherwise the preview asks),
+                    its boards boards (Jira's columns, a column with no status left out) and every issue a ticket with its
+                    number: types, sub-tasks and epics, priorities, labels and components, story points (on the board's
+                    scale), blocked-by links, due dates, comments, and assignees matched to members by email. An issue on
+                    no board goes to the backlog (resolved, if it's done in Jira).
       responses:
         '201': { description: The preview., content: { application/json: { schema: { $ref: '#/components/schemas/Import' } } } }
         '400': { description: Unknown source, or the source couldn't plan (it says why). }
@@ -195,6 +202,25 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { description: Not an org admin, or an API key. }
         '404': { description: Imports are off. }
+  /imports/jira/projects:
+    get:
+      tags: [Imports]
+      operationId: listJiraProjects
+      summary: The Jira projects the connection can see
+      responses:
+        '200':
+          description: Projects, by name.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { type: object, properties: { id: { type: string }, key: { type: string }, name: { type: string } } }
+        '400': { description: Jira refused the saved token (jira_unauthorized). }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: Not an org admin, or an API key. }
+        '404': { description: Imports are off. }
+        '409': { description: Not connected, or the token expired (jira_not_connected). }
+        '502': { description: Jira couldn't be reached (jira_unreachable). }
   /imports/jira/connection/extend:
     post:
       tags: [Imports]
@@ -5218,6 +5244,7 @@ components:
         jira_not_connected: "connect Jira first: its token may have expired"
         jira_unauthorized: "Jira refused that email and API token"
         jira_unreachable: "couldn't reach Jira at that address"
+        jira_options: pick at least one Jira project to import
         bad_webhook_url: "the URL must be https and not a private address"
         bad_webhook_events: "pick at least one known event"
         webhook_limit: "an organization can have up to 10 webhook endpoints"
