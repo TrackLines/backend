@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/tracklines/backend/internal/auth"
 	"github.com/tracklines/backend/internal/boards"
 	"github.com/tracklines/backend/internal/httpx"
@@ -42,22 +41,32 @@ func (s Store) ResolveAsAgent(ctx context.Context, owner, actor, id, resolution,
 	if resolution != ResolutionDone && resolution != ResolutionWontDo {
 		return ErrBadResolution
 	}
-	var tag pgconn.CommandTag
+	var resolved bool
 	err := pgx.BeginFunc(ctx, s.DB, func(tx pgx.Tx) error {
 		if err := boards.SetActor(ctx, tx, actor); err != nil { // for the ticket's history
 			return err
 		}
-		var err error
-		tag, err = tx.Exec(ctx, `UPDATE tickets t SET resolved_at = COALESCE(t.resolved_at, now()),
+		var first bool // it wasn't done before: resolving again only changes the resolution
+		err := tx.QueryRow(ctx, `UPDATE tickets t SET resolved_at = COALESCE(t.resolved_at, now()),
 				done_at = COALESCE(t.done_at, now()), resolution = $3, updated_at = now()
 			FROM projects p WHERE t.id = $1 AND p.id = t.project_id AND p.owner_clerk_id = $2 AND t.board_id IS NULL AND t.duplicate_of IS NULL
-				AND (NOT $4 OR t.agent_review_at IS NULL)`, id, owner, resolution, agent)
-		return err
+				AND (NOT $4 OR t.agent_review_at IS NULL) RETURNING old.done_at IS NULL`, id, owner, resolution, agent).Scan(&first)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		resolved = true
+		if !first {
+			return nil
+		}
+		return emit(ctx, tx, owner, "ticket.done", id)
 	})
 	if err != nil {
 		return notFound(err)
 	}
-	if tag.RowsAffected() == 0 { // not the owner's ticket, or it's on a board
+	if !resolved { // not the owner's ticket, or it's on a board
 		var onBoard, duplicate bool
 		if err := s.DB.QueryRow(ctx, `SELECT t.board_id IS NOT NULL, t.duplicate_of IS NOT NULL FROM tickets t JOIN projects p ON p.id = t.project_id
 			WHERE t.id = $1 AND p.owner_clerk_id = $2`, id, owner).Scan(&onBoard, &duplicate); err != nil {

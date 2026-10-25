@@ -57,6 +57,7 @@ import (
 	"github.com/tracklines/backend/internal/teams"
 	"github.com/tracklines/backend/internal/tickets"
 	"github.com/tracklines/backend/internal/users"
+	"github.com/tracklines/backend/internal/webhooks"
 )
 
 // Service owns the HTTP lifecycle and route composition.
@@ -151,6 +152,9 @@ func (s *Service) Start() error {
 	// that starts over capacity tells the board's managers (TL-149)
 	_, _, _, _, notify := s.notifiers()
 	go sprints.Store{DB: s.DB, Notify: notify}.RunAutoClose(ctx, time.Minute)
+	// outbound webhooks (TL-635): due deliveries go out every few seconds; a month's history is kept
+	box, _ := secrets.New(config.Get(s.Config).SecretKey) // no key: nothing can be signed, so nothing was queued
+	go webhooks.Worker{DB: s.DB, Box: box, Notify: notify}.Run(ctx, 5*time.Second)
 	// due dates: the day before and on the day, assignees and watchers are reminded (TL-631)
 	go tickets.DueReminders{Store: tickets.Store{DB: s.DB}, Notify: notify}.Run(ctx, time.Hour)
 	// every organization's Clerk member cap matches its plan: 20 on Free and Pro, unlimited on Enterprise (TL-418)
@@ -483,6 +487,17 @@ func (s *Service) Handler() http.Handler {
 	mux.Handle("POST /api/embed/keys", signedIn(em.CreateKey))
 	mux.Handle("DELETE /api/embed/keys/{id}", signedIn(em.DeleteKey))
 	mux.Handle("GET /api/embed/keys/{id}/usage", signedIn(em.KeyUsage))
+
+	// Outbound webhooks (TL-635): org admins (session or their API key), behind the "webhooks" flag; Pro and Enterprise
+	wh := webhooks.NewSystem(s.DB, box, o.AdminModel(), s.flag("webhooks"))
+	mux.Handle("GET /api/org/webhooks", signedIn(wh.List))
+	mux.Handle("POST /api/org/webhooks", signedIn(wh.Create)) // 201 {endpoint, secret}: the secret is shown once
+	mux.Handle("PATCH /api/org/webhooks/{id}", signedIn(wh.Update))
+	mux.Handle("DELETE /api/org/webhooks/{id}", signedIn(wh.Delete))
+	mux.Handle("POST /api/org/webhooks/{id}/secret", signedIn(wh.Rotate))
+	mux.Handle("POST /api/org/webhooks/{id}/test", signedIn(wh.Test))
+	mux.Handle("GET /api/org/webhooks/{id}/deliveries", signedIn(wh.Deliveries))
+	mux.Handle("POST /api/org/webhooks/{id}/deliveries/{delivery}/redeliver", signedIn(wh.Redeliver))
 
 	// API keys — AI agent or server/service; managing keys needs a signed-in session
 	k := apikeys.NewSystem(s.DB)

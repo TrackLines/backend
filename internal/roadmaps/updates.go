@@ -8,6 +8,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/tracklines/backend/internal/httpx"
+	"github.com/tracklines/backend/internal/webhooks"
 )
 
 const (
@@ -59,6 +60,10 @@ func (s Store) CreateUpdate(ctx context.Context, roadmapID, owner, health, note,
 	if err != nil {
 		return nil, notFound(err)
 	}
+	_ = webhooks.Emit(ctx, s.DB, owner, "roadmap.update_published", func() (any, error) { // TL-635
+		return map[string]any{"roadmap_id": roadmapID, "update": map[string]string{
+			"id": out.ID, "health": out.Health, "note": out.Note, "published_at": out.PublishedAt}}, nil
+	})
 	return &out, nil
 }
 

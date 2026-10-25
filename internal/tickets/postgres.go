@@ -113,6 +113,7 @@ func (s Store) create(ctx context.Context, owner, actor, columnID, typ, title, d
 	if err != nil {
 		return nil, notFound(err)
 	}
+	_ = emit(ctx, s.DB, owner, "ticket.created", t.ID) // one statement, no transaction: right after it
 	return &t, nil
 }
 
@@ -133,6 +134,7 @@ func (s Store) CreateBacklogAs(ctx context.Context, owner, actor, projectID, typ
 	if err != nil {
 		return nil, notFound(err)
 	}
+	_ = emit(ctx, s.DB, owner, "ticket.created", t.ID)
 	return &t, nil
 }
 
@@ -405,6 +407,7 @@ func (s Store) Claim(ctx context.Context, owner, actor, id string) (*Ticket, err
 		FROM projects p WHERE t.id = $1 AND p.id = t.project_id AND p.owner_clerk_id = $2
 		AND t.assigned_to IS NULL AND NOT `+boards.TicketBlockedSQL+` RETURNING `+boards.TicketCols, id, owner, actor))
 	if err == nil {
+		_ = emit(ctx, s.DB, owner, "ticket.assigned", t.ID)
 		return &t, nil
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
@@ -453,6 +456,7 @@ func (s Store) Release(ctx context.Context, owner, actor, id string) error {
 		}
 		return ErrNotAssignedToCaller
 	}
+	_ = emit(ctx, s.DB, owner, "ticket.assigned", id) // unassigned
 	return nil
 }
 
@@ -466,8 +470,10 @@ func (s Store) Delete(ctx context.Context, owner, id string) error {
 			WHERE t.id = $1 AND p.id = t.project_id AND p.owner_clerk_id = $2 AND t.deleted_at IS NULL RETURNING t.parent_id`, id, owner).Scan(&parent); err != nil {
 			return err
 		}
-		_, err := tx.Exec(ctx, `INSERT INTO deleted_files (file_key) SELECT file_key FROM ticket_attachments WHERE ticket_id = $1 ON CONFLICT DO NOTHING`, id)
-		return err
+		if _, err := tx.Exec(ctx, `INSERT INTO deleted_files (file_key) SELECT file_key FROM ticket_attachments WHERE ticket_id = $1 ON CONFLICT DO NOTHING`, id); err != nil {
+			return err
+		}
+		return emit(ctx, tx, owner, "ticket.deleted", id)
 	})
 	if err != nil {
 		return notFound(err)
@@ -570,15 +576,15 @@ func (s Store) moveTx(ctx context.Context, tx pgx.Tx, owner, id, toColumn string
 			return ErrEpicOffBoard
 		}
 		var boardID, scale string
-		var archived, duplicate bool
+		var archived, duplicate, wasDone, done bool
 		var from, fromSprint, sprint, fromBoard, fromScale, estimate *string
 		// lock the target board: moves on one board are serialised
 		err := tx.QueryRow(ctx, `SELECT b.id, b.estimate_scale, b.archived_at IS NOT NULL, t.column_id, t.sprint_id,
 				(SELECT id FROM sprints WHERE board_id = b.id AND closed_at IS NULL),
-			t.board_id, `+scaleSQL+`, t.estimate, t.duplicate_of IS NOT NULL
+			t.board_id, `+scaleSQL+`, t.estimate, t.duplicate_of IS NOT NULL, t.done_at IS NOT NULL
 			FROM tickets t JOIN projects p ON p.id = t.project_id AND p.owner_clerk_id = $2
 			JOIN columns c ON c.id = $3 JOIN boards b ON b.id = c.board_id AND b.project_id = t.project_id
-			WHERE t.id = $1 FOR UPDATE OF b`, id, owner, toColumn).Scan(&boardID, &scale, &archived, &from, &fromSprint, &sprint, &fromBoard, &fromScale, &estimate, &duplicate)
+			WHERE t.id = $1 FOR UPDATE OF b`, id, owner, toColumn).Scan(&boardID, &scale, &archived, &from, &fromSprint, &sprint, &fromBoard, &fromScale, &estimate, &duplicate, &wasDone)
 		if err != nil {
 			return notFound(err)
 		}
@@ -631,7 +637,7 @@ func (s Store) moveTx(ctx context.Context, tx pgx.Tx, owner, id, toColumn string
 		}
 		pos = max(0, min(pos, len(ids)))
 		ids = append(ids[:pos], append([]string{id}, ids[pos:]...)...)
-		if _, err := tx.Exec(ctx, `UPDATE tickets t SET board_id = $2, column_id = $3, sprint_id = $4, resolved_at = NULL, resolution = NULL, updated_at = now(),
+		if err := tx.QueryRow(ctx, `UPDATE tickets t SET board_id = $2, column_id = $3, sprint_id = $4, resolved_at = NULL, resolution = NULL, updated_at = now(),
 				planned_sprint_id = NULL, -- on a board now: out of any plan
 				estimate = $5,
 				-- waiting for review only while an agent's finish is held; any other move clears it
@@ -645,7 +651,7 @@ func (s Store) moveTx(ctx context.Context, tx pgx.Tx, owner, id, toColumn string
 				-- ponytail: reordering columns doesn't restamp; Done is still decided by DoneSQL
 				done_at = CASE WHEN $3 = (SELECT dc.id FROM columns dc WHERE dc.board_id = $2 ORDER BY dc.position DESC LIMIT 1)
 					THEN COALESCE(t.done_at, now()) END
-			WHERE t.id = $1`, id, boardID, toColumn, sprint, estimate, o.review); err != nil {
+			WHERE t.id = $1 RETURNING t.done_at IS NOT NULL`, id, boardID, toColumn, sprint, estimate, o.review).Scan(&done); err != nil {
 			return err
 		}
 		if fromBoard != nil && *fromBoard != boardID {
@@ -657,7 +663,10 @@ func (s Store) moveTx(ctx context.Context, tx pgx.Tx, owner, id, toColumn string
 		if from != nil && *from == toColumn {
 			return nil
 		}
-		return renumberSource(ctx, tx, id, from, fromSprint)
+		if err := renumberSource(ctx, tx, id, from, fromSprint); err != nil {
+			return err
+		}
+		return emitMove(ctx, tx, owner, id, from, &toColumn, done && !wasDone)
 	}
 }
 
@@ -736,7 +745,10 @@ func toBacklogTx(ctx context.Context, tx pgx.Tx, owner, id string, agent bool) (
 			WHERE t.id = $1`, id); err != nil {
 			return nil, err
 		}
-		return board, renumberSource(ctx, tx, id, from, fromSprint)
+		if err := renumberSource(ctx, tx, id, from, fromSprint); err != nil {
+			return nil, err
+		}
+		return board, emitMove(ctx, tx, owner, id, from, nil, false)
 	}
 }
 

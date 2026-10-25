@@ -298,6 +298,8 @@ func (h System) Update(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, r, err)
 		return
 	}
+	// one event for the whole PATCH, after its separate writes (TL-635)
+	_ = emit(r.Context(), h.store.DB, org, "ticket.updated", r.PathValue("id"))
 	w.WriteHeader(http.StatusNoContent)
 }
 
