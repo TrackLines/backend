@@ -452,6 +452,9 @@ func (s *Service) Handler() http.Handler {
 	mux.Handle("PATCH /api/planned-sprints/{id}", signedIn(sp.UpdatePlanned)) // length and/or goal
 	mux.Handle("DELETE /api/planned-sprints/{id}", signedIn(sp.Unplan))
 	mux.Handle("POST /api/planned-sprints/{id}/approve", signedIn(sp.Approve)) // accept the total over capacity
+	// Imported boards (TL-541): tickets an import set aside, to keep or close before the first sprint
+	mux.Handle("GET /api/boards/{id}/import-review", signedIn(sp.Review))
+	mux.Handle("POST /api/boards/{id}/import-review/{ticket}/keep", signedIn(sp.Keep))
 	mux.Handle("PUT /api/tickets/{id}/planned-sprint", signedIn(sp.PlanTicket))
 
 	// Request intake: a project's unlisted public form (no account) and the team's triage inbox

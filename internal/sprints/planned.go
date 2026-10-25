@@ -1,6 +1,7 @@
 package sprints
 
 import (
+	"cmp"
 	"context"
 	"math"
 	"net/http"
@@ -200,6 +201,9 @@ func (s Store) Plan(ctx context.Context, owner, boardID string, lengthDays int, 
 		}
 		if style == "kanban" {
 			return ErrKanban
+		}
+		if n, err := boards.ToReview(ctx, tx, boardID); err != nil || n > 0 {
+			return cmp.Or(err, ErrNeedsRefining)
 		}
 		if err := tx.QueryRow(ctx, `SELECT count(*) FROM planned_sprints WHERE board_id = $1`, boardID).Scan(&count); err != nil {
 			return err

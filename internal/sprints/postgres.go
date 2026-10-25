@@ -1,6 +1,7 @@
 package sprints
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -22,6 +23,7 @@ var (
 	ErrInvalidLength = httpx.Code("bad_sprint_length", "length_days must be between 1 and 365")
 	ErrInvalidStart  = httpx.Code("bad_sprint_start", "next_starts_at must be in the future")
 	ErrKanban        = httpx.Code("kanban_no_sprints", "kanban boards don't run sprints")
+	ErrNeedsRefining = httpx.Code("board_needs_refining", "keep or close the imported tickets set aside for review before this board's first sprint")
 	ErrInvalidGoal   = httpx.Code("goal_too_long", "goal must be at most 200 characters")
 )
 
@@ -70,6 +72,9 @@ func (s Store) Start(ctx context.Context, owner, boardID string, lengthDays int)
 		}
 		if style == "kanban" {
 			return ErrKanban
+		}
+		if n, err := boards.ToReview(ctx, tx, boardID); err != nil || n > 0 {
+			return cmp.Or(err, ErrNeedsRefining)
 		}
 		var err error
 		sp, err = boards.ScanSprint(tx.QueryRow(ctx, `INSERT INTO sprints (board_id, number, length_days, ends_at)
