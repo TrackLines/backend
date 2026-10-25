@@ -108,6 +108,34 @@ func (d *mdDoc) chart(title, yLabel string, xs []string, bars, lines [][]float64
 	d.line("")
 }
 
+type slice struct {
+	name  string
+	value float64
+}
+
+// pie writes a Mermaid pie of shares (TL-618). Zero slices are dropped (they draw nothing), and with
+// nothing left there's no pie: the table under it still says so. Labels are quoted, so label() is
+// enough: a colon inside the quotes doesn't end it.
+func (d *mdDoc) pie(title string, slices []slice) {
+	var lines []string
+	for _, s := range slices {
+		if s.value > 0 {
+			lines = append(lines, fmt.Sprintf(`    "%s" : %s`, label(s.name), trim(s.value)))
+		}
+	}
+	if len(lines) == 0 {
+		return
+	}
+	d.line("```mermaid")
+	d.line("pie showData")
+	d.line("    title %s", label(title))
+	for _, l := range lines {
+		d.line("%s", l)
+	}
+	d.line("```")
+	d.line("")
+}
+
 func sprintName(s SprintReport) string {
 	if s.ClosedAt == nil {
 		return fmt.Sprintf("Sprint %d (so far)", s.Number)
@@ -210,27 +238,33 @@ func BoardMarkdown(r *Report, from, to time.Time, loc *time.Location, now time.T
 		d.line("## Work mix")
 		d.line("")
 		rows = nil
+		var mix []slice
 		for _, m := range t.Mix {
 			rows = append(rows, []string{typeName(m.Type), fmt.Sprint(m.Count), n(m.Value)})
+			mix = append(mix, slice{typeName(m.Type), m.Value})
 		}
+		d.pie("Delivered "+r.Unit+" by type", mix)
 		d.table([]string{"Type", "Tickets", strings.ToUpper(r.Unit[:1]) + r.Unit[1:]}, rows)
 	}
 	var goals [][]string
+	var met, missed float64
 	for _, s := range r.Sprints {
 		if s.Goal == "" {
 			continue
 		}
 		status := "In progress"
 		if s.GoalMet != nil && *s.GoalMet {
-			status = "Met"
+			status, met = "Met", met+1
 		} else if s.GoalMet != nil {
-			status = "Not met"
+			status, missed = "Not met", missed+1
 		}
 		goals = append(goals, []string{sprintName(s), cell(s.Goal), status})
 	}
 	if len(goals) > 0 {
 		d.line("## Sprint goals")
 		d.line("")
+		// closed sprints only: one still running hasn't met or missed its goal yet
+		d.pie("Sprint goals met", []slice{{"Met", met}, {"Not met", missed}})
 		d.table([]string{"Sprint", "Goal", ""}, goals)
 	}
 	d.line("## Sprint by sprint")
@@ -281,24 +315,35 @@ func RollupMarkdown(r *Rollup, from, to time.Time, loc *time.Location, now time.
 		name, delivered string
 		sprints         int
 		predictability  *float64
+		points, tickets float64 // delivered, for the share pies
 	}
 	var parts []part
 	what := "Board"
 	if r.Boards != nil {
 		for _, b := range r.Boards {
-			parts = append(parts, part{b.BoardName, fmt.Sprintf("%s %s", n(b.Totals.Done), b.Unit), b.Totals.Sprints, b.Totals.Predictability})
+			pt := part{name: b.BoardName, delivered: fmt.Sprintf("%s %s", n(b.Totals.Done), b.Unit), sprints: b.Totals.Sprints, predictability: b.Totals.Predictability}
+			if b.Unit == "points" {
+				pt.points = b.Totals.Done
+			} else {
+				pt.tickets = b.Totals.Done
+			}
+			parts = append(parts, pt)
 		}
 	} else {
 		what = "Project"
 		for _, p := range r.Projects {
+			pt := part{name: p.Name, sprints: p.Overall.Sprints, predictability: p.Overall.Predictability}
 			var list []string
 			if p.Points != nil {
 				list = append(list, n(p.Points.Done)+" points")
+				pt.points = p.Points.Done
 			}
 			if p.Tickets != nil {
 				list = append(list, n(p.Tickets.Done)+" tickets")
+				pt.tickets = p.Tickets.Done
 			}
-			parts = append(parts, part{p.Name, strings.Join(list, ", "), p.Overall.Sprints, p.Overall.Predictability})
+			pt.delivered = strings.Join(list, ", ")
+			parts = append(parts, pt)
 		}
 	}
 	if len(parts) > 0 {
@@ -307,12 +352,23 @@ func RollupMarkdown(r *Rollup, from, to time.Time, loc *time.Location, now time.
 		xs := make([]string, len(parts))
 		ps := make([]float64, len(parts))
 		rows := make([][]string, len(parts))
+		var points, tickets []slice
 		for i, p := range parts {
 			xs[i], ps[i] = p.name, deref(p.predictability)*100
 			rows[i] = []string{cell(p.name), fmt.Sprint(p.sprints), optPct(p.predictability), cell(p.delivered)}
+			points, tickets = append(points, slice{p.name, p.points}), append(tickets, slice{p.name, p.tickets})
 		}
 		d.chart("Predictability % by "+strings.ToLower(what), "%", xs, [][]float64{ps}, nil)
+		// points and tickets don't add up together, so a pie each
+		d.pie("Points delivered by "+strings.ToLower(what), points)
+		d.pie("Tickets delivered by "+strings.ToLower(what), tickets)
 		d.table([]string{what, "Sprints", "Predictability", "Delivered"}, rows)
+	}
+	if o := r.Overall; o.GoalsSet > 0 {
+		d.line("## Sprint goals")
+		d.line("")
+		d.pie("Sprint goals met", []slice{{"Met", float64(o.GoalsMet)}, {"Not met", float64(o.GoalsSet - o.GoalsMet)}})
+		d.table([]string{"Met", "Not met"}, [][]string{{fmt.Sprint(o.GoalsMet), fmt.Sprint(o.GoalsSet - o.GoalsMet)}})
 	}
 	if len(r.Months) > 0 {
 		d.line("## By month")
