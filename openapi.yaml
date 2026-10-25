@@ -2244,7 +2244,8 @@ paths:
       description: One row per ticket, newest mention first. Mentions are recorded when a comment names someone, and stay when the notification is cleared.
       parameters:
         - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 10 } }
-        - { name: hide_done, in: query, description: true leaves out done and closed tickets., schema: { type: boolean, default: false } }
+        - { name: status, in: query, description: 'open, done (done and closed tickets) or all.', schema: { type: string, enum: [open, done, all], default: all } }
+        - { name: hide_done, in: query, description: 'Older form of status=open; status wins.', schema: { type: boolean, default: false } }
       responses:
         '200':
           description: Mentioned tickets.
@@ -2263,7 +2264,8 @@ paths:
                     actor: { type: string, description: Who mentioned the caller last (user id or agent name). }
                     comment_id: { type: string, description: 'The comment, or "" for mentions from before they were recorded.' }
                     mentioned_at: { type: string, format: date-time }
-        '400': { description: limit is not 1–100. }
+                    muted: { type: boolean, description: The caller stopped watching this ticket (it stays listed). }
+        '400': { description: limit is not 1–100, or status isn't open, done or all. }
         '401': { $ref: '#/components/responses/Unauthorized' }
 
   /mentions/page:
@@ -2275,7 +2277,8 @@ paths:
       parameters:
         - { name: page, in: query, schema: { type: integer, minimum: 1, default: 1 } }
         - { name: per_page, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 25 } }
-        - { name: hide_done, in: query, description: true leaves out done and closed tickets., schema: { type: boolean, default: false } }
+        - { name: status, in: query, description: 'open, done (done and closed tickets) or all.', schema: { type: string, enum: [open, done, all], default: all } }
+        - { name: hide_done, in: query, description: 'Older form of status=open; status wins.', schema: { type: boolean, default: false } }
       responses:
         '200':
           description: One page of mentioned tickets.
@@ -2288,8 +2291,30 @@ paths:
                   total: { type: integer }
                   page: { type: integer }
                   per_page: { type: integer }
-        '400': { description: page or per_page is out of range. }
+        '400': { description: page or per_page is out of range, or status isn't open, done or all. }
         '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /mentions/{ticketId}/mute:
+    parameters:
+      - $ref: '#/components/parameters/TicketId'
+    put:
+      tags: [Tickets]
+      operationId: muteMention
+      summary: Stop watching a ticket
+      description: Everyone @mentioned on a ticket (mentioning yourself counts) watches it, hearing about its comments, moves, assignment and finishing. Muting stops that; the ticket stays on the caller's mentions.
+      responses:
+        '204': { description: Muted (or already). }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [Tickets]
+      operationId: unmuteMention
+      summary: Watch a ticket again
+      description: Undoes a mute, without a new mention.
+      responses:
+        '204': { description: Watching again. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
 
   /tickets/{ticketId}/comments:
     parameters:
@@ -4556,6 +4581,7 @@ components:
         bad_link_code: "this link has expired or was already used: message the TrackLin.es app in Google Chat for a new one"
         bad_member_limit: "limit must be between 1 and 500"
         bad_number_param: "{name} must be a whole number from 1 to {max}"
+        bad_mention_status: status must be open, done or all
         bad_offset: "offset must be a non-negative integer"
         bad_origin: "an origin like https://example.com is required"
         bad_page: "page must be 1 or more"

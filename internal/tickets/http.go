@@ -306,6 +306,8 @@ func (h System) Move(w http.ResponseWriter, r *http.Request) {
 			h.reviewers(r, after)
 		} else if after.Done && !before.Done {
 			h.finished(r, after, "finished")
+		} else if from != in.ColumnID && after.ColumnName != nil {
+			h.watchers(r, after, nil, "moved "+ref(after)+" to "+*after.ColumnName)
 		}
 	}
 	if review { // an agent finished it on a board with agent review: a person has to approve it
