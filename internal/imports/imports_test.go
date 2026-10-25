@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -61,6 +62,23 @@ func TestCheck(t *testing.T) {
 // fake is a source handing back a fixed plan.
 type fake struct{ plan Plan }
 
+// Fetch: a source's attachment download (TL-540); "broken" fails.
+func (f fake) Fetch(_ context.Context, _, url string, _ int64) ([]byte, error) {
+	if url == "broken" {
+		return nil, errors.New("gone")
+	}
+	return []byte("hello"), nil
+}
+
+// files is UploadThing: what was stored, by key.
+type files map[string]string
+
+func (f files) Upload(_ context.Context, name, _ string, data []byte) (string, string, error) {
+	key := fmt.Sprintf("imp-%s-%d", strings.ReplaceAll(name, ".", "-"), len(f))
+	f[key] = string(data)
+	return key, "https://app.ufs.sh/f/" + key, nil
+}
+
 func (f fake) Plan(_ context.Context, _ string, options json.RawMessage) (Plan, error) {
 	if string(options) == `"broken"` {
 		return Plan{}, errors.New("bad credentials")
@@ -101,14 +119,18 @@ func TestImports(t *testing.T) {
 			{SourceID: "101", Number: 12, Type: "bug", Title: "Card declined", Description: "**boom**", Priority: "urgent", Estimate: "5",
 				Labels: []string{"payments", "", strings.Repeat("x", 51)}, Board: "1", Column: "3", Parent: "100", URL: "https://acme.atlassian.net/browse/SHOP-12",
 				CreatedAt: &when, Comments: []Comment{{SourceID: "c1", Author: "Old Name", Body: "seen it"}, {SourceID: "c2", Author: "x", Body: "  "}},
-				BlockedBy: []string{"102", "999"}},
+				BlockedBy: []string{"102", "999"}, Attachments: []Attachment{
+					{SourceID: "a1", Name: "log.txt", Size: 5, Type: "text/plain", URL: "ok"},
+					{SourceID: "a2", Name: "big.zip", Size: MaxCopy + 1, URL: "big", Link: "https://jira.example/big"},
+					{SourceID: "a3", Name: "lost.png", Size: 5, URL: "broken"}}},
 			{SourceID: "102", Number: 3, Type: "task", Title: "Sized wrong", Estimate: "4", Board: "1", Column: "10001", BlockedBy: []string{"101"}},
 			{SourceID: "105", Number: 8, Type: "task", Title: "Shipped", Done: true, DoneAt: &when},
 			{SourceID: "103", Number: 5, Type: "feature", Title: "Backlog idea", Parent: "999"},
 			{SourceID: "104", Number: 6, Type: "story", Title: "Unknown type"},
 		},
 	}}}
-	h := NewSystem(db, organizations.Admins{DB: db}, func() bool { return true }, map[string]Source{"fake": fake{plan}})
+	stored := files{}
+	h := NewSystem(db, organizations.Admins{DB: db}, func() bool { return true }, map[string]Source{"fake": fake{plan}}).WithFiles(stored)
 	h.spawn = func(f func()) { f() } // run right away
 	as := func(user, org string) context.Context {
 		return clerk.ContextWithSessionClaims(ctx, &clerk.SessionClaims{RegisteredClaims: clerk.RegisteredClaims{Subject: user}, Claims: clerk.Claims{ActiveOrganizationID: org}})
@@ -162,7 +184,7 @@ func TestImports(t *testing.T) {
 	if code != 201 || im.State != "previewing" || len(im.Problems) != 1 || im.Problems[0].Code != "project_limit" {
 		t.Fatalf("preview: %d %+v", code, im)
 	}
-	if im.Planned == nil || *im.Planned != (Counts{Projects: 1, Boards: 1, Columns: 3, Tickets: 5, Comments: 2}) || len(im.Skipped) != 2 ||
+	if im.Planned == nil || *im.Planned != (Counts{Projects: 1, Boards: 1, Columns: 3, Tickets: 5, Comments: 2, Attachments: 2}) || len(im.Skipped) != 2 ||
 		len(im.Projects) != 1 || im.Projects[0].Prefix != "SHOP" || len(im.Projects[0].Boards[0].Columns) != 3 {
 		t.Fatalf("preview plan: %+v", im)
 	}
@@ -188,14 +210,14 @@ func TestImports(t *testing.T) {
 	}
 	done := get(im.ID)
 	if done.State != "done" || done.Progress != 5 || done.Total != 5 || done.Report == nil ||
-		done.Report.Created != (Counts{Projects: 1, Boards: 1, Columns: 3, Tickets: 5, Comments: 1}) {
+		done.Report.Created != (Counts{Projects: 1, Boards: 1, Columns: 3, Tickets: 5, Comments: 1, Attachments: 1}) {
 		t.Fatalf("done: %+v", done)
 	}
 	reasons := map[string]string{}
 	for _, s := range done.Report.Skipped {
 		reasons[s.Kind+":"+s.SourceID] = s.Reason
 	}
-	for _, k := range []string{"ticket:x", "ticket:104", "comment:c2", "estimate:102", "parent:103", "blocked_by:101"} {
+	for _, k := range []string{"ticket:x", "ticket:104", "comment:c2", "estimate:102", "parent:103", "blocked_by:101", "attachment:a2", "attachment:a3"} {
 		if reasons[k] == "" {
 			t.Errorf("report misses %s: %+v", k, done.Report.Skipped)
 		}
@@ -251,6 +273,14 @@ func TestImports(t *testing.T) {
 	if len(blocks) != 1 || blocks[0] != "12<3" {
 		t.Fatalf("blocked by: %v", blocks)
 	}
+	// attachments (TL-540): the small one copied onto the ticket, the big one linked in its description
+	var fileKey, fileURL, desc string
+	_ = db.QueryRow(ctx, `SELECT a.file_key, a.url, t.description FROM ticket_attachments a JOIN tickets t ON t.id = a.ticket_id
+		WHERE t.project_id = $1 AND t.number = 12`, projectID).Scan(&fileKey, &fileURL, &desc)
+	if stored[fileKey] != "hello" || fileURL != "https://app.ufs.sh/f/"+fileKey || len(stored) != 1 ||
+		!strings.HasPrefix(desc, "**boom**\n\n**Attachments, in the original:**\n- [big.zip](https://jira.example/big)") {
+		t.Fatalf("attachments: %q %q %q %v", fileKey, fileURL, desc, stored)
+	}
 	var author string
 	_ = db.QueryRow(ctx, `SELECT c.author FROM ticket_comments c JOIN import_items i ON i.target_id = c.id WHERE i.import_id = $1 AND i.source_id = 'c1'`, im.ID).Scan(&author)
 	if author != "Old Name" {
@@ -278,6 +308,11 @@ func TestImports(t *testing.T) {
 	}
 	var left int
 	_ = db.QueryRow(ctx, `SELECT count(*) FROM projects WHERE id::text = $1`, projectID).Scan(&left)
+	var queued int // the copied file goes to the sweeper with its ticket
+	_ = db.QueryRow(ctx, `SELECT count(*) FROM deleted_files WHERE file_key = $1`, fileKey).Scan(&queued)
+	if queued != 1 {
+		t.Fatal("scrapping didn't queue the copied file for deletion")
+	}
 	if left != 0 || get(im.ID).State != "scrapped" {
 		t.Fatalf("scrapped: %d projects, %s", left, get(im.ID).State)
 	}

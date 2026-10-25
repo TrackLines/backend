@@ -60,6 +60,7 @@ import (
 	"github.com/tracklines/backend/internal/users"
 	"github.com/tracklines/backend/internal/views"
 	"github.com/tracklines/backend/internal/webhooks"
+	"github.com/tracklines/backend/retention"
 )
 
 // Service owns the HTTP lifecycle and route composition.
@@ -250,6 +251,9 @@ func (s *Service) Handler() http.Handler {
 		"csv":  imports.CSV{},                                                 // TL-637
 		"jira": jira.Source{Store: jiraStore, Members: people.MembersByEmail}, // TL-538
 	})
+	if token := config.Get(s.Config).UploadThingToken; token != "" { // attachments are copied, not linked (TL-540)
+		im = im.WithFiles(retention.UploadThing{Token: token})
+	}
 	mux.Handle("POST /api/imports", signedIn(im.Preview))
 	mux.Handle("GET /api/imports", signedIn(im.List))
 	mux.Handle("GET /api/imports/{id}", signedIn(im.Get))

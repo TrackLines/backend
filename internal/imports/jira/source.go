@@ -74,6 +74,12 @@ type issue struct {
 			Comments []comment `json:"comments"`
 			Total    int       `json:"total"`
 		} `json:"comment"`
+		Attachment []struct {
+			ID       string `json:"id"`
+			Filename string `json:"filename"`
+			Size     int64  `json:"size"`
+			MimeType string `json:"mimeType"`
+		} `json:"attachment"`
 	} `json:"fields"`
 	estimates map[string]float64 // story point fields by id
 }
@@ -208,7 +214,7 @@ func (s Source) project(ctx context.Context, c Client, key string, points []stri
 	// every issue in the project
 	var issues []issue
 	fields := append([]string{"summary", "description", "issuetype", "priority", "labels", "components", "status", "parent", "assignee",
-		"created", "updated", "resolutiondate", "duedate", "issuelinks", "comment"}, points...)
+		"created", "updated", "resolutiondate", "duedate", "issuelinks", "comment", "attachment"}, points...)
 	q := url.Values{"jql": {"project = \"" + jp.Key + "\" ORDER BY key"}, "fields": {strings.Join(fields, ",")}, "maxResults": {"100"}}
 	err := c.Search(ctx, q, func(raw json.RawMessage) error {
 		var is issue
@@ -378,6 +384,11 @@ func (s Source) ticket(ctx context.Context, c Client, is issue, members map[stri
 			t.BlockedBy = append(t.BlockedBy, l.InwardIssue.ID)
 		}
 	}
+	for _, a := range f.Attachment { // copied while the import runs (TL-540): redirect=false streams it from Jira itself
+		content := strings.TrimRight(c.Site, "/") + "/rest/api/3/attachment/content/" + url.PathEscape(a.ID)
+		t.Attachments = append(t.Attachments, imports.Attachment{SourceID: "attachment:" + a.ID, Name: a.Filename, Size: a.Size, Type: a.MimeType,
+			URL: content + "?redirect=false", Link: content})
+	}
 	var skips []imports.Skip
 	var err error
 	if t.Description, err = ToMarkdown(f.Description, nil); err != nil {
@@ -414,6 +425,15 @@ func (s Source) ticket(ctx context.Context, c Client, is issue, members map[stri
 		t.Comments = append(t.Comments, imports.Comment{SourceID: cm.ID, Author: author, Body: body, CreatedAt: when(cm.Created)})
 	}
 	return t, skips, nil
+}
+
+// Fetch downloads an attachment while an import runs, as the org's connection.
+func (s Source) Fetch(ctx context.Context, org, u string, max int64) ([]byte, error) {
+	c, err := s.Store.Client(ctx, org)
+	if err != nil {
+		return nil, err
+	}
+	return c.Download(ctx, u, max)
 }
 
 // Projects: GET /api/imports/jira/projects, the Jira projects the connection can see, to pick from.

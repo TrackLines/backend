@@ -71,8 +71,33 @@ type Ticket struct {
 	BlockedBy   []string   `json:"blocked_by,omitempty"` // source ids of the tickets it waits on (TL-538)
 	// Done: finished in the source. On a board it's done by being in the last column; in the backlog
 	// it's resolved as done. DoneAt is when (default UpdatedAt).
-	Done   bool       `json:"done,omitempty"`
-	DoneAt *time.Time `json:"done_at,omitempty"`
+	Done        bool         `json:"done,omitempty"`
+	DoneAt      *time.Time   `json:"done_at,omitempty"`
+	Attachments []Attachment `json:"attachments,omitempty"` // copied when they run (TL-540)
+}
+
+// Attachment is a file on a source ticket. Up to MaxCopy it's copied to UploadThing while the import
+// runs (the source fetches it); a bigger one is linked in the ticket's description instead.
+type Attachment struct {
+	SourceID string `json:"source_id"`
+	Name     string `json:"name"`
+	Size     int64  `json:"size"`
+	Type     string `json:"type,omitempty"` // its content type
+	URL      string `json:"url"`            // where the source fetches it from
+	Link     string `json:"link,omitempty"` // where a person opens it in the source (default URL)
+}
+
+// MaxCopy is the largest attachment copied: ticket uploads' own limit (frontend app/api/uploadthing/core.ts).
+const MaxCopy = 16 << 20
+
+// Files stores copied attachments (retention.UploadThing).
+type Files interface {
+	Upload(ctx context.Context, name, contentType string, data []byte) (key, url string, err error)
+}
+
+// Fetcher is a source that can download its attachments while an import runs (at most max bytes).
+type Fetcher interface {
+	Fetch(ctx context.Context, org, url string, max int64) ([]byte, error)
 }
 
 type Comment struct {
@@ -98,11 +123,12 @@ type Problem struct {
 
 // Counts is how much an import creates (planned) or created (report).
 type Counts struct {
-	Projects int `json:"projects"`
-	Boards   int `json:"boards"`
-	Columns  int `json:"columns"`
-	Tickets  int `json:"tickets"`
-	Comments int `json:"comments"`
+	Projects    int `json:"projects"`
+	Boards      int `json:"boards"`
+	Columns     int `json:"columns"`
+	Tickets     int `json:"tickets"`
+	Comments    int `json:"comments"`
+	Attachments int `json:"attachments"` // copied (planned: those small enough to copy)
 }
 
 var prefixFormat = regexp.MustCompile(`^[A-Z][A-Z0-9]{1,5}$`) // projects_key_prefix_format
@@ -158,6 +184,11 @@ func check(p Plan, o org) (problems []Problem, skips []Skip, n Counts) {
 			}
 			n.Tickets++
 			n.Comments += len(t.Comments)
+			for _, a := range t.Attachments {
+				if a.Size <= MaxCopy {
+					n.Attachments++
+				}
+			}
 		}
 	}
 	return problems, skips, n

@@ -72,7 +72,10 @@ type BoardPreview struct {
 	Columns  []string `json:"columns"`
 }
 
-type Store struct{ DB *pgxpool.Pool }
+type Store struct {
+	DB    *pgxpool.Pool
+	Files Files // where attachments are copied to; nil: they're linked instead
+}
 
 // a running import that hasn't beaten its heart for this long died with its server: it reads as failed
 const stale = `(state IN ('running', 'cancelling') AND updated_at < now() - interval '10 minutes')`
@@ -219,13 +222,18 @@ func (s Store) Cancel(ctx context.Context, owner, id string) error {
 	return nil
 }
 
-// Run creates everything in p in one transaction, so a failed or cancelled run leaves nothing behind.
-// Progress is written outside it as it goes; cancelling is noticed between tickets.
-func (s Store) Run(ctx context.Context, owner, user, id, source string, p Plan) {
+// Run creates everything in p in one transaction, so a failed or cancelled run leaves nothing behind
+// (files it copied are queued for the sweeper to delete). Progress is written outside it as it goes;
+// cancelling is noticed between tickets. fetch downloads attachments (nil: they're linked).
+func (s Store) Run(ctx context.Context, owner, user, id, source string, p Plan, fetch Fetcher) {
 	report := Report{Skipped: []Skip{}}
+	var copied []string
 	err := pgx.BeginFunc(ctx, s.DB, func(tx pgx.Tx) error {
-		return s.build(ctx, tx, owner, user, id, source, p, &report)
+		return s.build(ctx, tx, owner, user, id, source, p, &report, fetch, &copied)
 	})
+	if err != nil && len(copied) > 0 {
+		_, _ = s.DB.Exec(context.WithoutCancel(ctx), `INSERT INTO deleted_files (file_key) SELECT unnest($1::text[]) ON CONFLICT DO NOTHING`, copied)
+	}
 	state, msg := "done", ""
 	switch {
 	case errors.Is(err, errCancelled):
@@ -247,7 +255,7 @@ func labelOK(l string) bool {
 	return n > 0 && n <= 50
 }
 
-func (s Store) build(ctx context.Context, tx pgx.Tx, owner, user, id, source string, p Plan, report *Report) error {
+func (s Store) build(ctx context.Context, tx pgx.Tx, owner, user, id, source string, p Plan, report *Report, fetch Fetcher, copied *[]string) error {
 	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext('projects:' || $1))`, owner); err != nil { // as projects.Create
 		return err
 	}
@@ -394,6 +402,9 @@ func (s Store) build(ctx context.Context, tx pgx.Tx, owner, user, id, source str
 				}
 				report.Created.Comments++
 			}
+			if err := s.attach(ctx, tx, owner, user, ticketID, t, report, fetch, copied); err != nil {
+				return err
+			}
 			if done++; done%50 == 0 {
 				if err := s.beat(ctx, id, done); err != nil {
 					return err
@@ -427,6 +438,53 @@ func (s Store) build(ctx context.Context, tx pgx.Tx, owner, user, id, source str
 	// what each ticket looks like now: scrapping compares against it
 	_, err = tx.Exec(ctx, `UPDATE import_items i SET fingerprint = (SELECT `+fingerprint+` FROM tickets_all t WHERE t.id = i.target_id)
 		WHERE i.import_id = $1 AND i.kind = 'ticket'`, id)
+	return err
+}
+
+// attach copies t's attachments onto ticket: each small enough is fetched from the source and stored
+// in Files; the rest (too big, or nowhere to copy them) are linked in its description. A file that
+// can't be fetched or stored is reported, not fatal.
+func (s Store) attach(ctx context.Context, tx pgx.Tx, owner, user, ticket string, t Ticket, report *Report, fetch Fetcher, copied *[]string) error {
+	var linked []string
+	for _, a := range t.Attachments {
+		link := cmp.Or(a.Link, a.URL)
+		if a.Size > MaxCopy || s.Files == nil || fetch == nil {
+			linked = append(linked, fmt.Sprintf("- [%s](%s)", strings.ReplaceAll(a.Name, "]", ""), link))
+			reason := fmt.Sprintf("larger than %d MB: linked in its description", MaxCopy>>20)
+			if a.Size <= MaxCopy {
+				reason = "files can't be copied here: linked in its description"
+			}
+			report.Skipped = append(report.Skipped, Skip{Kind: "attachment", SourceID: a.SourceID, Reason: reason})
+			continue
+		}
+		data, err := fetch.Fetch(ctx, owner, a.URL, MaxCopy)
+		if err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			report.Skipped = append(report.Skipped, Skip{Kind: "attachment", SourceID: a.SourceID, Reason: "it couldn't be downloaded"})
+			continue
+		}
+		key, url, err := s.Files.Upload(ctx, a.Name, a.Type, data)
+		if err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			report.Skipped = append(report.Skipped, Skip{Kind: "attachment", SourceID: a.SourceID, Reason: "it couldn't be stored"})
+			continue
+		}
+		*copied = append(*copied, key)
+		if _, err := tx.Exec(ctx, `INSERT INTO ticket_attachments (ticket_id, file_key, url, name, size_bytes, content_type, created_by)
+			VALUES ($1, $2, $3, $4, $5, $6, $7)`, ticket, key, url, a.Name, len(data), a.Type, user); err != nil {
+			return err
+		}
+		report.Created.Attachments++
+	}
+	if len(linked) == 0 {
+		return nil
+	}
+	_, err := tx.Exec(ctx, `UPDATE tickets SET description = ltrim(description || E'\n\n' || $2) WHERE id = $1`,
+		ticket, "**Attachments, in the original:**\n"+strings.Join(linked, "\n"))
 	return err
 }
 
@@ -477,7 +535,7 @@ func (s Store) Scrap(ctx context.Context, owner, id string) error {
 		if changed {
 			return ErrChanged
 		}
-		// ponytail: copied attachments' files stay in UploadThing; delete them here once imports copy any (TL-540)
+		// copied attachments go with their tickets, and their files to the sweeper (deleted_files trigger)
 		if _, err := tx.Exec(ctx, `DELETE FROM projects WHERE owner_clerk_id = $2
 			AND id IN (SELECT target_id FROM import_items WHERE import_id = $1::uuid AND kind = 'project')`, id, owner); err != nil {
 			return err

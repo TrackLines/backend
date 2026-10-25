@@ -148,7 +148,8 @@ paths:
                     its boards boards (Jira's columns, a column with no status left out) and every issue a ticket with its
                     number: types, sub-tasks and epics, priorities, labels and components, story points (on the board's
                     scale), blocked-by links, due dates, comments, and assignees matched to members by email. An issue on
-                    no board goes to the backlog (resolved, if it's done in Jira).
+                    no board goes to the backlog (resolved, if it's done in Jira). Attachments up to 16 MB are copied
+                    while it runs (TL-540); bigger ones are linked in the ticket's description and listed as skipped.
       responses:
         '201': { description: The preview., content: { application/json: { schema: { $ref: '#/components/schemas/Import' } } } }
         '400': { description: Unknown source, or the source couldn't plan (it says why). }
@@ -4394,6 +4395,7 @@ components:
         columns: { type: integer }
         tickets: { type: integer }
         comments: { type: integer }
+        attachments: { type: integer, description: Files copied (planned - those small enough to copy, up to 16 MB each). }
     ImportSkip:
       type: object
       properties:

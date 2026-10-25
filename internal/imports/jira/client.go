@@ -125,6 +125,31 @@ func (c Client) List(ctx context.Context, path string, query url.Values, key str
 	}
 }
 
+// Download reads a file from the site (an attachment's content), at most max bytes.
+func (c Client) Download(ctx context.Context, u string, max int64) ([]byte, error) {
+	if !strings.HasPrefix(u, strings.TrimRight(c.Site, "/")+"/rest/api/3/attachment/content/") {
+		return nil, fmt.Errorf("jira: %s isn't one of the site's attachments", u) // the token only goes to its own site
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.SetBasicAuth(c.Email, c.Token)
+	res, err := c.HTTP.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrUnreachable, err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("jira: %s: %s", u, res.Status)
+	}
+	data, err := io.ReadAll(io.LimitReader(res.Body, max+1))
+	if err == nil && int64(len(data)) > max {
+		err = fmt.Errorf("jira: %s is over %d bytes", u, max)
+	}
+	return data, err
+}
+
 // Search calls each with every issue a JQL search finds (query: jql, fields, maxResults), paging
 // with Jira's nextPageToken (the enhanced search, /rest/api/3/search/jql).
 func (c Client) Search(ctx context.Context, query url.Values, each func(json.RawMessage) error) error {
