@@ -218,7 +218,9 @@ func TestChatApp(t *testing.T) {
 
 	// help (TL-529, Marketplace review): "help", "@app help" and /help, in a DM or a space, in either
 	// format, answer with how to get started; it makes no link code. Anything else points at help.
-	isHelp := func(body string) bool { return strings.Contains(body, "TrackLin.es for Google Chat") && strings.Contains(body, "/help") }
+	isHelp := func(body string) bool {
+		return strings.Contains(body, "TrackLin.es for Google Chat") && strings.Contains(body, "/help")
+	}
 	for name, body := range map[string]string{
 		"dm help":         `{"type":"MESSAGE","user":{"name":"users/hal"},"space":{"name":"spaces/DMHAL","spaceType":"DIRECT_MESSAGE"},"message":{"text":"Help","argumentText":" Help "}}`,
 		"space @app help": `{"type":"MESSAGE","user":{"name":"users/hal"},"space":{"name":"spaces/ROOM","spaceType":"SPACE"},"message":{"text":"@TrackLin.es help"}}`,
