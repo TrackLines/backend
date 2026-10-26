@@ -1,5 +1,6 @@
 # Tracklines backend
 
+
 The Tracklines HTTP API: projects, boards, columns, tickets, backlog, sprints, roadmaps,
 comments, attachments, billing, invitations and the public roadmap/intake endpoints. It also
 serves the [MCP](#mcp) endpoint and the webhooks for Clerk, Stripe and the Git integrations.
