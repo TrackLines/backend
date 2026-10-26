@@ -433,11 +433,15 @@ func (s *Service) Handler() http.Handler {
 	mux.Handle("PUT /api/mentions/{ticket}/mute", signedIn(cm.Mute))    // stop watching a ticket (TL-587)
 	mux.Handle("DELETE /api/mentions/{ticket}/mute", signedIn(cm.Mute)) // watch it again
 
-	// Attachments — files live on UploadThing (browser uploads via the Next.js route); we keep the records
+	// Attachments — files live on UploadThing (browser uploads via the Next.js route, API keys through us); we keep the records
 	at := attachments.NewSystem(s.DB)
 	at.IsAdmin = o.AdminModel().IsAdmin
+	if token := config.Get(s.Config).UploadThingToken; token != "" {
+		at.Files = retention.UploadThing{Token: token}
+	}
 	mux.Handle("GET /api/tickets/{id}/attachments", signedIn(at.List))
 	mux.Handle("POST /api/tickets/{id}/attachments", signedIn(at.Create))
+	mux.Handle("POST /api/tickets/{id}/attachments/upload", signedIn(at.Upload)) // the file itself, for API-key clients (TL-659)
 	mux.Handle("DELETE /api/attachments/{id}", signedIn(at.Delete))
 	mux.Handle("POST /api/attachments/{id}/keep", signedIn(at.Keep))     // a year-old file: keep it another year (admins, uploader)
 	mux.Handle("GET /api/attachments/retention", signedIn(at.Retention)) // files due for clean-up and already cleaned up (admins)
