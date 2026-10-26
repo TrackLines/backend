@@ -36,6 +36,7 @@ import (
 	"github.com/tracklines/backend/internal/columns"
 	"github.com/tracklines/backend/internal/comments"
 	"github.com/tracklines/backend/internal/config"
+	"github.com/tracklines/backend/internal/downtime"
 	"github.com/tracklines/backend/internal/embed"
 	"github.com/tracklines/backend/internal/enquiries"
 	"github.com/tracklines/backend/internal/help"
@@ -339,6 +340,16 @@ func (s *Service) Handler() http.Handler {
 	mux.Handle("PUT /api/staff/help/order", staffOnly(http.HandlerFunc(hp.Order)))
 	mux.Handle("PUT /api/staff/help/{id}", staffOnly(http.HandlerFunc(hp.Update)))
 	mux.Handle("DELETE /api/staff/help/{id}", staffOnly(http.HandlerFunc(hp.Delete)))
+	// the downtime resolver, phase 1 (TL-576): record outages, preview and apply the Terms' credits
+	dt := downtime.System{DB: s.DB, Notify: notify, Now: time.Now}
+	if s.Billing.Stripe.SecretKey != "" {
+		dt.Stripe = s.Billing.Stripe
+	}
+	mux.Handle("GET /api/staff/outages", staffOnly(http.HandlerFunc(dt.List)))
+	mux.Handle("POST /api/staff/outages", staffOnly(http.HandlerFunc(dt.Create)))
+	mux.Handle("DELETE /api/staff/outages/{id}", staffOnly(http.HandlerFunc(dt.Delete)))
+	mux.Handle("GET /api/staff/outages/{id}/preview", staffOnly(http.HandlerFunc(dt.Preview)))
+	mux.Handle("POST /api/staff/outages/{id}/apply", staffOnly(http.HandlerFunc(dt.Apply)))
 
 	mux.Handle("POST /api/columns/{id}/tickets", signedIn(t.Create))
 	mux.Handle("GET /api/tickets/{id}", signedIn(t.Get))                // one ticket + where it lives (deep links)

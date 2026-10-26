@@ -4387,6 +4387,86 @@ paths:
       responses:
         '204': { description: Deleted. }
         '404': { description: Not staff, or no such answer (help_not_found). }
+  /staff/outages:
+    get:
+      tags: [Staff]
+      operationId: listOutages
+      summary: Recorded outages
+      description: Newest first, with what the downtime credit policy makes of each. Staff only.
+      responses:
+        '200': { description: The outages., content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Outage' } } } } }
+        '404': { description: Not staff. }
+    post:
+      tags: [Staff]
+      operationId: createOutage
+      summary: Record an outage
+      description: Its start and end (RFC 3339; days are UTC), from the uptime status page. Staff only.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [starts_at, ends_at], properties: { starts_at: { type: string, format: date-time }, ends_at: { type: string, format: date-time }, note: { type: string } } }
+      responses:
+        '201': { description: Recorded., content: { application/json: { schema: { $ref: '#/components/schemas/Outage' } } } }
+        '400': { description: It doesn't end after it starts, or ends in the future (outage_times). }
+        '404': { description: Not staff. }
+  /staff/outages/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    delete:
+      tags: [Staff]
+      operationId: deleteOutage
+      summary: Delete a mistaken outage
+      responses:
+        '204': { description: Deleted. }
+        '404': { description: Not staff, or no such outage (outage_not_found). }
+        '409': { description: It has credits, so it stays (outage_has_credits). }
+  /staff/outages/{id}/preview:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      tags: [Staff]
+      operationId: previewOutageCredits
+      summary: Who'd be credited what
+      description: 'Every paying organization (an active Stripe subscription) for each UTC day the outage touched: a day is the monthly price ÷ the days in that month. Days already credited are marked. Changes nothing. Staff only.'
+      responses:
+        '200':
+          description: The credits.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  outage: { $ref: '#/components/schemas/Outage' }
+                  credits: { type: array, items: { $ref: '#/components/schemas/DowntimeCredit' } }
+                  problems: { type: array, items: { $ref: '#/components/schemas/DowntimeProblem' } }
+        '404': { description: Not staff, or no such outage (outage_not_found). }
+        '503': { description: Stripe isn't configured (downtime_unavailable). }
+  /staff/outages/{id}/apply:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      tags: [Staff]
+      operationId: applyOutageCredits
+      summary: Credit the outage's days
+      description: 'A Stripe customer balance credit per organization per day not credited yet; never twice for the same (org, day), so applying again only retries what failed. The admins of each credited org are notified. An outage of an hour or less needs include_short: for a cluster staff decided to credit. Staff only.'
+      requestBody:
+        content:
+          application/json:
+            schema: { type: object, properties: { include_short: { type: boolean } } }
+      responses:
+        '200':
+          description: What was credited, and what failed.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  credited: { type: array, items: { $ref: '#/components/schemas/DowntimeCredit' } }
+                  problems: { type: array, items: { $ref: '#/components/schemas/DowntimeProblem' } }
+        '400': { description: An hour or less without include_short (outage_short). }
+        '404': { description: Not staff, or no such outage (outage_not_found). }
+        '503': { description: Stripe isn't configured (downtime_unavailable). }
   /health:
     get:
       tags: [System]
@@ -4444,6 +4524,32 @@ components:
         type: string
         format: uuid
   schemas:
+    Outage:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        starts_at: { type: string, format: date-time }
+        ends_at: { type: string, format: date-time }
+        note: { type: string }
+        minutes: { type: integer }
+        qualifies: { type: boolean, description: Over an hour, so its days are credited. }
+        days: { type: array, items: { type: string, format: date }, description: The UTC days it touched. }
+        clusters: { type: array, items: { type: string, format: date }, description: 'Its days with several outages (3+, or 2+ totalling over an hour): staff decide.' }
+        credited: { type: integer, description: Credits made for it. }
+    DowntimeCredit:
+      type: object
+      properties:
+        org_id: { type: string }
+        plan: { type: string, enum: [pro, enterprise] }
+        day: { type: string, format: date }
+        amount: { type: integer, description: Minor units. }
+        currency: { type: string }
+        credited: { type: boolean, description: Already credited; skipped. }
+    DowntimeProblem:
+      type: object
+      properties:
+        org_id: { type: string }
+        error: { type: string }
     HelpLocalized:
       type: object
       properties:
@@ -5506,6 +5612,8 @@ components:
         bad_date_range: "from and to are dates (YYYY-MM-DD), from before to, at most two years apart"
         bad_dev_complete: "the Dev complete column must be one of this board's columns, other than To do and Done"
         bad_review_column: "the review column must be one of this board's columns, other than To do and Done"
+        downtime_failed: "could not load outages"
+        downtime_unavailable: "Stripe isn't configured"
         help_english: "the English question and answer are required"
         help_failed: "could not load help answers"
         help_href: "a link must be an app route, starting with /"
@@ -5726,6 +5834,10 @@ components:
         sign_in_as_admin: "sign in as an organization admin to do this"
         sign_in_keep_file: "sign in to keep a file"
         sign_in_link_chat: "sign in to link Google Chat"
+        outage_has_credits: "this outage has credits, so it stays on record"
+        outage_not_found: "outage not found"
+        outage_short: "this outage was an hour or less: only a cluster staff decide on is credited"
+        outage_times: "an outage ends after it starts, and not in the future"
         sign_in_org: "sign in to an organization"
         sign_in_push: "sign in to turn on notifications for a device"
         sign_in_required: "sign in to do this"
