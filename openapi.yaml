@@ -132,7 +132,7 @@ paths:
               type: object
               required: [source]
               properties:
-                source: { type: string, enum: [csv, jira], example: jira }
+                source: { type: string, enum: [csv, jira, linear], example: jira }
                 options:
                   type: object
                   description: >-
@@ -150,6 +150,13 @@ paths:
                     scale), blocked-by links, due dates, comments, and assignees matched to members by email. An issue on
                     no board goes to the backlog (resolved, if it's done in Jira). Attachments up to 16 MB are copied
                     while it runs (TL-540); bigger ones are linked in the ticket's description and listed as skipped.
+                    linear (TL-654, needs a connection): {"prefix": a prefix when the main team's key can't be used, "teams":
+                    {"team:<id>": team id}}. The workspace becomes one project: the team with most issues keeps its key and
+                    numbers, the other teams' issues are numbered after it (the preview's notes say how), and each keeps its
+                    link to Linear. Teams become boards (unstarted, started and completed states as columns, Done last;
+                    backlog and triage go to the backlog; cancelled issues are closed as won't do), Linear projects become
+                    epics, and issues keep priority, estimate, labels (Bug or Feature sets the type), parent, blocked-by,
+                    due date, comments, assignee (by email) and uploaded files.
       responses:
         '201': { description: The preview., content: { application/json: { schema: { $ref: '#/components/schemas/Import' } } } }
         '400': { description: Unknown source, or the source couldn't plan (it says why). }
@@ -233,6 +240,55 @@ paths:
         '403': { description: Not an org admin, or an API key. }
         '404': { description: Imports are off. }
         '409': { description: No connection, or it has expired (jira_not_connected). }
+  /imports/linear/connection:
+    get:
+      tags: [Imports]
+      operationId: getLinearConnection
+      summary: The organization's Linear connection
+      description: The workspace, and whose personal API key it imports with (never the key). null when there's none; an expired one is deleted on reading. Org admins, signed in; behind the imports flag.
+      responses:
+        '200': { description: The connection, or null., content: { application/json: { schema: { $ref: '#/components/schemas/LinearConnection' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: Not an org admin, or an API key. }
+        '404': { description: Imports are off. }
+    put:
+      tags: [Imports]
+      operationId: connectLinear
+      summary: Connect Linear
+      description: Checked with Linear first, then kept, sealed, for 30 days, replacing any connection. The key is a Linear personal API key (Settings → Account → Security & access).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [key], properties: { key: { type: string } } }
+      responses:
+        '200': { description: Connected., content: { application/json: { schema: { $ref: '#/components/schemas/LinearConnection' } } } }
+        '400': { description: No key (linear_key), or Linear refused it (linear_unauthorized). }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: Not an org admin, or an API key. }
+        '404': { description: Imports are off. }
+        '502': { description: Linear couldn't be reached (linear_unreachable). }
+        '503': { description: The server has no key to seal tokens with (integration_not_configured). }
+    delete:
+      tags: [Imports]
+      operationId: deleteLinearConnection
+      summary: Forget the Linear connection and its key
+      responses:
+        '204': { description: Deleted (or there was none). }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: Not an org admin, or an API key. }
+        '404': { description: Imports are off. }
+  /imports/linear/connection/extend:
+    post:
+      tags: [Imports]
+      operationId: extendLinearConnection
+      summary: Keep the Linear key another 30 days from now
+      responses:
+        '200': { description: Extended., content: { application/json: { schema: { $ref: '#/components/schemas/LinearConnection' } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: Not an org admin, or an API key. }
+        '404': { description: Imports are off. }
+        '409': { description: No connection, or it has expired (linear_not_connected). }
   /imports/{importId}:
     parameters:
       - { name: importId, in: path, required: true, schema: { type: string, format: uuid } }
@@ -4390,6 +4446,15 @@ components:
         created_by: { type: string }
         created_at: { type: string, format: date-time }
         expires_at: { type: string, format: date-time, description: 30 days after saving or the last extension. }
+    LinearConnection:
+      type: object
+      nullable: true
+      properties:
+        workspace: { type: string }
+        account: { type: string, description: Whose key it is. }
+        created_by: { type: string }
+        created_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time, description: 30 days after saving or the last extension. }
     Import:
       type: object
       properties:
@@ -4420,6 +4485,10 @@ components:
           type: array
           description: Previews only. Who the source's tickets are assigned to (most tickets first), and whether they matched a member by email; anyone unmatched has their tickets left unassigned.
           items: { type: object, properties: { name: { type: string }, matched: { type: boolean }, tickets: { type: integer } } }
+        notes:
+          type: array
+          description: Previews only. Worth knowing before running it (Linear's renumbered teams).
+          items: { type: object, properties: { kind: { type: string, enum: [renumbered] }, source_id: { type: string }, message: { type: string } } }
         scrappable: { type: boolean, description: "Finished imports only: nobody has acted on what it made yet, so it can still be scrapped." }
         progress: { type: integer, description: Tickets created so far. }
         total: { type: integer }
@@ -5295,6 +5364,11 @@ components:
         jira_unauthorized: "Jira refused that email and API token"
         jira_unreachable: "couldn't reach Jira at that address"
         jira_options: pick at least one Jira project to import
+        linear_key: enter a Linear personal API key
+        linear_unauthorized: Linear refused that API key
+        linear_unreachable: couldn't reach Linear
+        linear_not_connected: "connect Linear first: its key may have expired"
+        linear_options: the import options couldn't be read
         bad_webhook_url: "the URL must be https and not a private address"
         bad_webhook_events: "pick at least one known event"
         webhook_limit: "an organization can have up to 10 webhook endpoints"

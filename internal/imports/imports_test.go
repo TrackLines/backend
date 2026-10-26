@@ -126,6 +126,7 @@ func TestImports(t *testing.T) {
 					{SourceID: "a3", Name: "lost.png", Size: 5, URL: "broken"}}},
 			{SourceID: "102", Number: 3, Type: "task", Title: "Sized wrong", Estimate: "4", Board: "1", Column: "10001", BlockedBy: []string{"101"}},
 			{SourceID: "105", Number: 8, Type: "task", Title: "Shipped", Done: true, DoneAt: &when},
+			{SourceID: "107", Number: 10, Type: "task", Title: "Cancelled", WontDo: true, UpdatedAt: &when},
 			{SourceID: "106", Number: 9, Type: "task", Title: "Forgotten", Board: "1", Column: "1", UpdatedAt: &when},
 			{SourceID: "103", Number: 5, Type: "feature", Title: "Backlog idea", Parent: "999"},
 			{SourceID: "104", Number: 6, Type: "story", Title: "Unknown type"},
@@ -186,7 +187,7 @@ func TestImports(t *testing.T) {
 	if code != 201 || im.State != "previewing" || len(im.Problems) != 1 || im.Problems[0].Code != "project_limit" {
 		t.Fatalf("preview: %d %+v", code, im)
 	}
-	if im.Planned == nil || *im.Planned != (Counts{Projects: 1, Boards: 1, Columns: 3, Tickets: 6, Comments: 2, Attachments: 2}) || len(im.Skipped) != 2 ||
+	if im.Planned == nil || *im.Planned != (Counts{Projects: 1, Boards: 1, Columns: 3, Tickets: 7, Comments: 2, Attachments: 2}) || len(im.Skipped) != 2 ||
 		len(im.Projects) != 1 || im.Projects[0].Prefix != "SHOP" || len(im.Projects[0].Boards[0].Columns) != 3 {
 		t.Fatalf("preview plan: %+v", im)
 	}
@@ -211,8 +212,8 @@ func TestImports(t *testing.T) {
 		t.Fatalf("run: %d %s", rec.Code, rec.Body)
 	}
 	done := get(im.ID)
-	if done.State != "done" || done.Progress != 6 || done.Total != 6 || done.Report == nil ||
-		done.Report.Created != (Counts{Projects: 1, Boards: 1, Columns: 3, Tickets: 6, Comments: 1, Attachments: 1}) {
+	if done.State != "done" || done.Progress != 7 || done.Total != 7 || done.Report == nil ||
+		done.Report.Created != (Counts{Projects: 1, Boards: 1, Columns: 3, Tickets: 7, Comments: 1, Attachments: 1}) {
 		t.Fatalf("done: %+v", done)
 	}
 	reasons := map[string]string{}
@@ -262,6 +263,11 @@ func TestImports(t *testing.T) {
 		FROM tickets WHERE project_id = $1 AND number = 8`, projectID).Scan(&shipped)
 	if inDone != "true" || shipped != "done 2025-03-01 true" {
 		t.Fatalf("done: in Done %q, resolved %q", inDone, shipped)
+	}
+	var cancelled string // decided against in the source: won't do (TL-654)
+	_ = db.QueryRow(ctx, `SELECT resolution || ' ' || (done_at IS NOT NULL)::text FROM tickets WHERE project_id = $1 AND number = 10`, projectID).Scan(&cancelled)
+	if cancelled != "wont_do true" {
+		t.Fatalf("won't do: %q", cancelled)
 	}
 	// blocked-by: SHOP-12 waits on SHOP-3; SHOP-3's block back on SHOP-12 would be a cycle, so it's left out
 	var blocks []string
@@ -395,5 +401,18 @@ func TestImports(t *testing.T) {
 	_ = json.Unmarshal(call(as("user_other", "im2"), h.List, "", "").Body.Bytes(), &others)
 	if len(list) < 7 || len(others) != 0 {
 		t.Fatalf("lists: %d, other org %d", len(list), len(others))
+	}
+}
+
+// a source key as a prefix: its own, numbered when taken, or none when it can't fit (TL-538)
+func TestPrefix(t *testing.T) {
+	taken := map[string]bool{"SHOP": true, "SHOP2": true, "ABCDE": true}
+	for key, want := range map[string]string{"SHOP": "SHOP3", "WEB": "WEB", "ABCDE": "ABCDE2", "ABCDEF": "ABCDEF", "LONGKEY": "", "A": "", "MY_APP": "MYAPP"} {
+		if got := Prefix(key, taken); got != want {
+			t.Errorf("Prefix(%s) = %q, want %q", key, got, want)
+		}
+	}
+	if got := Prefix("ABCDEF", map[string]bool{"ABCDEF": true}); got != "" {
+		t.Errorf("a taken 6-character key: %q", got)
 	}
 }

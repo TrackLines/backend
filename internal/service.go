@@ -41,6 +41,7 @@ import (
 	"github.com/tracklines/backend/internal/httpx"
 	"github.com/tracklines/backend/internal/imports"
 	"github.com/tracklines/backend/internal/imports/jira"
+	"github.com/tracklines/backend/internal/imports/linear"
 	"github.com/tracklines/backend/internal/intake"
 	"github.com/tracklines/backend/internal/integrations"
 	"github.com/tracklines/backend/internal/invitations"
@@ -246,10 +247,12 @@ func (s *Service) Handler() http.Handler {
 	// Imports from other trackers (TL-536): org admins, signed in, behind the "imports" flag
 	jiraBox, _ := secrets.New(config.Get(s.Config).SecretKey) // no key: connecting says the integration isn't configured
 	jiraStore := jira.NewStore(s.DB, jiraBox)
-	people := s.calendarSync(members) // members' emails, to match Jira's people
+	linearStore := linear.NewStore(s.DB, jiraBox) // the same server key seals both
+	people := s.calendarSync(members)             // members' emails, to match Jira's people
 	im := imports.NewSystem(s.DB, o.AdminModel(), s.flag("imports"), map[string]imports.Source{
-		"csv":  imports.CSV{},                                                 // TL-637
-		"jira": jira.Source{Store: jiraStore, Members: people.MembersByEmail}, // TL-538
+		"csv":    imports.CSV{},                                                     // TL-637
+		"jira":   jira.Source{Store: jiraStore, Members: people.MembersByEmail},     // TL-538
+		"linear": linear.Source{Store: linearStore, Members: people.MembersByEmail}, // TL-654
 	})
 	if token := config.Get(s.Config).UploadThingToken; token != "" { // attachments are copied, not linked (TL-540)
 		im = im.WithFiles(retention.UploadThing{Token: token})
@@ -267,6 +270,12 @@ func (s *Service) Handler() http.Handler {
 	mux.Handle("PUT /api/imports/jira/connection", signedIn(jc.Connect))
 	mux.Handle("DELETE /api/imports/jira/connection", signedIn(jc.Delete))
 	mux.Handle("POST /api/imports/jira/connection/extend", signedIn(jc.Extend))
+	// Linear (TL-654): the personal API key an admin imports a workspace with, sealed, kept 30 days
+	lc := linear.System{Store: linearStore, Admins: o.AdminModel(), On: s.flag("imports")}
+	mux.Handle("GET /api/imports/linear/connection", signedIn(lc.Get))
+	mux.Handle("PUT /api/imports/linear/connection", signedIn(lc.Connect))
+	mux.Handle("DELETE /api/imports/linear/connection", signedIn(lc.Delete))
+	mux.Handle("POST /api/imports/linear/connection/extend", signedIn(lc.Extend))
 	mux.Handle("GET /api/boards/{id}", signedIn(b.Get))
 	mux.Handle("GET /api/boards/{id}/flow", signedIn(b.Flow))
 	mux.Handle("PATCH /api/boards/{id}", signedIn(b.Update))  // name and estimate_scale settings

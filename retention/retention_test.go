@@ -47,7 +47,7 @@ func TestPurge(t *testing.T) {
 	for _, q := range []string{
 		`DELETE FROM projects WHERE owner_clerk_id IN ('org_retp', 'org_retp_gone')`, `DELETE FROM org_admins WHERE org_id = 'org_retp'`,
 		`DELETE FROM notifications WHERE org_id = 'org_retp'`, `DELETE FROM deleted_orgs WHERE org_id IN ('org_retp', 'org_retp_gone')`,
-		`DELETE FROM chat_link_codes WHERE code_hash LIKE 'retp-%'`, `DELETE FROM jira_connections WHERE org_id LIKE 'org_retp%'`,
+		`DELETE FROM chat_link_codes WHERE code_hash LIKE 'retp-%'`, `DELETE FROM jira_connections WHERE org_id LIKE 'org_retp%'`, `DELETE FROM linear_connections WHERE org_id LIKE 'org_retp%'`,
 		`INSERT INTO org_admins (org_id, user_clerk_id, granted_by) VALUES ('org_retp', 'user_retp_admin', 'test')`,
 	} {
 		if _, err := db.Exec(ctx, q); err != nil {
@@ -72,12 +72,13 @@ func TestPurge(t *testing.T) {
 	// Jira tokens (TL-537): one past its 30 days, one within them
 	db.Exec(ctx, `INSERT INTO jira_connections (org_id, site, email, token, created_by, expires_at) VALUES
 		('org_retp', 'https://a.atlassian.net', 'a@b.c', 'x', 'u', $1), ('org_retp_jira', 'https://a.atlassian.net', 'a@b.c', 'x', 'u', $2)`, now.Add(-time.Minute), now.Add(day))
+	db.Exec(ctx, `INSERT INTO linear_connections (org_id, workspace, token, created_by, expires_at) VALUES ('org_retp', 'Acme', 'x', 'u', $1)`, now.Add(-time.Minute))
 
 	r, err := Purge(ctx, db, ToInbox(db), now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if count := 0; db.QueryRow(ctx, `SELECT count(*) FROM jira_connections WHERE org_id LIKE 'org_retp%'`).Scan(&count) != nil || count != 1 || r.JiraTokens < 1 {
+	if count := 0; db.QueryRow(ctx, `SELECT count(*) FROM jira_connections WHERE org_id LIKE 'org_retp%'`).Scan(&count) != nil || count != 1 || r.JiraTokens < 2 {
 		t.Fatalf("jira tokens: %d purged, %d left", r.JiraTokens, count)
 	}
 	if r.Tickets < 1 || r.Orgs < 1 || r.Warned != 1 {

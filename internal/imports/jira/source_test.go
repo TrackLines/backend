@@ -51,7 +51,7 @@ func fakeJira(t *testing.T) *httptest.Server {
 	}
 	shop2 := []any{
 		issue("113", "SHOP-13", "Sub-task", -1, "10001", "done", map[string]any{"parent": map[string]any{"id": "112"}, "customfield_10016": 4,
-			"assignee": map[string]any{"displayName": "Old Name", "emailAddress": "gone@else.where"},
+			"assignee":       map[string]any{"displayName": "Old Name", "emailAddress": "gone@else.where"},
 			"resolutiondate": "2025-03-05T10:00:00.000+0000"}),
 		issue("114", "SHOP-14", "Story", 0, "10001", "done", map[string]any{"customfield_10016": 3}),
 	}
@@ -284,17 +284,5 @@ func TestSource(t *testing.T) {
 	System{Store: store, Admins: organizations.Admins{DB: db}, On: func() bool { return true }}.Projects(rec, req)
 	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"key":"SHOP"`) {
 		t.Fatalf("projects: %d %s", rec.Code, rec.Body)
-	}
-}
-
-func TestPrefix(t *testing.T) {
-	taken := map[string]bool{"SHOP": true, "SHOP2": true, "ABCDE": true}
-	for key, want := range map[string]string{"SHOP": "SHOP3", "WEB": "WEB", "ABCDE": "ABCDE2", "ABCDEF": "ABCDEF", "LONGKEY": "", "A": "", "MY_APP": "MYAPP"} {
-		if got := Prefix(key, taken); got != want {
-			t.Errorf("Prefix(%s) = %q, want %q", key, got, want)
-		}
-	}
-	if got := Prefix("ABCDEF", map[string]bool{"ABCDEF": true}); got != "" {
-		t.Errorf("a taken 6-character key: %q", got)
 	}
 }
