@@ -27,7 +27,7 @@ type Result struct {
 }
 
 func (r Result) String() string {
-	return fmt.Sprintf("%d ticket(s) from the bin, %d deleted organization(s), %d attachment(s) warned about, %d expired, %d chat link code(s), %d Jira token(s)",
+	return fmt.Sprintf("%d ticket(s) from the bin, %d deleted organization(s), %d attachment(s) warned about, %d expired, %d chat link code(s), %d Jira/Linear token(s)",
 		r.Tickets, r.Orgs, r.Warned, r.Expired, r.LinkCodes, r.JiraTokens)
 }
 
@@ -86,6 +86,7 @@ var OrgData = []string{
 	`DELETE FROM expired_attachments WHERE org_id = $1`,
 	`DELETE FROM chat_webhooks WHERE org_id = $1`,
 	`DELETE FROM jira_connections WHERE org_id = $1`,
+	`DELETE FROM linear_connections WHERE org_id = $1`,
 	`DELETE FROM deleted_orgs WHERE org_id = $1`,
 }
 
@@ -209,10 +210,14 @@ func PurgeLinkCodes(ctx context.Context, db *pgxpool.Pool, now time.Time) (int64
 	return tag.RowsAffected(), err
 }
 
-// PurgeJiraTokens deletes Jira connections whose 30 days are up (TL-537); reading one deletes it too.
+// PurgeJiraTokens deletes Jira and Linear connections whose 30 days are up (TL-537, TL-654); reading
+// one deletes it too.
 func PurgeJiraTokens(ctx context.Context, db *pgxpool.Pool, now time.Time) (int64, error) {
-	tag, err := db.Exec(ctx, `DELETE FROM jira_connections WHERE expires_at <= $1`, now)
-	return tag.RowsAffected(), err
+	var n int64
+	err := db.QueryRow(ctx, `WITH j AS (DELETE FROM jira_connections WHERE expires_at <= $1 RETURNING 1),
+		l AS (DELETE FROM linear_connections WHERE expires_at <= $1 RETURNING 1)
+		SELECT (SELECT count(*) FROM j) + (SELECT count(*) FROM l)`, now).Scan(&n)
+	return n, err
 }
 
 // FileDeleter is UploadThing's delete API (a fake in tests).

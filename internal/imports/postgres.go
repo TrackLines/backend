@@ -41,6 +41,7 @@ type Import struct {
 	Planned    *Counts   `json:"planned,omitempty"`
 	Projects   []Preview `json:"projects,omitempty"`
 	People     []Person  `json:"people,omitempty"`     // preview: who matched a member, who's left unassigned
+	Notes      []Note    `json:"notes,omitempty"`      // preview: worth knowing before running it
 	Scrappable *bool     `json:"scrappable,omitempty"` // done: nobody has acted on what it made yet, so it can be scrapped
 	Progress   int       `json:"progress"`             // tickets created, of total
 	Total      int       `json:"total"`
@@ -162,7 +163,7 @@ func (s Store) Get(ctx context.Context, owner, id string) (*Import, error) {
 		return nil, err
 	}
 	problems, skips, n := check(p, o)
-	im.Problems, im.Skipped, im.Planned, im.Total, im.People = problems, skips, &n, n.Tickets, p.People
+	im.Problems, im.Skipped, im.Planned, im.Total, im.People, im.Notes = problems, skips, &n, n.Tickets, p.People, p.Notes
 	for _, pr := range p.Projects {
 		pv := Preview{SourceID: pr.SourceID, Name: pr.Name, Prefix: pr.Prefix, Tickets: len(pr.Tickets), Boards: []BoardPreview{}}
 		for _, b := range pr.Boards {
@@ -371,7 +372,14 @@ func (s Store) build(ctx context.Context, tx pgx.Tx, owner, user, id, source str
 			}
 			// done: in its board's Done column (reports need when), or finished and in the backlog (resolved)
 			var doneAt *time.Time
-			resolved := column == nil && t.Done
+			resolution := ""
+			switch {
+			case column == nil && t.WontDo:
+				resolution = "wont_do"
+			case column == nil && t.Done:
+				resolution = "done"
+			}
+			resolved := resolution != ""
 			if resolved || (column != nil && *column == lastOf[t.Board]) {
 				doneAt = cmp.Or(t.DoneAt, t.UpdatedAt, t.CreatedAt, &now)
 			}
@@ -381,10 +389,10 @@ func (s Store) build(ctx context.Context, tx pgx.Tx, owner, user, id, source str
 					done_at, resolved_at, resolution)
 				VALUES ($1, $2, $3, $4::ticket_type, $5, $6, $7::priority, $8, $9, $10, $11, $12, $13, $14, $15, nullif($16, ''),
 					coalesce($17, now()), coalesce($18, $17, now()), $19::date,
-					$20, CASE WHEN $21 THEN $20::timestamptz END, CASE WHEN $21 THEN 'done' END) RETURNING id::text`,
+					$20, CASE WHEN $21 <> '' THEN $20::timestamptz END, nullif($21, '')) RETURNING id::text`,
 				projectID, board, column, t.Type, t.Title, t.Description, priority, positions[key], user,
 				estimate, t.Number, t.Assignee, source, pr.SourceID, t.SourceID, t.URL, t.CreatedAt, t.UpdatedAt, t.DueDate,
-				doneAt, resolved).Scan(&ticketID); err != nil {
+				doneAt, resolution).Scan(&ticketID); err != nil {
 				return fmt.Errorf("%s-%d: %w", pr.Prefix, t.Number, err)
 			}
 			positions[key]++

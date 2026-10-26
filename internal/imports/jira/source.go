@@ -126,20 +126,10 @@ func (s Source) Plan(ctx context.Context, org string, raw json.RawMessage) (impo
 			return imports.Plan{}, err
 		}
 	}
-	taken := map[string]bool{}
-	rows, err := s.Store.DB.Query(ctx, `SELECT key_prefix FROM projects WHERE owner_clerk_id = $1`, org)
+	taken, err := imports.Prefixes(ctx, s.Store.DB, org)
 	if err != nil {
 		return imports.Plan{}, err
 	}
-	for rows.Next() {
-		var p string
-		if err := rows.Scan(&p); err != nil {
-			rows.Close()
-			return imports.Plan{}, err
-		}
-		taken[p] = true
-	}
-	rows.Close()
 	points, err := storyPoints(ctx, c)
 	if err != nil {
 		return imports.Plan{}, err
@@ -182,27 +172,6 @@ func storyPoints(ctx context.Context, c Client) ([]string, error) {
 	return ids, nil
 }
 
-// Prefix is the TrackLin.es key prefix for a Jira key: the key itself, or with a number added when
-// it's taken (SHOP → SHOP2 → SHOP3…), up to 6 characters; "" when neither fits, and the preview asks.
-func Prefix(key string, taken map[string]bool) string {
-	key = strings.ToUpper(strings.ReplaceAll(key, "_", ""))
-	if len(key) < 2 || len(key) > 6 {
-		return ""
-	}
-	if !taken[key] {
-		return key
-	}
-	for n := 2; ; n++ {
-		p := key + strconv.Itoa(n)
-		if len(p) > 6 {
-			return ""
-		}
-		if !taken[p] {
-			return p
-		}
-	}
-}
-
 func (s Source) project(ctx context.Context, c Client, key string, points []string, members map[string]string, o Options, taken map[string]bool, people map[string]*imports.Person) (imports.Project, []imports.Skip, error) {
 	var jp struct{ ID, Key, Name, Description string }
 	if err := c.Get(ctx, "/rest/api/3/project/"+url.PathEscape(key), nil, &jp); err != nil {
@@ -210,7 +179,7 @@ func (s Source) project(ctx context.Context, c Client, key string, points []stri
 	}
 	prefix := strings.ToUpper(strings.TrimSpace(o.Prefixes[jp.Key]))
 	if prefix == "" {
-		prefix = Prefix(jp.Key, taken)
+		prefix = imports.Prefix(jp.Key, taken)
 	}
 	if prefix == "" {
 		prefix = strings.ToUpper(jp.Key) // the preview says it can't be used, and asks for one

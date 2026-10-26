@@ -10,7 +10,12 @@ import (
 	"fmt"
 	"regexp"
 	"slices"
+	"strconv"
+	"strings"
 	"time"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/tracklines/backend/internal/boards"
 	"github.com/tracklines/backend/internal/tickets"
@@ -26,6 +31,14 @@ type Plan struct {
 	Projects []Project `json:"projects"`
 	Skipped  []Skip    `json:"skipped,omitempty"` // what the source left out already, and why
 	People   []Person  `json:"people,omitempty"`  // who the source's tickets are assigned to, and whether they matched a member
+	Notes    []Note    `json:"notes,omitempty"`   // what the preview should say that isn't a problem or a skip (Linear's renumbered teams)
+}
+
+// Note is something worth knowing before running an import.
+type Note struct {
+	Kind     string `json:"kind"` // renumbered
+	SourceID string `json:"source_id,omitempty"`
+	Message  string `json:"message"`
 }
 
 // Person is someone tickets are assigned to in the source: matched to a member (by email), or not,
@@ -80,6 +93,7 @@ type Ticket struct {
 	BlockedBy   []string   `json:"blocked_by,omitempty"` // source ids of the tickets it waits on (TL-538)
 	// Done: finished in the source. On a board it's done by being in the last column; in the backlog
 	// it's resolved as done. DoneAt is when (default UpdatedAt).
+	WontDo      bool         `json:"wont_do,omitempty"` // decided against in the source (Linear's cancelled): resolved as won't do in the backlog
 	Done        bool         `json:"done,omitempty"`
 	DoneAt      *time.Time   `json:"done_at,omitempty"`
 	Attachments []Attachment `json:"attachments,omitempty"` // copied when they run (TL-540)
@@ -224,4 +238,40 @@ func scale(b Board) string {
 		return b.EstimateScale
 	}
 	return "none"
+}
+
+// Prefix is the key prefix for a source's key (Jira's SHOP, Linear's ENG): the key itself, or with a
+// number added when it's taken (SHOP → SHOP2 → SHOP3…), up to 6 characters; "" when neither fits,
+// and the preview asks for one.
+func Prefix(key string, taken map[string]bool) string {
+	key = strings.ToUpper(strings.ReplaceAll(key, "_", ""))
+	if len(key) < 2 || len(key) > 6 {
+		return ""
+	}
+	if !taken[key] {
+		return key
+	}
+	for n := 2; ; n++ {
+		p := key + strconv.Itoa(n)
+		if len(p) > 6 {
+			return ""
+		}
+		if !taken[p] {
+			return p
+		}
+	}
+}
+
+// Prefixes is the key prefixes org's projects already use.
+func Prefixes(ctx context.Context, db *pgxpool.Pool, org string) (map[string]bool, error) {
+	rows, err := db.Query(ctx, `SELECT key_prefix FROM projects WHERE owner_clerk_id = $1`, org)
+	if err != nil {
+		return nil, err
+	}
+	list, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	taken := map[string]bool{}
+	for _, p := range list {
+		taken[p] = true
+	}
+	return taken, err
 }
