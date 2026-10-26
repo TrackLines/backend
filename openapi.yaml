@@ -4279,6 +4279,37 @@ paths:
         '200': { description: Staff., content: { application/json: { schema: { type: object, properties: { staff: { type: boolean } } } } } }
         '404': { description: Not staff, signed out, an API key, the flag is off or no staff org is configured. }
         '503': { description: Clerk couldn't be asked (verify_membership_failed). }
+  /staff/stats:
+    get:
+      tags: [Staff]
+      operationId: getStaffStats
+      summary: The whole system in numbers
+      description: Totals only, to judge the system's health; never an id, a name or any content. Each count has its total and how many were added in the last day and week. Organizations are those with a project or billing. Cached for a minute.
+      responses:
+        '200':
+          description: The counts.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  organizations: { $ref: '#/components/schemas/StaffCount' }
+                  plans: { type: object, description: Organizations by plan (free, pro, enterprise)., additionalProperties: { type: integer } }
+                  members: { $ref: '#/components/schemas/StaffCount' }
+                  projects: { $ref: '#/components/schemas/StaffCount' }
+                  boards: { $ref: '#/components/schemas/StaffCount' }
+                  archived_boards: { type: integer }
+                  tickets: { $ref: '#/components/schemas/StaffCount' }
+                  done_tickets: { type: integer }
+                  comments: { $ref: '#/components/schemas/StaffCount' }
+                  attachments: { $ref: '#/components/schemas/StaffCount' }
+                  attachment_bytes: { type: integer }
+                  api_keys: { type: object, description: Unrevoked keys by kind., additionalProperties: { type: integer } }
+                  open_sprints: { type: integer }
+                  live_sessions: { type: integer, description: Standups and refinements running now. }
+                  database_bytes: { type: integer }
+        '404': { description: Not staff. }
+        '500': { description: The counts failed (stats_failed). }
   /health:
     get:
       tags: [System]
@@ -4336,6 +4367,12 @@ components:
         type: string
         format: uuid
   schemas:
+    StaffCount:
+      type: object
+      properties:
+        total: { type: integer }
+        day: { type: integer, description: Added in the last 24 hours. }
+        week: { type: integer, description: Added in the last 7 days. }
     EpicProgress:
       type: object
       description: "An epic's progress and size, from its direct sub-tickets (duplicates left out)."
@@ -5582,6 +5619,7 @@ components:
         sprint_update_empty: "send length_days and/or goal"
         standup_host_only: "only the host can run the standup"
         standup_running: "a standup is already running: join it"
+        stats_failed: "could not count"
         team_not_in_project: "add the team to this board's project first"
         template_not_found: "template not found"
         title_required: "title is required"
