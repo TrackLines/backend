@@ -82,6 +82,9 @@ type Project struct {
 	// Google downloads); off without it. Project number: only if the app is built as a Workspace add-on.
 	GoogleChatCredentials   string `env:"GOOGLE_CHAT_CREDENTIALS"`
 	GoogleChatProjectNumber string `env:"GOOGLE_CHAT_PROJECT_NUMBER"`
+	// the admin panel (TL-573): members of this Clerk org (ChewedFeed) are staff; nobody without it.
+	// Staging sets its own; production's comes from 1Password.
+	StaffOrgID string `env:"STAFF_ORG_ID"`
 }
 
 // AuthorizedParties returns the origins allowed in Clerk session token azp claims.
@@ -117,6 +120,7 @@ var secrets = map[string]string{
 	"github_backend.webhook":       "GITHUB_WEBHOOK_SECRET",
 	"google_backend.username":      "GOOGLE_CHAT_PROJECT_NUMBER",
 	"google_backend.credential":    "GOOGLE_CHAT_CREDENTIALS",
+	"staff_backend.username":       "STAFF_ORG_ID",
 	"stripe_backend.credential":    "STRIPE_KEY",
 	"stripe_backend.webhook":       "STRIPE_WEBHOOK_SECRET",
 	"stripe_backend.enterprise":    "STRIPE_ENTERPRISE_ID",
