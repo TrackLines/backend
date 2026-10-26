@@ -67,6 +67,7 @@ func TestPRWebhooks(t *testing.T) {
 	ts := tickets.Store{DB: db}
 	onBoard, _ := ts.Create(ctx, "org_pr", b.Columns[0].ID, "task", "Login form", "")
 	inBacklog, _ := ts.CreateBacklog(ctx, "org_pr", pid, "bug", "Crash on save", "")
+	mentionedOnly, _ := ts.CreateBacklog(ctx, "org_pr", pid, "task", "Sign-up", "") // SHP-3: named in passing (TL-651)
 	// GitHub connected through installation 77; acme/shop and chewed/feed (Bitbucket) linked to the project
 	if err := h.store.connect(ctx, "org_pr", GitHub, "https://api.github.com", "acme", "77", "77", "admin"); err != nil {
 		t.Fatal(err)
@@ -97,7 +98,7 @@ func TestPRWebhooks(t *testing.T) {
 			d = "true"
 		}
 		return `{"action":"x","installation":{"id":` + installation + `},"repository":{"full_name":"` + repo + `"},
-			"pull_request":{"number":5,"html_url":"https://github.com/acme/shop/pull/5","title":"Fix login (SHP-1)","body":"Also fixes shp-2.",
+			"pull_request":{"number":5,"html_url":"https://github.com/acme/shop/pull/5","title":"Fix login (SHP-1)","body":"Also fixes shp-2. Sign-up (SHP-3) builds on this.",
 			"state":"` + state + `","draft":` + d + `,"merged":` + m + `,"user":{"login":"keloran"},"head":{"ref":"shp-1-login"}}}`
 	}
 	prs := func(ticket string) []LinkedPR {
@@ -139,6 +140,9 @@ func TestPRWebhooks(t *testing.T) {
 	}
 	if !done(onBoard.ID) || !done(inBacklog.ID) {
 		t.Fatal("merge didn't close the tickets")
+	}
+	if len(prs(mentionedOnly.ID)) != 1 || done(mentionedOnly.ID) {
+		t.Fatal("a ticket the description only mentions wasn't linked, or was closed (TL-651)")
 	}
 	if d, _ := ts.Get(ctx, "org_pr", onBoard.ID); d.ColumnID == nil || *d.ColumnID != b.Columns[2].ID {
 		t.Fatalf("board ticket not in Done: %+v", d)
