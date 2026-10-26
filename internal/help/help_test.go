@@ -74,13 +74,14 @@ func TestStaffEditsAndThePanel(t *testing.T) {
 	_, _ = s.DB.Exec(ctx, `DELETE FROM help_answers WHERE slug LIKE 'test-%'`)
 
 	for body, want := range map[string]int{
-		`{"slug":"Bad Slug","question":{"en":"q"},"answer":{"en":"a"}}`:                   400,
-		`{"slug":"test-x","question":{"nl":"v"},"answer":{"en":"a"}}`:                      400, // no English
-		`{"slug":"test-x","question":{"en":"q","xx":"?"},"answer":{"en":"a"}}`:             400,
+		`{"slug":"Bad Slug","question":{"en":"q"},"answer":{"en":"a"}}`:                     400,
+		`{"slug":"test-x","question":{"nl":"v"},"answer":{"en":"a"}}`:                       400, // no English
+		`{"slug":"test-x","question":{"en":"q","xx":"?"},"answer":{"en":"a"}}`:              400,
 		`{"slug":"test-x","question":{"en":"q"},"answer":{"en":"a"},"href":"https://evil"}`: 400,
 		`{"slug":"test-x","question":{"en":"q"},"answer":{"en":"a"},"href":"//evil"}`:       400,
+		`{"slug":"test-x","question":{"en":"q"},"answer":{"en":"a"},"href":"/\\\\evil"}`:    400,
 		`{"slug":"test-x","question":{"en":"q"},"answer":{"en":"a"},"pages":["nowhere"]}`:   400,
-		`{"slug":"add-board","question":{"en":"q"},"answer":{"en":"a"}}`:                   409,
+		`{"slug":"add-board","question":{"en":"q"},"answer":{"en":"a"}}`:                    409,
 	} {
 		if rec := call(s.Create, "POST", "/api/staff/help", body); rec.Code != want {
 			t.Errorf("%s: %d %s", body, rec.Code, rec.Body)

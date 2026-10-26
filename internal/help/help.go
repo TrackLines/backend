@@ -199,7 +199,7 @@ func (a *Answer) check() error {
 		return ErrEnglish
 	}
 	for _, h := range []string{a.Href, a.FallbackHref} {
-		if h != "" && (!strings.HasPrefix(h, "/") || strings.HasPrefix(h, "//")) {
+		if h != "" && (!strings.HasPrefix(h, "/") || strings.HasPrefix(h, "//") || strings.Contains(h, `\`)) { // browsers read /\x as //x
 			return ErrHref
 		}
 	}
