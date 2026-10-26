@@ -56,6 +56,7 @@ import (
 	"github.com/tracklines/backend/internal/secrets"
 	"github.com/tracklines/backend/internal/shortlinks"
 	"github.com/tracklines/backend/internal/sprints"
+	"github.com/tracklines/backend/internal/staff"
 	"github.com/tracklines/backend/internal/teams"
 	"github.com/tracklines/backend/internal/tickets"
 	"github.com/tracklines/backend/internal/users"
@@ -324,6 +325,10 @@ func (s *Service) Handler() http.Handler {
 		// their buttons (TL-455) act as the linked person through these same routes, if still in the org
 		chatApp.Act, chatApp.Member = actAs(mux), keyMember
 	}
+	// Admin panel (TL-570): ChewedFeed staff only, 404 for everyone else
+	staffOnly := staff.Guard{Org: config.Get(s.Config).StaffOrgID, Member: staff.Member(keyMember), On: s.flag("admin-panel")}.Only
+	mux.Handle("GET /api/staff/me", staffOnly(http.HandlerFunc(staff.Me)))
+
 	mux.Handle("POST /api/columns/{id}/tickets", signedIn(t.Create))
 	mux.Handle("GET /api/tickets/{id}", signedIn(t.Get))                // one ticket + where it lives (deep links)
 	mux.Handle("GET /api/tickets/{id}/org", signedIn(t.Where))          // which of my orgs it's in, when it isn't in the active one

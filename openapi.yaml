@@ -79,6 +79,8 @@ tags:
     description: Manage AI agent and server/service API keys with a Clerk session.
   - name: Billing
     description: Stripe subscription and webhook operations.
+  - name: Staff
+    description: The admin panel, for ChewedFeed staff only (members of its Clerk org). Everyone else gets 404.
   - name: System
     description: Health check.
 paths:
@@ -4267,6 +4269,16 @@ paths:
         '400': { description: Invalid body or signature. }
         '503': { description: CLERK_WEBHOOK_SECRET is not set, or the database is unavailable (Svix retries). }
 
+  /staff/me:
+    get:
+      tags: [Staff]
+      operationId: getStaffMe
+      summary: Whether the caller is staff
+      description: 'staff is true for a signed-in member of the ChewedFeed Clerk org (STAFF_ORG_ID), whatever their active org. Behind the admin-panel flag.'
+      responses:
+        '200': { description: Staff., content: { application/json: { schema: { type: object, properties: { staff: { type: boolean } } } } } }
+        '404': { description: Not staff, signed out, an API key, the flag is off or no staff org is configured. }
+        '503': { description: Clerk couldn't be asked (verify_membership_failed). }
   /health:
     get:
       tags: [System]
