@@ -232,7 +232,18 @@ func TestKeyOwnerMustStillBeAMember(t *testing.T) {
 	if got := use(); got != http.StatusServiceUnavailable {
 		t.Fatalf("Clerk down: %d", got)
 	}
-	clerkDown, member = nil, false
+	// the client leaves while Clerk is asked (TL-648): not let in, not logged, nothing written back
+	clerkDown = nil
+	leaving, leave := context.WithCancel(ctx)
+	gone := Middleware(db, func(c context.Context, _, _ string) (bool, error) { leave(); return false, c.Err() })
+	req := httptest.NewRequest("GET", "/", nil).WithContext(leaving)
+	req.Header.Set("Authorization", "Bearer "+plain)
+	rec := httptest.NewRecorder()
+	gone(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusTeapot) })).ServeHTTP(rec, req)
+	if rec.Code == http.StatusTeapot || rec.Body.Len() != 0 {
+		t.Fatalf("a client that left: %d %q", rec.Code, rec.Body)
+	}
+	member = false
 	if got := use(); got != http.StatusUnauthorized {
 		t.Fatalf("a leaver's key: %d", got)
 	}

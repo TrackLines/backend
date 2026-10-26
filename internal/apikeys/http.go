@@ -59,6 +59,9 @@ func Middleware(db *pgxpool.Pool, member Member) func(http.Handler) http.Handler
 				httpx.Error(w, r, http.StatusUnauthorized, httpx.Code("api_key_expired", "api key expired: create a new one in Settings → API keys"))
 				return
 			}
+			if gone(r, err) {
+				return
+			}
 			if err != nil {
 				if !errors.Is(err, ErrNotFound) {
 					logs.Errorf("apikeys: lookup: %v", err)
@@ -68,6 +71,9 @@ func Middleware(db *pgxpool.Pool, member Member) func(http.Handler) http.Handler
 			}
 			if member != nil && org != "" {
 				still, err := member(r.Context(), org, owner)
+				if gone(r, err) {
+					return
+				}
 				if err != nil {
 					logs.Errorf("apikeys: check organization membership: %v", err)
 					httpx.Error(w, r, http.StatusServiceUnavailable, httpx.ErrVerifyMembership)
@@ -91,6 +97,12 @@ func Middleware(db *pgxpool.Pool, member Member) func(http.Handler) http.Handler
 			next.ServeHTTP(w, r.WithContext(auth.WithAPIKey(r.Context(), owner, org, name, kind)))
 		})
 	}
+}
+
+// gone: the client left mid-request (TL-648), so a check that failed with it isn't a fault: nothing to
+// log, nobody to answer, and the request still never gets through.
+func gone(r *http.Request, err error) bool {
+	return err != nil && (httpx.Canceled(err) || r.Context().Err() != nil)
 }
 
 func (h System) List(w http.ResponseWriter, r *http.Request) {
