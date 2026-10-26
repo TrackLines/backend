@@ -242,8 +242,14 @@ func (s *Service) Handler() http.Handler {
 	mux.Handle("POST /api/board-templates", signedIn(b.CreateTemplate))
 	mux.Handle("DELETE /api/board-templates/{id}", signedIn(b.DeleteTemplate))
 
-	// Imports from other trackers (TL-536): org admins, signed in, behind the "imports" flag; the Jira source comes with TL-538
-	im := imports.NewSystem(s.DB, o.AdminModel(), s.flag("imports"), map[string]imports.Source{"csv": imports.CSV{}}) // TL-637
+	// Imports from other trackers (TL-536): org admins, signed in, behind the "imports" flag
+	jiraBox, _ := secrets.New(config.Get(s.Config).SecretKey) // no key: connecting says the integration isn't configured
+	jiraStore := jira.NewStore(s.DB, jiraBox)
+	people := s.calendarSync(members) // members' emails, to match Jira's people
+	im := imports.NewSystem(s.DB, o.AdminModel(), s.flag("imports"), map[string]imports.Source{
+		"csv":  imports.CSV{},                                                 // TL-637
+		"jira": jira.Source{Store: jiraStore, Members: people.MembersByEmail}, // TL-538
+	})
 	mux.Handle("POST /api/imports", signedIn(im.Preview))
 	mux.Handle("GET /api/imports", signedIn(im.List))
 	mux.Handle("GET /api/imports/{id}", signedIn(im.Get))
@@ -251,8 +257,8 @@ func (s *Service) Handler() http.Handler {
 	mux.Handle("POST /api/imports/{id}/cancel", signedIn(im.Cancel))
 	mux.Handle("POST /api/imports/{id}/scrap", signedIn(im.Scrap))
 	// Jira Cloud connection (TL-537): the site, email and API token an admin imports with, sealed, kept 30 days
-	jiraBox, _ := secrets.New(config.Get(s.Config).SecretKey) // no key: connecting says the integration isn't configured
-	jc := jira.System{Store: jira.NewStore(s.DB, jiraBox), Admins: o.AdminModel(), On: s.flag("imports")}
+	jc := jira.System{Store: jiraStore, Admins: o.AdminModel(), On: s.flag("imports")}
+	mux.Handle("GET /api/imports/jira/projects", signedIn(jc.Projects)) // what to pick from (TL-538)
 	mux.Handle("GET /api/imports/jira/connection", signedIn(jc.Get))
 	mux.Handle("PUT /api/imports/jira/connection", signedIn(jc.Connect))
 	mux.Handle("DELETE /api/imports/jira/connection", signedIn(jc.Delete))

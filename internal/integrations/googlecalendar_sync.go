@@ -250,6 +250,24 @@ func (s CalendarSync) replace(ctx context.Context, org string, user *string, fro
 	return tx.Commit(ctx)
 }
 
+// MembersByEmail is each of the org's email addresses (as memberEmails finds them) → its member's
+// user id: how an import matches another tool's people (TL-538).
+func (s CalendarSync) MembersByEmail(ctx context.Context, org string) (map[string]string, error) {
+	people, err := s.memberEmails(ctx, org)
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]string{}
+	for id, emails := range people {
+		for _, e := range emails {
+			if e != "" {
+				out[e] = id
+			}
+		}
+	}
+	return out, nil
+}
+
 // memberEmails: each org member's email addresses, lower case: their Clerk sign-in identifier, every
 // verified address on their Clerk account (someone signed in with GitHub may have their Workspace
 // address as a second one), and the one we have on file.

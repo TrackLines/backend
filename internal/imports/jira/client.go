@@ -125,6 +125,34 @@ func (c Client) List(ctx context.Context, path string, query url.Values, key str
 	}
 }
 
+// Search calls each with every issue a JQL search finds (query: jql, fields, maxResults), paging
+// with Jira's nextPageToken (the enhanced search, /rest/api/3/search/jql).
+func (c Client) Search(ctx context.Context, query url.Values, each func(json.RawMessage) error) error {
+	q := url.Values{}
+	for k, v := range query {
+		q[k] = v
+	}
+	for {
+		var res struct {
+			Issues        []json.RawMessage `json:"issues"`
+			NextPageToken string            `json:"nextPageToken"`
+			IsLast        bool              `json:"isLast"`
+		}
+		if err := c.Get(ctx, "/rest/api/3/search/jql", q, &res); err != nil {
+			return err
+		}
+		for _, is := range res.Issues {
+			if err := each(is); err != nil {
+				return err
+			}
+		}
+		if res.IsLast || res.NextPageToken == "" || len(res.Issues) == 0 {
+			return nil
+		}
+		q.Set("nextPageToken", res.NextPageToken)
+	}
+}
+
 // Myself is who the token belongs to: checks the connection works, and names it.
 func (c Client) Myself(ctx context.Context) (string, error) {
 	var me struct {
