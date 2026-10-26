@@ -175,6 +175,7 @@ type Subscription struct {
 	Status     string
 	PriceID    string // its plan's price (TL-290)
 	ItemID     string // the subscription item that holds it, for changing plan
+	Price      Price  // what it costs (TL-576: a day's downtime credit)
 }
 
 func (s Stripe) Subscription(ctx context.Context, id string) (Subscription, error) {
@@ -186,7 +187,12 @@ func (s Stripe) Subscription(ctx context.Context, id string) (Subscription, erro
 			Data []struct {
 				ID    string `json:"id"`
 				Price struct {
-					ID string `json:"id"`
+					ID         string `json:"id"`
+					UnitAmount int64  `json:"unit_amount"`
+					Currency   string `json:"currency"`
+					Recurring  struct {
+						Interval string `json:"interval"`
+					} `json:"recurring"`
 				} `json:"price"`
 			} `json:"data"`
 		} `json:"items"`
@@ -199,9 +205,27 @@ func (s Stripe) Subscription(ctx context.Context, id string) (Subscription, erro
 	}
 	out := Subscription{ID: sub.ID, CustomerID: sub.Customer, Status: sub.Status}
 	if len(sub.Items.Data) > 0 {
-		out.ItemID, out.PriceID = sub.Items.Data[0].ID, sub.Items.Data[0].Price.ID
+		p := sub.Items.Data[0].Price
+		out.ItemID, out.PriceID = sub.Items.Data[0].ID, p.ID
+		out.Price = Price{Amount: p.UnitAmount, Currency: p.Currency, Interval: p.Recurring.Interval}
 	}
 	return out, nil
+}
+
+// Credit takes amount (minor units) off the customer's next bill: a customer balance transaction
+// (TL-576). key makes a retry the same credit.
+func (s Stripe) Credit(ctx context.Context, customer string, amount int64, currency, description, key string) (string, error) {
+	var tx struct {
+		ID string `json:"id"`
+	}
+	form := url.Values{"amount": {strconv.FormatInt(-amount, 10)}, "currency": {currency}, "description": {description}}
+	if err := s.call(ctx, http.MethodPost, "/v1/customers/"+url.PathEscape(customer)+"/balance_transactions", form, key, &tx); err != nil {
+		return "", err
+	}
+	if tx.ID == "" {
+		return "", errors.New("stripe returned no balance transaction id")
+	}
+	return tx.ID, nil
 }
 
 // ChangePrice moves a subscription's item to another price, prorated: changing plan without a
