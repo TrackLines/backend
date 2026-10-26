@@ -79,6 +79,8 @@ tags:
     description: Manage AI agent and server/service API keys with a Clerk session.
   - name: Billing
     description: Stripe subscription and webhook operations.
+  - name: Help
+    description: The help panel's answers, in every language the app speaks.
   - name: Staff
     description: The admin panel, for ChewedFeed staff only (members of its Clerk org). Everyone else gets 404.
   - name: System
@@ -4310,6 +4312,81 @@ paths:
                   database_bytes: { type: integer }
         '404': { description: Not staff. }
         '500': { description: The counts failed (stats_failed). }
+  /help:
+    get:
+      tags: [Help]
+      operationId: listHelp
+      summary: The help panel's answers
+      description: Published answers in the locale's language, English where there's no translation, in order. The ETag is the content's hash; send it as If-None-Match to get a 304 when nothing changed.
+      parameters:
+        - { name: locale, in: query, schema: { type: string, enum: [en, nl, de, es, pt, fr, tlh], default: en } }
+        - { name: If-None-Match, in: header, schema: { type: string } }
+      responses:
+        '200': { description: The answers., content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/HelpLocalized' } } } } }
+        '304': { description: Unchanged since that ETag. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /help/export.po:
+    get:
+      tags: [Help]
+      operationId: exportHelp
+      summary: The help answers as gettext
+      description: 'For the TUI to bake in. No sign-in. Each published answer is two messages, msgctxt "<slug>:question" and "<slug>:answer", with msgid the English and msgstr the translation ("" where there is none). The question carries #. comments with href, fallback_href, pages and words.'
+      parameters:
+        - { name: locale, in: query, schema: { type: string, enum: [en, nl, de, es, pt, fr, tlh], default: en } }
+      responses:
+        '200': { description: The .po file., content: { text/x-gettext-translation: { schema: { type: string } } } }
+  /staff/help:
+    get:
+      tags: [Staff]
+      operationId: listStaffHelp
+      summary: Every help answer, with every translation
+      description: Unpublished ones too. Staff only.
+      responses:
+        '200': { description: The answers., content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/HelpAnswer' } } } } }
+        '404': { description: Not staff. }
+    post:
+      tags: [Staff]
+      operationId: createStaffHelp
+      summary: Add a help answer
+      description: It goes last. Staff only.
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/HelpAnswerInput' } } } }
+      responses:
+        '201': { description: Added., content: { application/json: { schema: { $ref: '#/components/schemas/HelpAnswer' } } } }
+        '400': { description: 'Invalid: help_slug, help_english, help_locale, help_href or help_page.' }
+        '404': { description: Not staff. }
+        '409': { description: Another answer has that slug (help_slug_taken). }
+  /staff/help/order:
+    put:
+      tags: [Staff]
+      operationId: orderStaffHelp
+      summary: Reorder the help answers
+      description: Every answer's id, once each, in the new order; otherwise nothing changes. Staff only.
+      requestBody: { required: true, content: { application/json: { schema: { type: object, required: [ids], properties: { ids: { type: array, items: { type: string, format: uuid } } } } } } }
+      responses:
+        '204': { description: Reordered. }
+        '400': { description: Not every id once (help_order). }
+        '404': { description: Not staff. }
+  /staff/help/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    put:
+      tags: [Staff]
+      operationId: updateStaffHelp
+      summary: Change a help answer
+      description: Replaces it; its place stays. Staff only.
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/HelpAnswerInput' } } } }
+      responses:
+        '200': { description: Changed., content: { application/json: { schema: { $ref: '#/components/schemas/HelpAnswer' } } } }
+        '400': { description: 'Invalid: help_slug, help_english, help_locale, help_href or help_page.' }
+        '404': { description: Not staff, or no such answer (help_not_found). }
+        '409': { description: Another answer has that slug (help_slug_taken). }
+    delete:
+      tags: [Staff]
+      operationId: deleteStaffHelp
+      summary: Delete a help answer
+      responses:
+        '204': { description: Deleted. }
+        '404': { description: Not staff, or no such answer (help_not_found). }
   /health:
     get:
       tags: [System]
@@ -4367,6 +4444,37 @@ components:
         type: string
         format: uuid
   schemas:
+    HelpLocalized:
+      type: object
+      properties:
+        slug: { type: string }
+        question: { type: string }
+        answer: { type: string }
+        href: { type: string, description: 'An app route, "" for none; [project] and [board] are filled in from the page.' }
+        fallback_href: { type: string, description: Used when the page has no project or board for href. }
+        pages: { type: array, items: { type: string, enum: [project, board, dashboard, settings, account] }, description: Suggested on these pages before anything is typed. }
+        words: { type: string, description: Extra English search terms. }
+    HelpAnswerInput:
+      type: object
+      required: [slug, question, answer]
+      properties:
+        slug: { type: string, pattern: '^[a-z0-9][a-z0-9-]*$' }
+        question: { type: object, description: 'By locale (en, nl, de, es, pt, fr, tlh); en required.', additionalProperties: { type: string } }
+        answer: { type: object, description: By locale; en required., additionalProperties: { type: string } }
+        href: { type: string }
+        fallback_href: { type: string }
+        pages: { type: array, items: { type: string, enum: [project, board, dashboard, settings, account] } }
+        words: { type: string }
+        published: { type: boolean }
+    HelpAnswer:
+      allOf:
+        - $ref: '#/components/schemas/HelpAnswerInput'
+        - type: object
+          properties:
+            id: { type: string, format: uuid }
+            position: { type: integer }
+            updated_by: { type: string }
+            updated_at: { type: string, format: date-time }
     StaffCount:
       type: object
       properties:
@@ -5398,6 +5506,15 @@ components:
         bad_date_range: "from and to are dates (YYYY-MM-DD), from before to, at most two years apart"
         bad_dev_complete: "the Dev complete column must be one of this board's columns, other than To do and Done"
         bad_review_column: "the review column must be one of this board's columns, other than To do and Done"
+        help_english: "the English question and answer are required"
+        help_failed: "could not load help answers"
+        help_href: "a link must be an app route, starting with /"
+        help_locale: "unknown language"
+        help_not_found: "help answer not found"
+        help_order: "send every answer's id, once each"
+        help_page: "unknown page kind"
+        help_slug: "the slug is lower-case letters, digits and dashes"
+        help_slug_taken: "another answer has that slug"
         import_problems: fix the problems in the preview before running the import
         import_not_previewing: only an import that's still a preview can be run
         import_not_running: only a preview or a running import can be cancelled

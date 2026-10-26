@@ -38,6 +38,7 @@ import (
 	"github.com/tracklines/backend/internal/config"
 	"github.com/tracklines/backend/internal/embed"
 	"github.com/tracklines/backend/internal/enquiries"
+	"github.com/tracklines/backend/internal/help"
 	"github.com/tracklines/backend/internal/httpx"
 	"github.com/tracklines/backend/internal/imports"
 	"github.com/tracklines/backend/internal/imports/jira"
@@ -329,6 +330,15 @@ func (s *Service) Handler() http.Handler {
 	staffOnly := staff.Guard{Org: config.Get(s.Config).StaffOrgID, Member: staff.Member(keyMember), On: s.flag("admin-panel")}.Only
 	mux.Handle("GET /api/staff/me", staffOnly(http.HandlerFunc(staff.Me)))
 	mux.Handle("GET /api/staff/stats", staffOnly(http.HandlerFunc(staff.Stats{DB: s.DB, VK: s.Valkey}.Get))) // counts only (TL-574)
+	// the help panel's answers (TL-575): read by everyone signed in, the .po for the TUI's build, edited by staff
+	hp := help.System{DB: s.DB}
+	mux.Handle("GET /api/help", signedIn(hp.List))
+	mux.Handle("GET /api/help/export.po", public("help-export", 30, hp.Export))
+	mux.Handle("GET /api/staff/help", staffOnly(http.HandlerFunc(hp.Staff)))
+	mux.Handle("POST /api/staff/help", staffOnly(http.HandlerFunc(hp.Create)))
+	mux.Handle("PUT /api/staff/help/order", staffOnly(http.HandlerFunc(hp.Order)))
+	mux.Handle("PUT /api/staff/help/{id}", staffOnly(http.HandlerFunc(hp.Update)))
+	mux.Handle("DELETE /api/staff/help/{id}", staffOnly(http.HandlerFunc(hp.Delete)))
 
 	mux.Handle("POST /api/columns/{id}/tickets", signedIn(t.Create))
 	mux.Handle("GET /api/tickets/{id}", signedIn(t.Get))                // one ticket + where it lives (deep links)
