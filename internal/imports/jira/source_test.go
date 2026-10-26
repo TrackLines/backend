@@ -44,6 +44,7 @@ func fakeJira(t *testing.T) *httptest.Server {
 			"description": adf("Card declined"), "priority": map[string]any{"name": "Highest"}, "labels": []string{"pay"},
 			"components": []any{map[string]any{"name": "Checkout"}}, "parent": map[string]any{"id": "101"}, "assignee": sam,
 			"duedate": "2025-04-01", "customfield_10016": 5,
+			"attachment": []any{map[string]any{"id": "500", "filename": "trace.log", "size": 5, "mimeType": "text/plain"}},
 			"issuelinks": []any{map[string]any{"type": map[string]any{"name": "Blocks", "inward": "is blocked by"}, "inwardIssue": map[string]any{"id": "113"}},
 				map[string]any{"type": map[string]any{"name": "Relates", "inward": "relates to"}, "inwardIssue": map[string]any{"id": "101"}}},
 			"comment": map[string]any{"comments": []any{map[string]any{"id": "c1", "body": adf("first")}}, "total": 2}}),
@@ -60,6 +61,13 @@ func fakeJira(t *testing.T) *httptest.Server {
 		}
 		var out any
 		switch q := r.URL.Query(); r.URL.Path {
+		case "/rest/api/3/attachment/content/500":
+			if q.Get("redirect") != "false" {
+				w.WriteHeader(http.StatusSeeOther) // Jira's default: off to its media store
+				return
+			}
+			w.Write([]byte("trace"))
+			return
 		case "/rest/api/3/myself":
 			out = sam
 		case "/rest/api/3/field":
@@ -198,6 +206,19 @@ func TestSource(t *testing.T) {
 		!slices.Equal(bug.BlockedBy, []string{"113"}) || bug.Estimate != "5" || bug.Description != "Card declined" ||
 		bug.URL != jira.URL+"/browse/SHOP-12" || bug.CreatedAt == nil || bug.CreatedAt.Format(time.RFC3339) != "2025-03-01T09:00:00Z" || bug.Done {
 		t.Fatalf("bug: %+v", bug)
+	}
+	// its attachment (TL-540): fetched with the connection from Jira itself, and only from there
+	if len(bug.Attachments) != 1 || bug.Attachments[0].Name != "trace.log" || bug.Attachments[0].Size != 5 || bug.Attachments[0].Link != jira.URL+"/rest/api/3/attachment/content/500" {
+		t.Fatalf("attachments: %+v", bug.Attachments)
+	}
+	if data, err := src.Fetch(ctx, "js1", bug.Attachments[0].URL, 100); err != nil || string(data) != "trace" {
+		t.Fatalf("fetch: %q %v", data, err)
+	}
+	if _, err := src.Fetch(ctx, "js1", bug.Attachments[0].URL, 3); err == nil {
+		t.Fatal("fetched more than the limit")
+	}
+	if _, err := src.Fetch(ctx, "js1", "https://evil.example/rest/api/3/attachment/content/500", 100); err == nil {
+		t.Fatal("the token went to another site")
 	}
 	// all the comments (the issue only carried one), members by id and anyone else by name
 	if len(bug.Comments) != 2 || bug.Comments[0].Author != "user_sam" || bug.Comments[0].Body != "first" || bug.Comments[1].Author != "Old Name" {

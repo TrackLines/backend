@@ -31,6 +31,12 @@ func NewSystem(db *pgxpool.Pool, a admins, on func() bool, sources map[string]So
 	return System{store: Store{DB: db}, admins: a, sources: sources, on: on, spawn: func(f func()) { go f() }}
 }
 
+// WithFiles lets imports copy attachments to f (without it they're linked instead).
+func (h System) WithFiles(f Files) System {
+	h.store.Files = f
+	return h
+}
+
 // gate: the flag, then org admins only.
 func (h System) gate(w http.ResponseWriter, r *http.Request) (org, user string, ok bool) {
 	if h.on == nil || !h.on() {
@@ -135,7 +141,8 @@ func (h System) Run(w http.ResponseWriter, r *http.Request) {
 	h.spawn(func() {
 		ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 2*time.Hour)
 		defer cancel()
-		h.store.Run(ctx, org, user, id, im.Source, plan)
+		fetch, _ := h.sources[im.Source].(Fetcher)
+		h.store.Run(ctx, org, user, id, im.Source, plan, fetch)
 	})
 	httpx.JSON(w, http.StatusAccepted, im)
 }
