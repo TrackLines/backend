@@ -28,6 +28,7 @@ import (
 	"github.com/tracklines/backend"
 	"github.com/tracklines/backend/internal/apikeys"
 	"github.com/tracklines/backend/internal/attachments"
+	"github.com/tracklines/backend/internal/audit"
 	"github.com/tracklines/backend/internal/auth"
 	"github.com/tracklines/backend/internal/billing"
 	"github.com/tracklines/backend/internal/boards"
@@ -162,6 +163,9 @@ func (s *Service) Start() error {
 	// outbound webhooks (TL-635): due deliveries go out every few seconds; a month's history is kept
 	box, _ := secrets.New(config.Get(s.Config).SecretKey) // no key: nothing can be signed, so nothing was queued
 	go webhooks.Worker{DB: s.DB, Box: box, Notify: notify}.Run(ctx, 5*time.Second)
+	// audit events to the auditor (TL-666), queued in the same transactions; sent while "audit-service" is on
+	go audit.Relay{DB: s.DB, URL: config.Get(s.Config).AuditURL, Secret: config.Get(s.Config).AuditSecret, On: s.flag("audit-service"),
+		Client: &http.Client{Timeout: 30 * time.Second}}.Run(ctx, 5*time.Second)
 	// due dates: the day before and on the day, assignees and watchers are reminded (TL-631)
 	go tickets.DueReminders{Store: tickets.Store{DB: s.DB}, Notify: notify}.Run(ctx, time.Hour)
 	// every organization's Clerk member cap matches its plan: 20 on Free and Pro, unlimited on Enterprise (TL-418)

@@ -62,6 +62,8 @@ type Project struct {
 	ClerkWebhookSecret     string   `env:"CLERK_WEBHOOK_SECRET"`                 // whsec_…; /api/webhooks/clerk answers 503 without it
 	ClerkUncappedOrgs      []string `env:"CLERK_UNCAPPED_ORGS" envSeparator:","` // org ids whose Clerk member cap is never set (TL-418)
 	UploadThingToken       string   `env:"UPLOADTHING_TOKEN"`                    // ticket attachments; used to delete stored files
+	AuditURL               string   `env:"AUDIT_URL"`                            // the auditor on the private network (TL-666); events stay queued without it
+	AuditSecret            string   `env:"AUDIT_SECRET"`                         // its bearer token (1Password audit_backend)
 	SecretKey              string   `env:"TRACKLINES_SECRET_KEY"`                // 32 bytes base64: seals integration tokens; integrations stay off without it
 	Git                    Git
 	RateLimit              int `env:"API_KEY_RATE_LIMIT" envDefault:"300"` // requests per minute per API key; 0 turns it off
@@ -129,6 +131,7 @@ var secrets = map[string]string{
 	"vapid_backend.username":       "VAPID_PUBLIC_KEY",
 	"vapid_backend.credential":     "VAPID_PRIVATE_KEY",
 	"uploadthing_backend.username": "UPLOADTHING_TOKEN",
+	"audit_backend.credential":     "AUDIT_SECRET",
 }
 
 // Build reads .env (if there is one; the environment wins), then each part's settings, then sends

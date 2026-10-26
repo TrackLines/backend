@@ -1,0 +1,10 @@
+DROP TRIGGER queue_plan_changed ON org_billing;
+DROP FUNCTION queue_plan_changed();
+DROP FUNCTION audit_plan(text, text);
+DROP TRIGGER queue_ticket_purged ON tickets_all;
+DROP FUNCTION queue_ticket_purged();
+DROP TRIGGER queue_ticket_stage ON ticket_history;
+DROP FUNCTION queue_ticket_stage();
+DROP FUNCTION audit_stage_id(bigint);
+DROP FUNCTION audit_actor_kind(text);
+DROP TABLE audit_outbox;
