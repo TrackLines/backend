@@ -51,6 +51,7 @@ func fakeJira(t *testing.T) *httptest.Server {
 	}
 	shop2 := []any{
 		issue("113", "SHOP-13", "Sub-task", -1, "10001", "done", map[string]any{"parent": map[string]any{"id": "112"}, "customfield_10016": 4,
+			"assignee": map[string]any{"displayName": "Old Name", "emailAddress": "gone@else.where"},
 			"resolutiondate": "2025-03-05T10:00:00.000+0000"}),
 		issue("114", "SHOP-14", "Story", 0, "10001", "done", map[string]any{"customfield_10016": 3}),
 	}
@@ -235,6 +236,13 @@ func TestSource(t *testing.T) {
 		t.Fatalf("skipped: %+v", plan.Skipped)
 	}
 
+	// people: who matched a member, who's left unassigned
+	if len(plan.People) != 2 || plan.People[0] != (imports.Person{Name: "Old Name", Tickets: 1}) || plan.People[1] != (imports.Person{Name: "Sam Doe", Matched: true, Tickets: 1}) {
+		t.Fatalf("people: %+v", plan.People)
+	}
+	if sub.Assignee != nil {
+		t.Fatal("a non-member was assigned")
+	}
 	// through the preview: LONGKEY can't be a prefix and board 8 has one column, so it asks; a given prefix is used
 	h := imports.NewSystem(db, organizations.Admins{DB: db}, func() bool { return true }, map[string]imports.Source{"jira": src})
 	preview := func(options string) imports.Import {

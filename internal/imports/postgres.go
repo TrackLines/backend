@@ -40,7 +40,9 @@ type Import struct {
 	Skipped    []Skip    `json:"skipped,omitempty"`
 	Planned    *Counts   `json:"planned,omitempty"`
 	Projects   []Preview `json:"projects,omitempty"`
-	Progress   int       `json:"progress"` // tickets created, of total
+	People     []Person  `json:"people,omitempty"`     // preview: who matched a member, who's left unassigned
+	Scrappable *bool     `json:"scrappable,omitempty"` // done: nobody has acted on what it made yet, so it can be scrapped
+	Progress   int       `json:"progress"`             // tickets created, of total
 	Total      int       `json:"total"`
 	Report     *Report   `json:"report"`
 	Error      string    `json:"error,omitempty"`
@@ -140,6 +142,14 @@ func (s Store) Get(ctx context.Context, owner, id string) (*Import, error) {
 	if err != nil {
 		return nil, err
 	}
+	if im.State == "done" {
+		changed, err := s.changed(ctx, s.DB, id)
+		if err != nil {
+			return nil, err
+		}
+		ok := !changed
+		im.Scrappable = &ok
+	}
 	if im.State != "previewing" {
 		return &im, nil
 	}
@@ -152,7 +162,7 @@ func (s Store) Get(ctx context.Context, owner, id string) (*Import, error) {
 		return nil, err
 	}
 	problems, skips, n := check(p, o)
-	im.Problems, im.Skipped, im.Planned, im.Total = problems, skips, &n, n.Tickets
+	im.Problems, im.Skipped, im.Planned, im.Total, im.People = problems, skips, &n, n.Tickets, p.People
 	for _, pr := range p.Projects {
 		pv := Preview{SourceID: pr.SourceID, Name: pr.Name, Prefix: pr.Prefix, Tickets: len(pr.Tickets), Boards: []BoardPreview{}}
 		for _, b := range pr.Boards {
@@ -536,13 +546,8 @@ func (s Store) Scrap(ctx context.Context, owner, id string) error {
 		if state != "done" {
 			return ErrNotDone
 		}
-		var changed bool
-		if err := tx.QueryRow(ctx, `SELECT
-			EXISTS (SELECT 1 FROM import_items i LEFT JOIN tickets_all t ON t.id = i.target_id
-				WHERE i.import_id = $1::uuid AND i.kind = 'ticket' AND (t.id IS NULL OR i.fingerprint IS DISTINCT FROM `+fingerprint+`))
-			OR EXISTS (SELECT 1 FROM tickets_all t JOIN import_items p ON p.target_id = t.project_id AND p.kind = 'project' AND p.import_id = $1::uuid
-				WHERE NOT EXISTS (SELECT 1 FROM import_items i WHERE i.import_id = $1::uuid AND i.kind = 'ticket' AND i.target_id = t.id))`,
-			id).Scan(&changed); err != nil {
+		changed, err := s.changed(ctx, tx, id)
+		if err != nil {
 			return err
 		}
 		if changed {
@@ -553,7 +558,22 @@ func (s Store) Scrap(ctx context.Context, owner, id string) error {
 			AND id IN (SELECT target_id FROM import_items WHERE import_id = $1::uuid AND kind = 'project')`, id, owner); err != nil {
 			return err
 		}
-		_, err := tx.Exec(ctx, `UPDATE imports SET state = 'scrapped', updated_at = now() WHERE id = $1::uuid`, id)
+		_, err = tx.Exec(ctx, `UPDATE imports SET state = 'scrapped', updated_at = now() WHERE id = $1::uuid`, id)
 		return err
 	})
+}
+
+// changed: has anyone acted on what import id made? An imported ticket changed or gone, or a ticket
+// added to one of its projects.
+func (s Store) changed(ctx context.Context, q interface {
+	QueryRow(context.Context, string, ...any) pgx.Row
+}, id string) (bool, error) {
+	var changed bool
+	err := q.QueryRow(ctx, `SELECT
+		EXISTS (SELECT 1 FROM import_items i LEFT JOIN tickets_all t ON t.id = i.target_id
+			WHERE i.import_id = $1::uuid AND i.kind = 'ticket' AND (t.id IS NULL OR i.fingerprint IS DISTINCT FROM `+fingerprint+`))
+		OR EXISTS (SELECT 1 FROM tickets_all t JOIN import_items p ON p.target_id = t.project_id AND p.kind = 'project' AND p.import_id = $1::uuid
+			WHERE NOT EXISTS (SELECT 1 FROM import_items i WHERE i.import_id = $1::uuid AND i.kind = 'ticket' AND i.target_id = t.id))`,
+		id).Scan(&changed)
+	return changed, err
 }

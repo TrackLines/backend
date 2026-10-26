@@ -25,6 +25,15 @@ type Source interface {
 type Plan struct {
 	Projects []Project `json:"projects"`
 	Skipped  []Skip    `json:"skipped,omitempty"` // what the source left out already, and why
+	People   []Person  `json:"people,omitempty"`  // who the source's tickets are assigned to, and whether they matched a member
+}
+
+// Person is someone tickets are assigned to in the source: matched to a member (by email), or not,
+// and then their tickets are left unassigned.
+type Person struct {
+	Name    string `json:"name"`
+	Matched bool   `json:"matched"`
+	Tickets int    `json:"tickets"`
 }
 
 type Project struct {

@@ -1,6 +1,7 @@
 package jira
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -144,17 +145,24 @@ func (s Source) Plan(ctx context.Context, org string, raw json.RawMessage) (impo
 		return imports.Plan{}, err
 	}
 	var plan imports.Plan
+	people := map[string]*imports.Person{}
 	for _, key := range o.Projects {
 		if !jiraKey.MatchString(key) {
 			return imports.Plan{}, ErrOptions
 		}
-		p, skips, err := s.project(ctx, c, key, points, members, o, taken)
+		p, skips, err := s.project(ctx, c, key, points, members, o, taken, people)
 		if err != nil {
 			return imports.Plan{}, err
 		}
 		plan.Projects = append(plan.Projects, p)
 		plan.Skipped = append(plan.Skipped, skips...)
 	}
+	for _, p := range people {
+		plan.People = append(plan.People, *p)
+	}
+	slices.SortFunc(plan.People, func(a, b imports.Person) int {
+		return cmp.Or(cmp.Compare(b.Tickets, a.Tickets), strings.Compare(a.Name, b.Name))
+	})
 	return plan, nil
 }
 
@@ -195,7 +203,7 @@ func Prefix(key string, taken map[string]bool) string {
 	}
 }
 
-func (s Source) project(ctx context.Context, c Client, key string, points []string, members map[string]string, o Options, taken map[string]bool) (imports.Project, []imports.Skip, error) {
+func (s Source) project(ctx context.Context, c Client, key string, points []string, members map[string]string, o Options, taken map[string]bool, people map[string]*imports.Person) (imports.Project, []imports.Skip, error) {
 	var jp struct{ ID, Key, Name, Description string }
 	if err := c.Get(ctx, "/rest/api/3/project/"+url.PathEscape(key), nil, &jp); err != nil {
 		return imports.Project{}, nil, fmt.Errorf("jira project %s: %w", key, err)
@@ -312,6 +320,13 @@ func (s Source) project(ctx context.Context, c Client, key string, points []stri
 			return p, nil, err
 		}
 		skips = append(skips, sk...)
+		if a := is.Fields.Assignee; a != nil { // who it's assigned to, for the preview
+			who := a.DisplayName + "\x00" + strings.ToLower(a.EmailAddress)
+			if people[who] == nil {
+				people[who] = &imports.Person{Name: a.DisplayName, Matched: t.Assignee != nil}
+			}
+			people[who].Tickets++
+		}
 		if at, ok := placed[is.ID]; ok {
 			t.Board, t.Column = at.board, at.column
 			if v, ok := is.estimates[estimateField[at.board]]; ok {

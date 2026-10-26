@@ -4416,6 +4416,11 @@ components:
               prefix: { type: string }
               tickets: { type: integer }
               boards: { type: array, items: { type: object, properties: { source_id: { type: string }, name: { type: string }, team_id: { type: [string, 'null'] }, columns: { type: array, items: { type: string } } } } }
+        people:
+          type: array
+          description: Previews only. Who the source's tickets are assigned to (most tickets first), and whether they matched a member by email; anyone unmatched has their tickets left unassigned.
+          items: { type: object, properties: { name: { type: string }, matched: { type: boolean }, tickets: { type: integer } } }
+        scrappable: { type: boolean, description: "Finished imports only: nobody has acted on what it made yet, so it can still be scrapped." }
         progress: { type: integer, description: Tickets created so far. }
         total: { type: integer }
         report:
