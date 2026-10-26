@@ -2994,11 +2994,49 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { description: Ticket is in its Done column. }
 
+  /tickets/{ticketId}/attachments/upload:
+    parameters:
+      - $ref: '#/components/parameters/TicketId'
+    post:
+      tags: [Attachments]
+      operationId: uploadTicketAttachment
+      summary: Upload a file to a ticket
+      description: >-
+        For API-key clients (the TUI, scripts) that can't upload to the file store themselves. Send the
+        file as the request body with its type as Content-Type (application/octet-stream when unknown).
+        The ticket is checked before anything is stored: Done tickets, full tickets (10 files) and files
+        over 10 MB are refused. Read-only keys are refused.
+      parameters:
+        - name: name
+          in: query
+          required: true
+          description: The file name shown on the ticket (any folders are dropped).
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema: { type: string, format: binary, maxLength: 10485760 }
+      responses:
+        '201':
+          description: Uploaded and recorded.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Attachment' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: A read-only API key. }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: 'Ticket is in its Done column, or already holds 10 files.' }
+        '502': { description: The file store refused the file; nothing was recorded. }
+        '503': { description: File uploads are not set up on this server. }
+
   /attachments/{attachmentId}:
     delete:
       tags: [Attachments]
       operationId: deleteAttachment
       summary: Delete an attachment and its stored file
+      description: Whoever uploaded the file, or an org admin. Agent and service keys can only remove the files they uploaded.
       parameters:
         - name: attachmentId
           in: path
@@ -3007,6 +3045,7 @@ paths:
       responses:
         '204': { description: Attachment deleted. }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: Not the uploader or an org admin. }
         '404': { $ref: '#/components/responses/NotFound' }
 
   /attachments/{attachmentId}/keep:
@@ -5612,6 +5651,7 @@ components:
         bad_date_range: "from and to are dates (YYYY-MM-DD), from before to, at most two years apart"
         bad_dev_complete: "the Dev complete column must be one of this board's columns, other than To do and Done"
         bad_review_column: "the review column must be one of this board's columns, other than To do and Done"
+        bad_upload: "a file needs a name and a valid content type"
         downtime_failed: "could not load outages"
         downtime_unavailable: "Stripe isn't configured"
         help_english: "the English question and answer are required"
@@ -5645,6 +5685,8 @@ components:
         linear_options: the import options couldn't be read
         bad_webhook_url: "the URL must be https and not a private address"
         bad_webhook_events: "pick at least one known event"
+        upload_failed: "the file couldn't be stored: please try again"
+        uploads_unavailable: "file uploads aren't set up on this server"
         webhook_limit: "an organization can have up to 10 webhook endpoints"
         webhooks_plan: "webhooks need the Pro or Enterprise plan"
         bad_email: "a valid email address is required"
@@ -5714,6 +5756,7 @@ components:
         calendar_not_connected: "Google Calendar isn't connected"
         calendar_refused: "{Google's reason for refusing the set-up}"
         cant_keep_file: "only an organization admin or whoever uploaded it can keep this file"
+        cant_remove_file: "only an organization admin or whoever uploaded it can remove this file"
         chat_app_not_configured: "the Google Chat app isn't set up on this server"
         chat_test_refused: "Google Chat refused the test message: {reason}"
         chat_url_required: "paste the space's webhook URL first"

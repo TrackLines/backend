@@ -128,10 +128,10 @@ func TestStore(t *testing.T) {
 	if _, err := s.List(ctx, "a2", ticket); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("non-owner list: %v", err)
 	}
-	if _, err := s.Delete(ctx, "a2", a.ID); !errors.Is(err, ErrNotFound) {
+	if _, err := s.Delete(ctx, "a2", a.ID, anyone); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("non-owner delete: %v", err)
 	}
-	if key, err := s.Delete(ctx, "a1", a.ID); err != nil || key != "key-1" {
+	if key, err := s.Delete(ctx, "a1", a.ID, anyone); err != nil || key != "key-1" {
 		t.Fatalf("delete: %q %v", key, err)
 	}
 	if list, _ := s.List(ctx, "a1", ticket); len(list) != 0 {
@@ -189,14 +189,17 @@ func TestDoneLock(t *testing.T) {
 	if _, err := s.Create(ctx, "d1", "x", ticket, file("dl-2")); !errors.Is(err, ErrDone) {
 		t.Fatalf("add on done ticket: %v", err)
 	}
-	if _, err := s.Delete(ctx, "d1", a.ID); !errors.Is(err, ErrDone) {
+	if _, err := s.Delete(ctx, "d1", a.ID, anyone); !errors.Is(err, ErrDone) {
 		t.Fatalf("remove on done ticket: %v", err)
 	}
 	move(todo)
 	if _, err := s.Create(ctx, "d1", "x", ticket, file("dl-2")); err != nil {
 		t.Fatalf("add after moving out of Done: %v", err)
 	}
-	if _, err := s.Delete(ctx, "d1", a.ID); err != nil {
+	if _, err := s.Delete(ctx, "d1", a.ID, anyone); err != nil {
 		t.Fatalf("remove after moving out of Done: %v", err)
 	}
 }
+
+// anyone: the store tests aren't about who may remove a file (the handlers test that)
+func anyone(string) bool { return true }

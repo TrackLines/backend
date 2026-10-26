@@ -20,6 +20,9 @@ var (
 	ErrTooMany  = httpx.Code("too_many_files", "this ticket already has as many files as it can hold: remove one to add another")
 	ErrTooBig   = httpx.Code("file_too_big", "files can be up to 10 MB")
 	ErrCantKeep = httpx.Code("cant_keep_file", "only an organization admin or whoever uploaded it can keep this file")
+	// TL-659
+	ErrCantRemove = httpx.Code("cant_remove_file", "only an organization admin or whoever uploaded it can remove this file")
+	ErrBadUpload  = httpx.Code("bad_upload", "a file needs a name and a valid content type")
 )
 
 type Attachment struct {
@@ -87,7 +90,40 @@ const (
 	MaxFileBytes = 10 << 20
 )
 
-// Create records an uploaded file on the owner's ticket.
+// room: whether the owner's ticket can take another file: it exists in their org, isn't done and isn't
+// full. With lock, the ticket row stays locked until q's transaction ends, so adds to one ticket queue;
+// it's locked first and counted after, so the count sees what the add before this one committed.
+func room(ctx context.Context, q pgx.Tx, owner, ticketID string, lock bool) error {
+	if lock {
+		if _, err := q.Exec(ctx, `SELECT 1 FROM tickets t JOIN projects p ON p.id = t.project_id
+			WHERE t.id = $1 AND p.owner_clerk_id = $2 FOR UPDATE OF t`, ticketID, owner); err != nil {
+			return notFound(err)
+		}
+	}
+	sql := `SELECT ` + boards.TicketDoneSQL + `, (SELECT count(*) FROM ticket_attachments a WHERE a.ticket_id = t.id)
+		FROM tickets t JOIN projects p ON p.id = t.project_id
+		WHERE t.id = $1 AND p.owner_clerk_id = $2`
+	var done bool
+	var count int
+	if err := q.QueryRow(ctx, sql, ticketID, owner).Scan(&done, &count); err != nil {
+		return notFound(err)
+	}
+	if done {
+		return ErrDone
+	}
+	if count >= MaxPerTicket {
+		return ErrTooMany
+	}
+	return nil
+}
+
+// CanAdd checks a file would be taken before it's uploaded (Upload); Create checks again, locked.
+func (s Store) CanAdd(ctx context.Context, owner, ticketID string) error {
+	return pgx.BeginFunc(ctx, s.DB, func(tx pgx.Tx) error { return room(ctx, tx, owner, ticketID, false) })
+}
+
+// Create records an uploaded file on the owner's ticket. The ticket is locked while it's counted, so
+// files added at the same moment can't take it past MaxPerTicket.
 func (s Store) Create(ctx context.Context, owner, actor, ticketID string, a Attachment) (*Attachment, error) {
 	if strings.TrimSpace(a.Name) == "" || !ValidUploadThingFile(a.URL, a.Key) {
 		return nil, ErrBadFile
@@ -95,27 +131,20 @@ func (s Store) Create(ctx context.Context, owner, actor, ticketID string, a Atta
 	if a.Size > MaxFileBytes {
 		return nil, ErrTooBig
 	}
-	var done bool
-	var count int
-	if err := s.DB.QueryRow(ctx, `SELECT `+boards.TicketDoneSQL+`, (SELECT count(*) FROM ticket_attachments a WHERE a.ticket_id = t.id)
-		FROM tickets t JOIN projects p ON p.id = t.project_id
-		WHERE t.id = $1 AND p.owner_clerk_id = $2`, ticketID, owner).Scan(&done, &count); err != nil {
-		return nil, notFound(err)
-	}
-	if done {
-		return nil, ErrDone
-	}
-	// ponytail: counted before the insert; two uploads landing at the same instant could make 11
-	if count >= MaxPerTicket {
-		return nil, ErrTooMany
-	}
-	out, err := scan(s.DB.QueryRow(ctx, `INSERT INTO ticket_attachments AS a (ticket_id, file_key, url, name, size_bytes, content_type, created_by)
-		SELECT t.id, $3, $4, $5, $6, $7, $8 FROM tickets t JOIN projects p ON p.id = t.project_id
-		WHERE t.id = $1 AND p.owner_clerk_id = $2
-		ON CONFLICT (file_key) DO NOTHING
-		RETURNING `+cols, ticketID, owner, a.Key, a.URL, a.Name, max(a.Size, 0), a.ContentType, actor))
+	var out Attachment
+	err := pgx.BeginFunc(ctx, s.DB, func(tx pgx.Tx) error {
+		if err := room(ctx, tx, owner, ticketID, true); err != nil {
+			return err
+		}
+		var err error
+		out, err = scan(tx.QueryRow(ctx, `INSERT INTO ticket_attachments AS a (ticket_id, file_key, url, name, size_bytes, content_type, created_by)
+			VALUES ($1, $2, $3, $4, $5, $6, $7)
+			ON CONFLICT (file_key) DO NOTHING
+			RETURNING `+cols, ticketID, a.Key, a.URL, a.Name, max(a.Size, 0), a.ContentType, actor))
+		return notFound(err) // also: key already recorded
+	})
 	if err != nil {
-		return nil, notFound(err) // also: key already recorded
+		return nil, err
 	}
 	return &out, nil
 }
@@ -138,19 +167,24 @@ func (s Store) List(ctx context.Context, owner, ticketID string) ([]Attachment, 
 	return out, err
 }
 
-// Delete removes the owner's attachment record and returns its UploadThing file key.
+// Delete removes the owner's attachment record and returns its UploadThing file key, when may
+// allows it for whoever uploaded it (ErrCantRemove otherwise, TL-659).
 // Attachments on a done ticket can't be removed either (ErrDone).
-func (s Store) Delete(ctx context.Context, owner, id string) (string, error) {
+func (s Store) Delete(ctx context.Context, owner, id string, may func(uploader string) bool) (string, error) {
 	var key string
 	err := pgx.BeginFunc(ctx, s.DB, func(tx pgx.Tx) error {
 		var done bool
-		if err := tx.QueryRow(ctx, `SELECT `+boards.TicketDoneSQL+` FROM ticket_attachments a
+		var uploader string
+		if err := tx.QueryRow(ctx, `SELECT `+boards.TicketDoneSQL+`, a.created_by FROM ticket_attachments a
 			JOIN tickets t ON t.id = a.ticket_id JOIN projects p ON p.id = t.project_id
-			WHERE a.id = $1 AND p.owner_clerk_id = $2 FOR UPDATE OF a`, id, owner).Scan(&done); err != nil {
+			WHERE a.id = $1 AND p.owner_clerk_id = $2 FOR UPDATE OF a`, id, owner).Scan(&done, &uploader); err != nil {
 			return notFound(err)
 		}
 		if done {
 			return ErrDone
+		}
+		if !may(uploader) {
+			return ErrCantRemove
 		}
 		return tx.QueryRow(ctx, `DELETE FROM ticket_attachments WHERE id = $1 RETURNING file_key`, id).Scan(&key)
 	})
