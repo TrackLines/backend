@@ -110,6 +110,7 @@ func TestImports(t *testing.T) {
 	var teamID string
 	_ = db.QueryRow(ctx, `INSERT INTO teams (org_id, name) VALUES ('im1', 'Web team') RETURNING id::text`).Scan(&teamID)
 	when := time.Date(2025, 3, 1, 9, 0, 0, 0, time.UTC)
+	recent := time.Now().Add(-24 * time.Hour) // newer than 6 months: no review (TL-541)
 	plan := Plan{Skipped: []Skip{{Kind: "ticket", SourceID: "x", Reason: "the source left it out"}}, Projects: []Project{{
 		SourceID: "10000", Name: "Shop", Prefix: "SHOP",
 		Boards: []Board{{SourceID: "1", Name: "Web", EstimateScale: "fibonacci", TeamID: &teamID,
@@ -118,13 +119,14 @@ func TestImports(t *testing.T) {
 			{SourceID: "100", Number: 7, Type: "epic", Title: "Checkout", Board: "1", Column: "1"},
 			{SourceID: "101", Number: 12, Type: "bug", Title: "Card declined", Description: "**boom**", Priority: "urgent", Estimate: "5",
 				Labels: []string{"payments", "", strings.Repeat("x", 51)}, Board: "1", Column: "3", Parent: "100", URL: "https://acme.atlassian.net/browse/SHOP-12",
-				CreatedAt: &when, Comments: []Comment{{SourceID: "c1", Author: "Old Name", Body: "seen it"}, {SourceID: "c2", Author: "x", Body: "  "}},
+				CreatedAt: &when, UpdatedAt: &recent, Comments: []Comment{{SourceID: "c1", Author: "Old Name", Body: "seen it"}, {SourceID: "c2", Author: "x", Body: "  "}},
 				BlockedBy: []string{"102", "999"}, Attachments: []Attachment{
 					{SourceID: "a1", Name: "log.txt", Size: 5, Type: "text/plain", URL: "ok"},
 					{SourceID: "a2", Name: "big.zip", Size: MaxCopy + 1, URL: "big", Link: "https://jira.example/big"},
 					{SourceID: "a3", Name: "lost.png", Size: 5, URL: "broken"}}},
 			{SourceID: "102", Number: 3, Type: "task", Title: "Sized wrong", Estimate: "4", Board: "1", Column: "10001", BlockedBy: []string{"101"}},
 			{SourceID: "105", Number: 8, Type: "task", Title: "Shipped", Done: true, DoneAt: &when},
+			{SourceID: "106", Number: 9, Type: "task", Title: "Forgotten", Board: "1", Column: "1", UpdatedAt: &when},
 			{SourceID: "103", Number: 5, Type: "feature", Title: "Backlog idea", Parent: "999"},
 			{SourceID: "104", Number: 6, Type: "story", Title: "Unknown type"},
 		},
@@ -184,7 +186,7 @@ func TestImports(t *testing.T) {
 	if code != 201 || im.State != "previewing" || len(im.Problems) != 1 || im.Problems[0].Code != "project_limit" {
 		t.Fatalf("preview: %d %+v", code, im)
 	}
-	if im.Planned == nil || *im.Planned != (Counts{Projects: 1, Boards: 1, Columns: 3, Tickets: 5, Comments: 2, Attachments: 2}) || len(im.Skipped) != 2 ||
+	if im.Planned == nil || *im.Planned != (Counts{Projects: 1, Boards: 1, Columns: 3, Tickets: 6, Comments: 2, Attachments: 2}) || len(im.Skipped) != 2 ||
 		len(im.Projects) != 1 || im.Projects[0].Prefix != "SHOP" || len(im.Projects[0].Boards[0].Columns) != 3 {
 		t.Fatalf("preview plan: %+v", im)
 	}
@@ -209,8 +211,8 @@ func TestImports(t *testing.T) {
 		t.Fatalf("run: %d %s", rec.Code, rec.Body)
 	}
 	done := get(im.ID)
-	if done.State != "done" || done.Progress != 5 || done.Total != 5 || done.Report == nil ||
-		done.Report.Created != (Counts{Projects: 1, Boards: 1, Columns: 3, Tickets: 5, Comments: 1, Attachments: 1}) {
+	if done.State != "done" || done.Progress != 6 || done.Total != 6 || done.Report == nil ||
+		done.Report.Created != (Counts{Projects: 1, Boards: 1, Columns: 3, Tickets: 6, Comments: 1, Attachments: 1}) {
 		t.Fatalf("done: %+v", done)
 	}
 	reasons := map[string]string{}
@@ -272,6 +274,15 @@ func TestImports(t *testing.T) {
 	}
 	if len(blocks) != 1 || blocks[0] != "12<3" {
 		t.Fatalf("blocked by: %v", blocks)
+	}
+	// review (TL-541): the open ticket untouched for over 6 months is in the backlog, set aside for its
+	// board; the recent one and the one in Done (as old) stay on the board
+	var forgotten, reviewBoard, staleDone string
+	_ = db.QueryRow(ctx, `SELECT (t.board_id IS NULL)::text, r.board_id::text FROM tickets t JOIN import_reviews r ON r.ticket_id = t.id
+		WHERE t.project_id = $1 AND t.number = 9`, projectID).Scan(&forgotten, &reviewBoard)
+	_ = db.QueryRow(ctx, `SELECT count(*)::text FROM import_reviews r JOIN tickets t ON t.id = r.ticket_id WHERE t.project_id = $1`, projectID).Scan(&staleDone)
+	if forgotten != "true" || board == nil || reviewBoard != *board || staleDone != "1" {
+		t.Fatalf("review: in the backlog %q, for board %q (want %v), %s set aside", forgotten, reviewBoard, board, staleDone)
 	}
 	// attachments (TL-540): the small one copied onto the ticket, the big one linked in its description
 	var fileKey, fileURL, desc string

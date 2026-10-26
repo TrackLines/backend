@@ -152,11 +152,23 @@ type Board struct {
 	Deletable     bool     `json:"deletable"`              // never used (no tickets, no sprints): can be deleted outright
 	TeamID        *string  `json:"team_id"`                // the team whose leaders run this board                 // sprints | kanban
 	HiddenDone    int      `json:"hidden_done,omitempty"`  // kanban: Done tickets older than KanbanDoneDays, left off the view // a key of Scales
+	ToReview      int      `json:"to_review,omitempty"`    // imported tickets set aside, waiting for a decision before its first sprint (TL-541)
 	CreatedAt     string   `json:"created_at"`
 	UpdatedAt     string   `json:"updated_at"`
 	Sprint        *Sprint  `json:"sprint,omitempty"` // open sprint, if the board runs sprints
 	Columns       []Column `json:"columns,omitempty"`
 	Stats         *Stats   `json:"stats,omitempty"` // ListByProject only
+}
+
+// ToReview is how many of board's imported tickets still wait for a decision (TL-541): set aside by
+// an import, and neither kept, closed nor put on a board since.
+func ToReview(ctx context.Context, q interface {
+	QueryRow(context.Context, string, ...any) pgx.Row
+}, board string) (int, error) {
+	var n int
+	err := q.QueryRow(ctx, `SELECT count(*) FROM import_reviews r JOIN tickets t ON t.id = r.ticket_id
+		WHERE r.board_id = $1 AND t.board_id IS NULL AND NOT `+TicketDoneSQL, board).Scan(&n)
+	return n, err
 }
 
 // Stats summarises a board for its project page. It counts the tickets the board shows:
@@ -368,6 +380,9 @@ func (s Store) Get(ctx context.Context, id, owner string) (*Board, error) {
 		return c, row.Scan(&c.ID, &c.Name, &c.Position, &c.WIPLimit)
 	})
 	if err != nil {
+		return nil, err
+	}
+	if b.ToReview, err = ToReview(ctx, s.DB, id); err != nil {
 		return nil, err
 	}
 	idx := make(map[string]int, len(b.Columns))

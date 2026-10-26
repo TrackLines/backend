@@ -273,6 +273,7 @@ func (s Store) build(ctx context.Context, tx pgx.Tx, owner, user, id, source str
 		return err
 	}
 	done, now := 0, time.Now()
+	stale := now.AddDate(0, -6, 0) // older than this goes to review
 	for _, pr := range p.Projects {
 		var projectID string
 		if err := tx.QueryRow(ctx, `INSERT INTO projects (owner_clerk_id, name, description, key_prefix) VALUES ($1, $2, $3, $4) RETURNING id::text`,
@@ -333,6 +334,12 @@ func (s Store) build(ctx context.Context, tx pgx.Tx, owner, user, id, source str
 				b, c := boardOf[t.Board], columns[t.Board+"/"+t.Column]
 				board, column = &b, &c
 			}
+			// open, but untouched in the source for over 6 months: set aside in the backlog for its board
+			// to keep or close before its first sprint (TL-541)
+			review := ""
+			if last := cmp.Or(t.UpdatedAt, t.CreatedAt); board != nil && *column != lastOf[t.Board] && !t.Done && last != nil && last.Before(stale) {
+				review, board, column = *board, nil, nil
+			}
 			key := ""
 			if column != nil {
 				key = *column
@@ -372,6 +379,11 @@ func (s Store) build(ctx context.Context, tx pgx.Tx, owner, user, id, source str
 			}
 			positions[key]++
 			ticketOf[t.SourceID] = ticketID
+			if review != "" {
+				if _, err := tx.Exec(ctx, `INSERT INTO import_reviews (ticket_id, board_id) VALUES ($1, $2)`, ticketID, review); err != nil {
+					return err
+				}
+			}
 			if err := item("ticket", t.SourceID, ticketID); err != nil {
 				return err
 			}
@@ -507,7 +519,8 @@ const fingerprint = `md5(row_to_json(t)::text
 	|| coalesce((SELECT string_agg(lower(l.label), ',' ORDER BY lower(l.label)) FROM ticket_labels l WHERE l.ticket_id = t.id), '')
 	|| coalesce((SELECT string_agg(c.id::text || md5(c.body), ',' ORDER BY c.id) FROM ticket_comments c WHERE c.ticket_id = t.id), '')
 	|| (SELECT count(*) FROM ticket_attachments a WHERE a.ticket_id = t.id)
-	|| '/' || (SELECT count(*) FROM ticket_history h WHERE h.ticket_id = t.id))`
+	|| '/' || (SELECT count(*) FROM ticket_history h WHERE h.ticket_id = t.id)
+	|| '/' || (SELECT count(*) FROM import_reviews r WHERE r.ticket_id = t.id))` // kept in review counts as acted on
 
 // Scrap deletes everything a finished import created, as long as nobody has acted on it: every
 // imported ticket is as it was imported, and nobody has added tickets to its projects.

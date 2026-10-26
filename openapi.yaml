@@ -3181,7 +3181,7 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { description: Requires a signed-in organization admin or the linked team's leader. }
         '404': { $ref: '#/components/responses/NotFound' }
-        '409': { description: "Board already has an open sprint, or is a kanban board." }
+        '409': { description: "Board already has an open sprint, is a kanban board, or has imported tickets still to review (board_needs_refining)." }
 
   /sprints/{sprintId}:
     get:
@@ -3279,6 +3279,48 @@ paths:
         '403': { description: Requires a signed-in organization admin or the linked team's leader. }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /boards/{boardId}/import-review:
+    parameters:
+      - $ref: '#/components/parameters/BoardId'
+    get:
+      tags: [Sprints]
+      operationId: listImportReview
+      summary: Imported tickets to keep or close before the board's first sprint
+      description: >-
+        An import sets aside, in the backlog, open tickets nothing had happened to in the source for over 6
+        months. Each one is kept (POST …/keep), closed as won't do (resolving it), or put on a board; until
+        then the board can't start or plan a sprint. Oldest change first.
+      responses:
+        '200':
+          description: The tickets left.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id: { type: string, format: uuid }
+                    key: { type: string, example: SHOP-12 }
+                    title: { type: string }
+                    type: { type: string }
+                    priority: { type: string }
+                    updated_at: { type: string, format: date-time, description: When it last changed in the source. }
+                    url: { type: string, description: The original. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /boards/{boardId}/import-review/{ticketId}/keep:
+    parameters:
+      - $ref: '#/components/parameters/BoardId'
+      - { name: ticketId, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      tags: [Sprints]
+      operationId: keepImportedTicket
+      summary: Keep an imported ticket (it stays in the backlog)
+      responses:
+        '204': { description: Off the review list. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: Requires a signed-in organization admin or the linked team's leader. }
+        '404': { $ref: '#/components/responses/NotFound' }
   /boards/{boardId}/planned-sprints:
     parameters:
       - $ref: '#/components/parameters/BoardId'
@@ -3316,7 +3358,7 @@ paths:
               schema: { type: array, items: { $ref: '#/components/schemas/PlannedSprint' } }
         '400': { $ref: '#/components/responses/BadRequest' }
         '403': { description: Not an org admin or the board team's leader. }
-        '409': { description: Already 2 planned sprints, or a kanban board. }
+        '409': { description: "Already 2 planned sprints, a kanban board, or imported tickets still to review (board_needs_refining)." }
 
   /boards/{boardId}/live:
     parameters:
@@ -5178,6 +5220,7 @@ components:
         archived_at: { type: [string, 'null'], format: date-time, description: Archived boards are off the project page and take no new work. }
         deletable: { type: boolean, description: 'Never used (no tickets, no sprints): DELETE works; otherwise archive it.' }
         hidden_done: { type: integer, description: "Kanban only. Done tickets finished more than 14 days ago, left off the board." }
+        to_review: { type: integer, description: "Imported tickets set aside for review: until it's 0, the board can't start or plan a sprint (TL-541). Omitted when 0." }
         team_id: { type: [string, 'null'], format: uuid, description: The team whose leaders run this board. }
         sprint: { $ref: '#/components/schemas/Sprint' }
         columns:
@@ -5371,6 +5414,7 @@ components:
         is_duplicate: "a duplicate ticket is already closed"
         item_title_required: "item title is required"
         kanban_no_sprints: "kanban boards don't run sprints"
+        board_needs_refining: "keep or close the imported tickets set aside for review before this board's first sprint"
         key_name_required: "name is required (e.g. the script using it)"
         key_name_taken: "someone else in this organization already has a key with that name: choose another"
         key_prefix_taken: "another project in this organization already uses that key prefix"
