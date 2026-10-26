@@ -328,6 +328,7 @@ func (s *Service) Handler() http.Handler {
 	// Admin panel (TL-570): ChewedFeed staff only, 404 for everyone else
 	staffOnly := staff.Guard{Org: config.Get(s.Config).StaffOrgID, Member: staff.Member(keyMember), On: s.flag("admin-panel")}.Only
 	mux.Handle("GET /api/staff/me", staffOnly(http.HandlerFunc(staff.Me)))
+	mux.Handle("GET /api/staff/stats", staffOnly(http.HandlerFunc(staff.Stats{DB: s.DB, VK: s.Valkey}.Get))) // counts only (TL-574)
 
 	mux.Handle("POST /api/columns/{id}/tickets", signedIn(t.Create))
 	mux.Handle("GET /api/tickets/{id}", signedIn(t.Get))                // one ticket + where it lives (deep links)
