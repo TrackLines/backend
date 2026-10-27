@@ -164,6 +164,7 @@ func (s *Service) Start() error {
 	box, _ := secrets.New(config.Get(s.Config).SecretKey) // no key: nothing can be signed, so nothing was queued
 	go webhooks.Worker{DB: s.DB, Box: box, Notify: notify}.Run(ctx, 5*time.Second)
 	// audit events to the auditor (TL-666), queued in the same transactions; sent while "audit-service" is on
+	go audit.RunExpireKeys(ctx, s.DB, time.Hour) // each API key that expires, in the org log once (TL-700)
 	go audit.Relay{DB: s.DB, URL: config.Get(s.Config).AuditURL, Secret: config.Get(s.Config).AuditSecret, On: s.flag("audit-service"),
 		Client: &http.Client{Timeout: 30 * time.Second}}.Run(ctx, 5*time.Second)
 	// due dates: the day before and on the day, assignees and watchers are reminded (TL-631)
@@ -627,7 +628,8 @@ func (s *Service) Handler() http.Handler {
 	// CORS: the app's own origins go through the strict middleware above; a third-party origin an org
 	// has allowed for embedding (TL-494) gets Access-Control-Allow-Origin reflected on the public
 	// roadmap/intake routes, gated by the flags.gg "embedding" flag, and otherwise falls through to it.
-	muxZoned := httpx.WithZone(mux)
+	// a change someone wasn't allowed to make goes in the org log (TL-700); changes that go through are there already
+	muxZoned := httpx.WithZone(audit.Refused(s.DB, mux)(mux))
 	res := embed.Resolver{DB: s.DB}
 	store := embed.Store{DB: s.DB}
 	// a widget hit is counted off the request path (best-effort, non-blocking) for embed usage stats

@@ -403,6 +403,13 @@ paths:
                             and webhook.deleted (host, events, enabled); import.run (source, state, created, total); export.downloaded (kind);
                             tickets.bulk_edited (action, count, changed); org.plan_changed (plan, from); org.deleted; ticket.deleted, ticket.restored
                             and ticket.purged.
+                            TL-700: access.refused (method, route, path, code: a change someone wasn't allowed to make; 403 only);
+                            board.settings_changed (name, fields: estimate_scale, style, agent_review, dev_complete_column_id, review_column_id,
+                            when_sprint_ends, team_id as {from, to}); project.request_form (name, change opened/closed/reset);
+                            embed.site_added and embed.site_removed (origin), embed.key_created and embed.key_deleted (label);
+                            repo.linked and repo.unlinked (provider, repo); integration.updated (provider, fields as {from, to}: kinds, account,
+                            base_url host, holidays_calendar); roadmap.visibility_changed (title, from, to); api_key.expired (kind, name, owner,
+                            read_only, expires_at); import.run includes scrapped imports.
                         target_type: { type: [string, 'null'] }
                         target_id: { type: [string, 'null'] }
                         project_id: { type: [string, 'null'], format: uuid }
