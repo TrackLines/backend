@@ -8,6 +8,18 @@ serves the [MCP](#mcp) endpoint and the webhooks for Clerk, Stripe and the Git i
 Go HTTP service backed by PostgreSQL 18 and Valkey. Clerk for auth, Stripe for subscriptions,
 Bugfixes for error reporting, Flags.gg for feature flags.
 
+## Organization onboarding (TL-705)
+
+Human org admins use `GET /api/onboarding` to resume setup, `POST /api/onboarding/setup`
+to atomically create a project/board or adopt an imported board, and `POST /api/onboarding/finish`
+after optional invitations. Existing organizations skip setup. Project creation shares the plan
+limit lock with normal creation and imports, and retries return the same saved board.
+
+`POST /api/onboarding/guide/complete` separately records user, organization, guide ID/version and
+completion time. Publish a new `GuideVersion` in `internal/onboarding/onboarding.go` only with
+matching frontend guide content for new features. Routine releases never reset completion.
+Migration 106 adds the two tables; user removal and organization purge clean up these records.
+
 ## Run it
 
 ```sh

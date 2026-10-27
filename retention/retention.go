@@ -70,6 +70,8 @@ func PurgeBin(ctx context.Context, db *pgxpool.Pool, now time.Time) (int64, erro
 // tickets, comments, attachments (whose files the Sweeper then deletes from UploadThing), roadmaps,
 // intake and repo links; the rest is keyed by org directly. A new org-owned table belongs here.
 var OrgData = []string{
+	`DELETE FROM guide_completions WHERE org_id = $1`,
+	`DELETE FROM org_onboarding WHERE org_id = $1`,
 	`DELETE FROM projects WHERE owner_clerk_id = $1`,
 	`DELETE FROM boards WHERE owner_clerk_id = $1`,
 	`DELETE FROM roadmaps WHERE owner_clerk_id = $1`,

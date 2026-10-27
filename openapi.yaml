@@ -90,6 +90,65 @@ tags:
   - name: System
     description: Health check.
 paths:
+  /onboarding:
+    get:
+      tags: [Organizations]
+      summary: Resume setup and check the current published guide
+      description: Human sessions only. Members receive admin false and no guide. For admins, initializes setup once per organization; organizations already containing projects are treated as set up. Guide completion is scoped to user and organization, independent of setup.
+      responses:
+        '200': { description: Onboarding status, content: { application/json: { schema: { $ref: '#/components/schemas/OnboardingState' } } } }
+        '403': { description: A signed-in person with an active organization is required }
+  /onboarding/setup:
+    post:
+      tags: [Organizations]
+      summary: Create the first project and board, or adopt an imported board
+      description: Human org admins only. Atomically saves progress at the invitation step; repeated requests return the saved result. Uses the same project plan lock as ordinary creation and imports. template_id omitted uses the Simple board. board_id selects an existing, unarchived board in this organization instead of creating a project.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string, maxLength: 200 }
+                key_prefix: { type: string, pattern: '^[A-Z][A-Z0-9]{1,5}$' }
+                template_id: { type: string }
+                board_id: { type: string, format: uuid }
+      responses:
+        '200': { description: Saved setup, content: { application/json: { schema: { $ref: '#/components/schemas/OnboardingState' } } } }
+        '400': { description: Invalid name, prefix, template or board }
+        '402': { description: Project plan limit reached }
+        '403': { description: A human org admin is required }
+        '409': { description: Key prefix already taken }
+  /onboarding/finish:
+    post:
+      tags: [Organizations]
+      summary: Finish setup after inviting teammates or skipping that step
+      description: Human org admins only. Idempotent; does not complete the per-person guide.
+      responses:
+        '200': { description: Setup finished, content: { application/json: { schema: { $ref: '#/components/schemas/OnboardingState' } } } }
+        '400': { description: Choose a valid board first }
+        '403': { description: A human org admin is required }
+  /onboarding/guide/complete:
+    post:
+      tags: [Organizations]
+      summary: Persist completion of the current published guide
+      description: Human org admins only, after organization setup. Stores user, org, guide ID, version and completion time idempotently. A routine deployment does not reset completion; a new matching guide version must be deliberately published in backend and frontend.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [id, version]
+              properties:
+                id: { type: string, enum: [getting-started] }
+                version: { type: integer, minimum: 1 }
+      responses:
+        '200': { description: Completion persisted, content: { application/json: { schema: { $ref: '#/components/schemas/OnboardingState' } } } }
+        '400': { description: Organization setup is incomplete }
+        '403': { description: A human org admin is required }
+        '409': { description: Reload the current guide version }
   /organizations/members:
     get:
       tags: [Organizations]
@@ -4950,6 +5009,22 @@ components:
         type: string
         format: uuid
   schemas:
+    OnboardingState:
+      type: object
+      required: [admin, step, project_id, board_id, completed_at, guide]
+      properties:
+        admin: { type: boolean }
+        step: { type: string, enum: [project, invite, complete] }
+        project_id: { type: [string, 'null'], format: uuid }
+        board_id: { type: [string, 'null'], format: uuid }
+        completed_at: { type: [string, 'null'], format: date-time }
+        guide:
+          type: object
+          required: [id, version, available]
+          properties:
+            id: { type: string }
+            version: { type: integer }
+            available: { type: boolean }
     Outage:
       type: object
       properties:
@@ -6023,6 +6098,9 @@ components:
         code: { type: string, description: Stable error code, for translating the message. }
         error: { type: string, description: The English message, as the plain-text response would give it. }
       x-error-codes:
+        onboarding_board: "choose a board in this organization"
+        onboarding_incomplete: "finish organization setup before completing the guide"
+        guide_version: "refresh to load the current guide"
         admins_working_week: "only organization admins, signed in, can change the working week"
         bad_working_week: "a working week needs at least one working day, a first day of the week, and hours of at least one hour within the day"
         managers_working_week: "only someone who manages this project, signed in, can change its working week"

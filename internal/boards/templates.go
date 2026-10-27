@@ -99,12 +99,23 @@ func (s Store) Templates(ctx context.Context, org string) ([]Template, error) {
 
 // Template finds a built-in or one of the org's templates.
 func (s Store) Template(ctx context.Context, org, id string) (Template, error) {
+	return findTemplate(ctx, s.DB, org, id)
+}
+
+// TemplateTx resolves a template without acquiring another pool connection while holding a transaction.
+func TemplateTx(ctx context.Context, tx pgx.Tx, org, id string) (Template, error) {
+	return findTemplate(ctx, tx, org, id)
+}
+
+func findTemplate(ctx context.Context, q interface {
+	QueryRow(context.Context, string, ...any) pgx.Row
+}, org, id string) (Template, error) {
 	for _, t := range Builtins {
 		if t.ID == id {
 			return t, nil
 		}
 	}
-	return scanTemplate(s.DB.QueryRow(ctx, `SELECT `+templateCols+` FROM board_templates WHERE id::text = $1 AND org_id = $2`, id, org))
+	return scanTemplate(q.QueryRow(ctx, `SELECT `+templateCols+` FROM board_templates WHERE id::text = $1 AND org_id = $2`, id, org))
 }
 
 // SaveTemplate stores an org template (already validated).
