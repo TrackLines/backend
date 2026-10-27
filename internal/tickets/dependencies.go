@@ -59,7 +59,8 @@ func (s Store) SetBlockedBy(ctx context.Context, owner, id string, blockers []st
 			id, uniq, done).Scan(&adds); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, `DELETE FROM ticket_dependencies WHERE ticket_id = $1`, id); err != nil {
+		// only the blockers that go, so the ticket's history says what really changed (TL-677)
+		if _, err := tx.Exec(ctx, `DELETE FROM ticket_dependencies WHERE ticket_id = $1 AND blocked_by_id <> ALL($2::uuid[])`, id, uniq); err != nil {
 			return err
 		}
 		// would id become reachable by following "blocked by" from its new blockers?
@@ -76,7 +77,7 @@ func (s Store) SetBlockedBy(ctx context.Context, owner, id string, blockers []st
 		if adds { // TL-528: a done ticket can lose blockers, not gain them
 			return ErrDoneBlock
 		}
-		_, err := tx.Exec(ctx, `INSERT INTO ticket_dependencies (ticket_id, blocked_by_id) SELECT $1, unnest($2::uuid[])`, id, uniq)
+		_, err := tx.Exec(ctx, `INSERT INTO ticket_dependencies (ticket_id, blocked_by_id) SELECT $1, unnest($2::uuid[]) ON CONFLICT DO NOTHING`, id, uniq)
 		return err
 	})
 }

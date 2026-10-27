@@ -49,10 +49,11 @@ func (s Store) SetLabels(ctx context.Context, owner, id string, labels []string)
 			WHERE t.id = $1 AND p.owner_clerk_id = $2 FOR UPDATE OF t`, id, owner).Scan(&ok); err != nil {
 			return notFound(err)
 		}
-		if _, err := tx.Exec(ctx, `DELETE FROM ticket_labels WHERE ticket_id = $1`, id); err != nil {
+		// only the difference, so the ticket's history says what really changed (TL-677)
+		if _, err := tx.Exec(ctx, `DELETE FROM ticket_labels WHERE ticket_id = $1 AND label <> ALL($2::text[])`, id, labels); err != nil {
 			return err
 		}
-		_, err := tx.Exec(ctx, `INSERT INTO ticket_labels (ticket_id, label) SELECT $1, unnest($2::text[])`, id, labels)
+		_, err := tx.Exec(ctx, `INSERT INTO ticket_labels (ticket_id, label) SELECT $1, unnest($2::text[]) ON CONFLICT DO NOTHING`, id, labels)
 		return err
 	})
 }
