@@ -4287,7 +4287,10 @@ paths:
       tags: [System]
       operationId: getMCPPrompts
       summary: What the MCP server tells agents
-      description: Public; no key needed. The server's instructions and each tool's name, title and description, exactly as MCP clients get them.
+      description: >-
+        Public; no key needed. The server's instructions (the latest published version of the pre-prompt) and
+        each tool's name, title and description, exactly as MCP clients get them. Earlier versions are at
+        /mcp/prompts/versions.
       security: []
       responses:
         '200':
@@ -4298,6 +4301,8 @@ paths:
                 type: object
                 properties:
                   instructions: { type: string }
+                  version: { type: integer, description: "The pre-prompt's version. Omitted when the built-in text is served (versions can't be read)." }
+                  published_at: { type: string, format: date-time }
                   tools:
                     type: array
                     items:
@@ -4306,6 +4311,38 @@ paths:
                         name: { type: string }
                         title: { type: string }
                         description: { type: string }
+
+  /mcp/prompts/versions:
+    get:
+      tags: [System]
+      operationId: listMCPPromptVersions
+      summary: Every published version of the MCP pre-prompt
+      description: Public. Newest first, without their text (each is at /mcp/prompts/versions/{version}). Versions never change once published.
+      security: []
+      responses:
+        '200':
+          description: The versions.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/MCPPromptVersion' }
+
+  /mcp/prompts/versions/{version}:
+    get:
+      tags: [System]
+      operationId: getMCPPromptVersion
+      summary: One version of the MCP pre-prompt, as it was published
+      security: []
+      parameters:
+        - { name: version, in: path, required: true, schema: { type: integer, minimum: 1 } }
+      responses:
+        '200':
+          description: The version.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MCPPromptVersion' }
+        '404': { $ref: '#/components/responses/NotFound' }
 
   /live/sessions:
     get:
@@ -4615,6 +4652,51 @@ paths:
         - { name: locale, in: query, schema: { type: string, enum: [en, nl, de, es, pt, fr, tlh], default: en } }
       responses:
         '200': { description: The .po file., content: { text/x-gettext-translation: { schema: { type: string } } } }
+  /staff/mcp-prompt:
+    get:
+      tags: [Staff]
+      operationId: staffGetMCPPrompt
+      summary: The MCP pre-prompt's current version and history
+      description: Staff only. Every version, newest first, with who published each.
+      responses:
+        '200':
+          description: The current version and every version.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  current: { oneOf: [{ $ref: '#/components/schemas/MCPPromptVersion' }, { type: 'null' }] }
+                  versions: { type: array, items: { $ref: '#/components/schemas/MCPPromptVersion' } }
+        '404': { description: Not staff. }
+    post:
+      tags: [Staff]
+      operationId: staffPublishMCPPrompt
+      summary: Publish a new version of the MCP pre-prompt
+      description: >-
+        Staff only. New MCP sessions get it straight away (other instances within a minute). Earlier versions are
+        kept as they were. 400 for empty or over 20000 characters (codes mcp_prompt_empty, mcp_prompt_too_long);
+        409 when it's the current text (code mcp_prompt_unchanged).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [body]
+              properties:
+                body: { type: string, maxLength: 20000 }
+                note: { type: string, maxLength: 500, description: What changed. }
+      responses:
+        '201':
+          description: The new version.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MCPPromptVersion' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { description: Not staff. }
+        '409': { description: "It's the current version (code mcp_prompt_unchanged)." }
+
   /staff/help:
     get:
       tags: [Staff]
@@ -5848,6 +5930,16 @@ components:
     Error:
       type: string
       description: Plain-text error message.
+    MCPPromptVersion:
+      type: object
+      description: One published version of the MCP pre-prompt (TL-674).
+      required: [version, note, published_at]
+      properties:
+        version: { type: integer }
+        body: { type: string, description: Left out of the version list. }
+        note: { type: string, description: What changed. }
+        published_at: { type: string, format: date-time }
+        published_by: { type: string, description: Staff routes only. }
     ErrorResponse:
       type: object
       description: >-
@@ -6004,6 +6096,9 @@ components:
         cant_remove_file: "only an organization admin or whoever uploaded it can remove this file"
         audit_plan: "the audit log needs the Pro or Enterprise plan"
         audit_unavailable: "the audit log can't be loaded right now: try again shortly"
+        mcp_prompt_empty: "the pre-prompt can't be empty"
+        mcp_prompt_too_long: "the pre-prompt can be up to 20000 characters"
+        mcp_prompt_unchanged: "that's the current version: change the text to publish a new one"
         history_unavailable: "this ticket's history can't be loaded right now: try again shortly"
         chat_app_not_configured: "the Google Chat app isn't set up on this server"
         chat_test_refused: "Google Chat refused the test message: {reason}"

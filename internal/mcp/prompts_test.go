@@ -9,7 +9,7 @@ import (
 // TL-565: the docs get exactly what agents are told, every tool included.
 func TestPrompts(t *testing.T) {
 	rec := httptest.NewRecorder()
-	Prompts(rec, httptest.NewRequest("GET", "/api/mcp/prompts", nil))
+	NewPromptStore(nil).Prompts(rec, httptest.NewRequest("GET", "/api/mcp/prompts", nil)) // no database: the built-in text
 	var got struct {
 		Instructions string   `json:"instructions"`
 		Tools        []Prompt `json:"tools"`

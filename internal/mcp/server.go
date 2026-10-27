@@ -35,7 +35,9 @@ type tool struct {
 type caller func(ctx context.Context, method, path string, body any) (int, []byte)
 
 // Handler is the /mcp endpoint. api is the whole REST handler chain (auth middleware included).
-// Instructions tell agents how to work: like a member of the team, the whole way through a ticket.
+// Instructions tell agents how to work: like a member of the team, the whole way through a ticket. Staff
+// publish new versions (TL-674, mcp_prompts, seeded with this text as version 1); this is the fallback for
+// when they can't be read.
 const Instructions = "TrackLin.es boards, backlog and tickets. Work is organised as projects → boards (one per team) → columns → tickets; " +
 	"the first column is To do and the last column is Done (get_board lists a board's columns in order). " +
 	"Tickets have keys like TL-123 (project prefix + number); any ticket_id argument takes a key or a UUID.\n\n" +
@@ -57,10 +59,11 @@ const Instructions = "TrackLin.es boards, backlog and tickets. Work is organised
 	"in the board's review column instead (get_board: review_column_id; the column before Done when that's null; the response says needs_review) and a person approves it; otherwise it's Done. Never leave finished work in To do or In progress.\n" +
 	"If you stop before finishing, say why in a comment and release_ticket so someone else can pick it up."
 
-func Handler(api http.Handler, version string) http.Handler {
+// prompts gives each session the latest published pre-prompt (TL-674); nil: the built-in Instructions.
+func Handler(api http.Handler, version string, prompts *PromptStore) http.Handler {
 	return sdk.NewStreamableHTTPHandler(func(r *http.Request) *sdk.Server {
 		s := sdk.NewServer(&sdk.Implementation{Name: "tracklines", Title: "TrackLin.es", Version: version}, &sdk.ServerOptions{
-			Instructions: Instructions,
+			Instructions: prompts.Instructions(r.Context()),
 		})
 		call := requester(api, r.Header)
 		for _, t := range tools {
@@ -245,18 +248,4 @@ type Prompt struct {
 	Name        string `json:"name"`
 	Title       string `json:"title"`
 	Description string `json:"description"`
-}
-
-// Prompts: GET /api/mcp/prompts, public. The instructions and tool descriptions agents get, from the
-// same values the server sends, so the docs show them without a copy to drift (TL-565).
-func Prompts(w http.ResponseWriter, _ *http.Request) {
-	out := struct {
-		Instructions string   `json:"instructions"`
-		Tools        []Prompt `json:"tools"`
-	}{Instructions: Instructions}
-	for _, t := range tools {
-		out.Tools = append(out.Tools, Prompt{t.name, t.title, t.description})
-	}
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(out)
 }
