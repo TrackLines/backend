@@ -117,6 +117,15 @@ func TestBoardHandlers(t *testing.T) {
 	expect(400, "update", org, "admin-u", used.ID, `{"name":"  "}`)
 	expect(400, "update", org, "admin-u", used.ID, `{"estimate_scale":"bananas"}`)
 	expect(400, "update", org, "admin-u", used.ID, `{"style":"waterfall"}`)
+	// when a sprint ends (TL-279): start_next or wait, by those who manage the board
+	expect(204, "update", org, "admin-u", used.ID, `{"when_sprint_ends":"wait"}`)
+	if got, _ := s.Get(ctx, used.ID, org); got.WhenSprintEnds != "wait" {
+		t.Fatalf("when_sprint_ends saved: %q", got.WhenSprintEnds)
+	}
+	if rec := expect(400, "update", org, "admin-u", used.ID, `{"when_sprint_ends":"sometimes"}`); !strings.Contains(rec.Body.String(), "start_next or wait") {
+		t.Fatalf("bad when_sprint_ends: %s", rec.Body)
+	}
+	expect(403, "update", org, "member-u", led.ID, `{"when_sprint_ends":"wait"}`)
 	// Review column (TL-592): the same rules as Dev complete; "" goes back to the column before Done
 	expect(204, "update", org, "admin-u", used.ID, `{"review_column_id":"`+used.Columns[1].ID+`"}`)
 	if got, _ := s.Get(ctx, used.ID, org); got.ReviewColumn == nil || *got.ReviewColumn != used.Columns[1].ID {
