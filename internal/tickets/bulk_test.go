@@ -81,6 +81,32 @@ func TestBulk(t *testing.T) {
 	if f, _ := s.Get(ctx, "org_bulk_other", foreign.ID); f.Priority == "urgent" {
 		t.Fatal("changed another org's ticket")
 	}
+	// TL-669: on a paid plan the org log has the bulk edit (each ticket's change is in its own activity);
+	// on Free, nothing
+	bulkEvents := func() []string {
+		rows, _ := db.Query(ctx, `SELECT data::text FROM audit_outbox WHERE org_id = $1 AND action = 'tickets.bulk_edited' ORDER BY queued`, org)
+		defer rows.Close()
+		var out []string
+		for rows.Next() {
+			var d string
+			_ = rows.Scan(&d)
+			out = append(out, d)
+		}
+		return out
+	}
+	if got := bulkEvents(); len(got) != 0 {
+		t.Fatalf("a Free org's bulk edit was logged: %v", got)
+	}
+	if _, err := db.Exec(ctx, `INSERT INTO org_billing (org_id, stripe_status, plan) VALUES ($1, 'active', 'pro')`, org); err != nil {
+		t.Fatal(err)
+	}
+	bulk(`{"ticket_ids":` + idsJSON(ids[0], foreign.ID) + `,"action":"priority","priority":"high"}`)
+	if got := bulkEvents(); len(got) != 1 || got[0] != `{"count": 2, "action": "priority", "changed": 1}` {
+		t.Fatalf("bulk edit in the org log: %v", got)
+	}
+	if _, err := db.Exec(ctx, `DELETE FROM org_billing WHERE org_id = $1`, org); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := db.Exec(ctx, `INSERT INTO ticket_labels (ticket_id, label) VALUES ($1, 'Old')`, ids[0]); err != nil {
 		t.Fatal(err)
 	}

@@ -53,6 +53,10 @@ func (h System) Export(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer rows.Close()
+	// the org log (TL-669; paid plans): who took a copy of the project's tickets
+	if _, err := h.store.DB.Exec(ctx, `SELECT audit_org($1, 'export.downloaded', 'project', $2::text, $2::text::uuid, '{"kind":"csv"}')`, org, r.PathValue("id")); err != nil {
+		logs.Errorf("tickets: export: audit: %v", err)
+	}
 	names := map[string]string{}
 	if people, err := h.People(ctx, org); err == nil {
 		for _, p := range people {

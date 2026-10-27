@@ -296,7 +296,7 @@ func (j *joins) CompleteFor(_ context.Context, org, user string) (int, error) {
 func TestMembershipCreatedCompletesInvitations(t *testing.T) {
 	now := time.Unix(1_800_000_000, 0)
 	invites := &joins{}
-	h := System{Secret: secret, Invites: invites}.Webhook(func() time.Time { return now })
+	h := System{DB: testDB(t), Secret: secret, Invites: invites}.Webhook(func() time.Time { return now })
 	send := func(body string) int {
 		req := httptest.NewRequest("POST", "/api/webhooks/clerk", strings.NewReader(body))
 		req.Header.Set("svix-id", "msg_join")
@@ -316,5 +316,69 @@ func TestMembershipCreatedCompletesInvitations(t *testing.T) {
 	invites.err = errors.New("clerk down")
 	if code := send(join); code != http.StatusServiceUnavailable {
 		t.Fatalf("failure should be retried: %d", code)
+	}
+}
+
+// testDB is the migrated test database.
+func testDB(t *testing.T) *pgxpool.Pool {
+	t.Helper()
+	url := os.Getenv("TEST_DATABASE_URL")
+	m, err := migrate.New("file://../migrations", "pgx5"+url[len("postgres"):])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Up(); err != nil && !errors.Is(err, migrate.ErrNoChange) {
+		t.Fatal(err)
+	}
+	db, err := pgxpool.New(context.Background(), url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(db.Close)
+	return db
+}
+
+// TL-669: joining and leaving are in a paid org's audit log, by the system (Clerk told us); not a Free org's
+func TestMembershipAudited(t *testing.T) {
+	ctx := context.Background()
+	db := testDB(t)
+	now := time.Unix(1_800_000_000, 0)
+	h := NewSystem(db, secret).Webhook(func() time.Time { return now })
+	send := func(kind, org, user string) {
+		t.Helper()
+		body := fmt.Sprintf(`{"type":"organizationMembership.%s","data":{"organization":{"id":%q},"public_user_data":{"user_id":%q}}}`, kind, org, user)
+		req := httptest.NewRequest("POST", "/api/webhooks/clerk", strings.NewReader(body))
+		req.Header.Set("svix-id", "msg_m")
+		req.Header.Set("svix-timestamp", fmt.Sprint(now.Unix()))
+		req.Header.Set("svix-signature", sign(key, "msg_m", now, body))
+		rec := httptest.NewRecorder()
+		h(rec, req)
+		if rec.Code != http.StatusNoContent {
+			t.Fatalf("%s: %d", kind, rec.Code)
+		}
+	}
+	if _, err := db.Exec(ctx, `INSERT INTO org_billing (org_id, stripe_status, plan) VALUES ('org_ma_pro', 'active', 'pro') ON CONFLICT DO NOTHING`); err != nil {
+		t.Fatal(err)
+	}
+	for _, org := range []string{"org_ma_pro", "org_ma_free"} {
+		send("created", org, "user_kim")
+		send("deleted", org, "user_kim")
+	}
+	log := func(org string) string {
+		rows, _ := db.Query(ctx, `SELECT action || ' ' || target_id || ' ' || actor_kind FROM audit_outbox WHERE org_id = $1 AND action LIKE 'member.%' ORDER BY queued`, org)
+		defer rows.Close()
+		var out []string
+		for rows.Next() {
+			var s string
+			_ = rows.Scan(&s)
+			out = append(out, s)
+		}
+		return strings.Join(out, ", ")
+	}
+	if got := log("org_ma_pro"); got != "member.joined user_kim system, member.removed user_kim system" {
+		t.Fatalf("pro: %s", got)
+	}
+	if got := log("org_ma_free"); got != "" {
+		t.Fatalf("free: %s", got)
 	}
 }

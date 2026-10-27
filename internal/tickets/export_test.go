@@ -91,3 +91,39 @@ func TestExportCSV(t *testing.T) {
 		t.Fatalf("round trip: %+v", got)
 	}
 }
+
+// TL-669: a paid org's audit log says who exported a project; a Free org's records nothing
+func TestExportAudited(t *testing.T) {
+	ctx := context.Background()
+	url := os.Getenv("TEST_DATABASE_URL")
+	m, err := migrate.New("file://../migrations", "pgx5"+url[len("postgres"):])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Up(); err != nil && !errors.Is(err, migrate.ErrNoChange) {
+		t.Fatal(err)
+	}
+	db, err := pgxpool.New(ctx, url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(ctx, `INSERT INTO org_billing (org_id, stripe_status, plan) VALUES ('org_ex_pro', 'active', 'enterprise') ON CONFLICT DO NOTHING`); err != nil {
+		t.Fatal(err)
+	}
+	h := tickets.NewSystem(db)
+	for _, org := range []string{"org_ex_pro", "org_ex_free"} {
+		var pid string
+		if err := db.QueryRow(ctx, `INSERT INTO projects (owner_clerk_id, name, key_prefix) VALUES ($1, 'E', 'EX') RETURNING id`, org).Scan(&pid); err != nil {
+			t.Fatal(err)
+		}
+		req := httptest.NewRequest("GET", "/", nil).WithContext(auth.WithAPIKey(ctx, "user_e", org, "", "personal"))
+		req.SetPathValue("id", pid)
+		h.Export(httptest.NewRecorder(), req)
+		var n int
+		_ = db.QueryRow(ctx, `SELECT count(*) FROM audit_outbox WHERE org_id = $1 AND action = 'export.downloaded' AND target_id = $2 AND data->>'kind' = 'csv'`, org, pid).Scan(&n)
+		if want := map[string]int{"org_ex_pro": 1, "org_ex_free": 0}[org]; n != want {
+			t.Fatalf("%s: %d export events", org, n)
+		}
+	}
+}
