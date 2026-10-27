@@ -343,12 +343,15 @@ func (s *Service) Handler() http.Handler {
 	}
 	// Admin panel (TL-570): ChewedFeed staff only, 404 for everyone else
 	staffOnly := staff.Guard{Org: config.Get(s.Config).StaffOrgID, Member: staff.Member(keyMember), On: s.flag("admin-panel")}.Only
+	prompts := mcp.NewPromptStore(s.DB) // the versioned MCP pre-prompt (TL-674): sessions, docs and the staff panel
 	mux.Handle("GET /api/staff/me", staffOnly(http.HandlerFunc(staff.Me)))
 	mux.Handle("GET /api/staff/stats", staffOnly(http.HandlerFunc(staff.Stats{DB: s.DB, VK: s.Valkey}.Get))) // counts only (TL-574)
 	// the help panel's answers (TL-575): read by everyone signed in, the .po for the TUI's build, edited by staff
 	hp := help.System{DB: s.DB}
 	mux.Handle("GET /api/help", signedIn(hp.List))
 	mux.Handle("GET /api/help/export.po", public("help-export", 30, hp.Export))
+	mux.Handle("GET /api/staff/mcp-prompt", staffOnly(http.HandlerFunc(prompts.Staff))) // the MCP pre-prompt's versions (TL-674)
+	mux.Handle("POST /api/staff/mcp-prompt", staffOnly(http.HandlerFunc(prompts.PublishHandler)))
 	mux.Handle("GET /api/staff/help", staffOnly(http.HandlerFunc(hp.Staff)))
 	mux.Handle("POST /api/staff/help", staffOnly(http.HandlerFunc(hp.Create)))
 	mux.Handle("PUT /api/staff/help/order", staffOnly(http.HandlerFunc(hp.Order)))
@@ -524,7 +527,9 @@ func (s *Service) Handler() http.Handler {
 		w.Header().Set("Content-Type", "application/yaml")
 		_, _ = w.Write(backend.OpenAPIYAML)
 	}))
-	mux.Handle("GET /api/mcp/prompts", public("mcp-prompts", 60, mcp.Prompts)) // what agents are told, for the docs (TL-565)
+	mux.Handle("GET /api/mcp/prompts", public("mcp-prompts", 60, prompts.Prompts))           // what agents are told, for the docs (TL-565)
+	mux.Handle("GET /api/mcp/prompts/versions", public("mcp-prompts", 60, prompts.Versions)) // every published version (TL-674)
+	mux.Handle("GET /api/mcp/prompts/versions/{version}", public("mcp-prompts", 60, prompts.Version))
 	mux.Handle("GET /api/openapi.json", public("openapi", 60, func(w http.ResponseWriter, _ *http.Request) {
 		if specJSON == nil {
 			http.Error(w, "the API description is unavailable", http.StatusServiceUnavailable)
@@ -633,7 +638,7 @@ func (s *Service) Handler() http.Handler {
 	// BadKeys first: an address that keeps presenting invalid keys is refused before more key lookups
 	handler = ratelimit.BadKeys(limits, 20, time.Now)(apikeys.Middleware(s.DB, keyMember)(ratelimit.Middleware(s.Valkey, config.Get(s.Config).RateLimit, time.Now)(optional(users.Ensure(s.DB)(
 		bm.Recoverer(bm.RequestID(bm.Logger(corsHandler))))))))
-	mcpHandler = mcp.Handler(handler, "1.0.0")
+	mcpHandler = mcp.Handler(handler, "1.0.0", prompts)
 	// Google Chat signs its requests with a Google bearer token (TL-289), which the Clerk middleware
 	// above would refuse as a bad session: that one route goes round it and checks Google's signature itself
 	outer := http.NewServeMux()
