@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 	"time"
@@ -21,6 +22,7 @@ import (
 
 	"github.com/tracklines/backend/internal/auth"
 	"github.com/tracklines/backend/internal/boards"
+	"github.com/tracklines/backend/internal/tickets"
 )
 
 // Event is one thing that happened, for Record. Data holds details, never secrets or ticket content.
@@ -214,4 +216,37 @@ func (r Relay) oldest(ctx context.Context) (time.Duration, error) {
 		return 0, err
 	}
 	return time.Since(*at), nil
+}
+
+// Client reads from the auditor (TL-667): a ticket's history, for GET /api/tickets/{id}/history.
+type Client struct {
+	URL    string
+	Secret string
+	HTTP   *http.Client
+}
+
+// History is ticket's stages as the auditor holds them, oldest first, in the endpoint's own shape.
+func (c Client) History(ctx context.Context, org, ticket string) ([]tickets.HistoryEntry, error) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		strings.TrimRight(c.URL, "/")+"/internal/orgs/"+url.PathEscape(org)+"/tickets/"+url.PathEscape(ticket)+"/history", nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.Secret)
+	client := c.HTTP
+	if client == nil {
+		client = http.DefaultClient
+	}
+	res, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("auditor answered %s", res.Status)
+	}
+	var out []tickets.HistoryEntry
+	return out, json.NewDecoder(res.Body).Decode(&out)
 }

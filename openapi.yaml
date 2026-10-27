@@ -1910,6 +1910,7 @@ paths:
                     actor: { type: string, description: "A user id or agent name; absent when the system did it." }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '503': { description: "The history is held by the audit service, which can't be reached (code history_unavailable). The ticket itself still loads." }
 
   /tickets/{ticketId}/prs:
     parameters:
@@ -5757,6 +5758,7 @@ components:
         calendar_refused: "{Google's reason for refusing the set-up}"
         cant_keep_file: "only an organization admin or whoever uploaded it can keep this file"
         cant_remove_file: "only an organization admin or whoever uploaded it can remove this file"
+        history_unavailable: "this ticket's history can't be loaded right now: try again shortly"
         chat_app_not_configured: "the Google Chat app isn't set up on this server"
         chat_test_refused: "Google Chat refused the test message: {reason}"
         chat_url_required: "paste the space's webhook URL first"

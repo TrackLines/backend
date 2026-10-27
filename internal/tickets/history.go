@@ -2,8 +2,13 @@ package tickets
 
 import (
 	"context"
+	"encoding/json"
+	"sort"
 
+	"github.com/bugfixes/go-bugfixes/logs"
 	"github.com/jackc/pgx/v5"
+
+	"github.com/tracklines/backend/internal/httpx"
 )
 
 // HistoryEntry is one step in a ticket's lifecycle (TL-74): a stage it entered, or skipped on the way
@@ -45,4 +50,57 @@ func (s Store) History(ctx context.Context, owner, id string) ([]HistoryEntry, e
 		out = []HistoryEntry{}
 	}
 	return out, err
+}
+
+// ErrHistoryUnavailable: the auditor holds the history (TL-667) and can't be reached; the ticket itself
+// still loads.
+var ErrHistoryUnavailable = httpx.Code("history_unavailable", "this ticket's history can't be loaded right now: try again shortly")
+
+// HistorySource reads a ticket's history from the auditor.
+type HistorySource func(ctx context.Context, org, ticket string) ([]HistoryEntry, error)
+
+// AuditedHistory is History read from the auditor (TL-667), with the ticket's stages still queued for it
+// in audit_outbox added, so a move shows at once and nothing's missing while older history is delivered.
+// ponytail: a batch the auditor has just stored but the relay hasn't yet removed from the outbox shows
+// twice for that moment (under a second); the auditor's history has no ids to tell them apart.
+func (s Store) AuditedHistory(ctx context.Context, owner, id string, remote HistorySource) ([]HistoryEntry, error) {
+	var ok bool
+	if err := s.DB.QueryRow(ctx, `SELECT true FROM tickets t JOIN projects p ON p.id = t.project_id AND p.owner_clerk_id = $2
+		WHERE t.id::text = $1`, id, owner).Scan(&ok); err != nil {
+		return nil, notFound(err)
+	}
+	out, err := remote(ctx, owner, id)
+	if err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		logs.Warnf("tickets: history from the auditor: %v", err)
+		return nil, ErrHistoryUnavailable
+	}
+	rows, err := s.DB.Query(ctx, `SELECT to_char(at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'), actor, data FROM audit_outbox
+		WHERE org_id = $1 AND action = 'ticket.stage' AND target_type = 'ticket' AND target_id = $2 ORDER BY at, queued`, owner, id)
+	if err != nil {
+		return nil, err
+	}
+	queued, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (HistoryEntry, error) {
+		var e HistoryEntry
+		var at string
+		var actor *string
+		var data []byte
+		if err := row.Scan(&at, &actor, &data); err != nil {
+			return e, err
+		}
+		err := json.Unmarshal(data, &e)
+		e.At, e.Actor = at, actor
+		return e, err
+	})
+	if err != nil {
+		return nil, err
+	}
+	out = append(out, queued...)
+	sort.SliceStable(out, func(i, j int) bool { return out[i].At < out[j].At }) // UTC, one format: sorts as text
+	if out == nil {
+		out = []HistoryEntry{}
+	}
+	return out, nil
 }

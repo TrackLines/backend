@@ -42,6 +42,15 @@ type System struct {
 	// standup (they're running it); nil: no auto-assign
 	boardManager   func(ctx context.Context, org, user, board string) (bool, error)
 	standupRunning func(ctx context.Context, board string) bool
+	// history from the auditor while auditOn says so (TL-667); otherwise from ticket_history
+	auditHistory HistorySource
+	auditOn      func() bool
+}
+
+// HistoryFromAuditor reads ticket history from the auditor while on is true (the "audit-service" flag).
+func (h System) HistoryFromAuditor(source HistorySource, on func() bool) System {
+	h.auditHistory, h.auditOn = source, on
+	return h
 }
 
 // AssigningOnMove turns on assign-on-move (TL-266): manager says who runs a board, standup whether one is on.
@@ -537,7 +546,17 @@ func (h System) Epics(w http.ResponseWriter, r *http.Request) {
 // History: GET /api/tickets/{id}/history, ticket {id}'s lifecycle oldest first (TL-76): each stage it
 // entered or skipped, when, and who did it. Same access as reading the ticket; resolved tickets keep it.
 func (h System) History(w http.ResponseWriter, r *http.Request) {
-	out, err := h.store.History(r.Context(), auth.OrgID(r.Context()), r.PathValue("id"))
+	var out []HistoryEntry
+	var err error
+	if h.auditHistory != nil && h.auditOn != nil && h.auditOn() {
+		out, err = h.store.AuditedHistory(r.Context(), auth.OrgID(r.Context()), r.PathValue("id"), h.auditHistory)
+	} else {
+		out, err = h.store.History(r.Context(), auth.OrgID(r.Context()), r.PathValue("id"))
+	}
+	if errors.Is(err, ErrHistoryUnavailable) {
+		httpx.Error(w, r, http.StatusServiceUnavailable, err)
+		return
+	}
 	if err != nil {
 		writeErr(w, r, err)
 		return
