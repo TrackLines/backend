@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"slices"
 
+	"github.com/bugfixes/go-bugfixes/logs"
+
 	"github.com/tracklines/backend/internal/auth"
 	"github.com/tracklines/backend/internal/httpx"
 )
@@ -131,6 +133,18 @@ func (h System) Bulk(w http.ResponseWriter, r *http.Request) {
 	}
 	if in.Action == "move" {
 		slices.Reverse(out) // answer in the order sent
+	}
+	// the org log (TL-669; paid plans): one bulk edit, how many it changed. Each ticket's own change is in
+	// its activity already.
+	changed := 0
+	for _, res := range out {
+		if res.OK {
+			changed++
+		}
+	}
+	if _, err := h.store.DB.Exec(r.Context(), `SELECT audit_org($1, 'tickets.bulk_edited', NULL, NULL, NULL, $2)`, org,
+		map[string]any{"action": in.Action, "count": len(out), "changed": changed}); err != nil {
+		logs.Errorf("tickets: bulk: audit: %v", err)
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"results": out})
 }

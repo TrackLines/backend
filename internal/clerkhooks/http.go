@@ -37,6 +37,9 @@ func unassign(org, user, why string) string {
 	SELECT id, '` + why + `', '` + Author + `' FROM freed`
 }
 
+// auditMember queues a membership change for the org log (TL-669; paid plans only): $1 org, $2 user, $3 action.
+const auditMember = `SELECT audit_org($1, $3, 'user', $2, NULL, '{}')`
+
 type System struct {
 	DB     *pgxpool.Pool
 	Secret string // CLERK_WEBHOOK_SECRET (whsec_…); empty = endpoint answers 503
@@ -103,7 +106,13 @@ func (s System) apply(ctx context.Context, e event) error {
 	}
 	if e.Type == "organizationMembership.created" { // they joined: finish their invitations (TL-518)
 		org, user := e.Data.Organization.ID, e.Data.PublicUserData.UserID
-		if s.Invites == nil || org == "" || user == "" {
+		if org == "" || user == "" {
+			return nil
+		}
+		if _, err := s.DB.Exec(ctx, auditMember, org, user, "member.joined"); err != nil { // the org log (TL-669)
+			return err
+		}
+		if s.Invites == nil {
 			return nil
 		}
 		_, err := s.Invites.CompleteFor(ctx, org, user)
@@ -123,6 +132,7 @@ func (s System) apply(ctx context.Context, e event) error {
 			`DELETE FROM team_members WHERE user_clerk_id = $2 AND team_id IN (SELECT id FROM teams WHERE org_id = $1)`,
 			`UPDATE api_keys SET revoked_at = now() WHERE org_id = $1 AND owner_clerk_id = $2 AND revoked_at IS NULL`,
 			unassign("$1", "$2", "Unassigned automatically: the assignee left the organization, so this ticket is free to pick up."),
+			`SELECT audit_org($1, 'member.removed', 'user', $2, NULL, '{}')`, // the org log (TL-669)
 		}
 	case "user.deleted":
 		if e.Data.ID == "" {
