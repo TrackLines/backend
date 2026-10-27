@@ -20,6 +20,7 @@ import (
 	service "github.com/tracklines/backend/internal"
 	"github.com/tracklines/backend/internal/auth"
 	"github.com/tracklines/backend/internal/billing"
+	"github.com/tracklines/backend/internal/boards"
 	"github.com/tracklines/backend/internal/config"
 	"github.com/tracklines/backend/internal/integrations"
 	"github.com/tracklines/backend/internal/live"
@@ -55,7 +56,7 @@ func run() error {
 	auth.Init(c.Clerk.Key)
 
 	logs.Local().Logf("connecting to postgres")
-	db, err := c.Database.GetPGXPoolClient(context.Background())
+	db, err := c.Database.GetPGXPoolClient(context.Background(), boards.ActorHook)
 	if err != nil {
 		return fmt.Errorf("connect postgres: %w", err)
 	}
@@ -119,7 +120,7 @@ func job(name string) error {
 		return fmt.Errorf("build config: %w", err)
 	}
 	ctx := context.Background()
-	db, err := c.Database.GetPGXPoolClient(ctx)
+	db, err := c.Database.GetPGXPoolClient(ctx, boards.ActorHook)
 	if err != nil {
 		return fmt.Errorf("connect postgres: %w", err)
 	}

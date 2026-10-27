@@ -1,0 +1,18 @@
+DROP TRIGGER queue_pr ON ticket_prs;
+DROP FUNCTION queue_pr();
+DROP TRIGGER queue_attachment ON ticket_attachments;
+DROP FUNCTION queue_attachment();
+DROP TRIGGER queue_comment ON ticket_comments;
+DROP FUNCTION queue_comment();
+DROP TRIGGER queue_blockers_removed ON ticket_dependencies;
+DROP TRIGGER queue_blockers_added ON ticket_dependencies;
+DROP FUNCTION queue_blockers_removed();
+DROP FUNCTION queue_blockers_added();
+DROP TRIGGER queue_labels_removed ON ticket_labels;
+DROP TRIGGER queue_labels_added ON ticket_labels;
+DROP FUNCTION queue_labels_removed();
+DROP FUNCTION queue_labels_added();
+DROP TRIGGER queue_ticket_changes ON tickets_all;
+DROP FUNCTION queue_ticket_changes();
+DROP FUNCTION audit_fromto(anyelement, anyelement);
+DROP FUNCTION audit_ticket(uuid, text, jsonb, text);

@@ -134,6 +134,8 @@ github.com/keloran/go-config/v2 v2.0.1 h1:opeIZ3Jrd7aI+RvFJUid2X941UPZC6k8wQV2Th
 github.com/keloran/go-config/v2 v2.0.1/go.mod h1:lNy4KfZ+rPJoTA1vVIKc/Td/iCiYeuzAcJgYVUwci9k=
 github.com/keloran/go-config/v2 v2.1.0 h1:6t4bGJ485cky60PqZxTCJ+Jg9xzDzDxXQ9JJTKb17ag=
 github.com/keloran/go-config/v2 v2.1.0/go.mod h1:r7B1BEJs2xH00BBkCkvHfzGxPtwTqbKMftjMncaTp3o=
+github.com/keloran/go-config/v2 v2.1.1-0.20261027091047-8e66f2eb43a0 h1:QvtMH8EcQX9KsdQebPTvDywE30W0F+iPBNkck0yNcB4=
+github.com/keloran/go-config/v2 v2.1.1-0.20261027091047-8e66f2eb43a0/go.mod h1:r7B1BEJs2xH00BBkCkvHfzGxPtwTqbKMftjMncaTp3o=
 github.com/keloran/vault-helper v1.1.0 h1:77TMcDLOqzDsGno1dMTdDzrX2ObWaoAIPlsNha1Fop0=
 github.com/keloran/vault-helper v1.1.0/go.mod h1:rfQHiF+iS2CdANtgtfAe7fsXaIqKEHp9mHT1jfp5IXE=
 github.com/klauspost/compress v1.20.3 h1:zWNoFqq/lSuYQRim3dUXlXeA0IqwuZGicdG5ZTfY5j4=

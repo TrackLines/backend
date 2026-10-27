@@ -11,7 +11,7 @@ require (
 	github.com/clerk/clerk-sdk-go/v2 v2.7.0
 	github.com/golang-migrate/migrate/v4 v4.20.1
 	github.com/jackc/pgx/v5 v5.11.0
-	github.com/keloran/go-config/v2 v2.1.0
+	github.com/keloran/go-config/v2 v2.1.1-0.20261027091047-8e66f2eb43a0
 	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/testcontainers/testcontainers-go/modules/postgres v0.44.0
 	github.com/testcontainers/testcontainers-go/modules/valkey v0.44.0
