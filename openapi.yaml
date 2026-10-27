@@ -6019,6 +6019,7 @@ components:
         done_parent: "a done ticket can't get new sub-tickets; move it out of Done first"
         done_ticket_files: "ticket is done — move it out of Done to change its attachments"
         duplicate_of_required: "duplicate_of is required"
+        duplicate_of_not_found: "duplicate_of isn't a ticket in this organization: check its id or key"
         duplicate_target: "the original ticket must not itself be a duplicate"
         email_check_failed: "couldn't check your email addresses; try again in a minute"
         enquiries_unavailable: "enquiries aren't available right now"

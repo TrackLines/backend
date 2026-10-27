@@ -120,3 +120,72 @@ func TestMarkDuplicate(t *testing.T) {
 		}
 	}
 }
+
+// TL-693: an agent marks a backlog ticket a duplicate of one already resolved from the backlog (a
+// BugFixes report filed again after the first was fixed): it works, through the handler the MCP calls
+func TestDuplicateOfResolvedBacklogTicket(t *testing.T) {
+	ctx := context.Background()
+	url := os.Getenv("TEST_DATABASE_URL")
+	m, err := migrate.New("file://../migrations", "pgx5"+url[len("postgres"):])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Up(); err != nil && !errors.Is(err, migrate.ErrNoChange) {
+		t.Fatal(err)
+	}
+	db, err := pgxpool.New(ctx, url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	const org = "org_dup693"
+	var pid string
+	if err := db.QueryRow(ctx, `INSERT INTO projects (owner_clerk_id, name, key_prefix) VALUES ($1, 'IT', 'IT') RETURNING id`, org).Scan(&pid); err != nil {
+		t.Fatal(err)
+	}
+	s := Store{DB: db}
+	first, _ := s.CreateBacklog(ctx, org, pid, "bug", "crash on save", "")
+	if err := s.Resolve(ctx, org, first.ID); err != nil {
+		t.Fatal(err)
+	}
+	again, _ := s.CreateBacklog(ctx, org, pid, "bug", "crash on save", "")
+	h := NewSystem(db)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/", strings.NewReader(`{"duplicate_of":"`+first.ID+`"}`)).
+		WithContext(auth.WithAPIKey(ctx, "user_owner", org, "Claude", "ai"))
+	req.Header.Set("Accept", "application/json")
+	req.SetPathValue("id", again.ID)
+	h.MarkDuplicate(rec, req)
+	if rec.Code != 204 {
+		t.Fatalf("duplicate of a resolved backlog ticket: %d %s", rec.Code, rec.Body)
+	}
+	var dupOf *string
+	_ = db.QueryRow(ctx, `SELECT duplicate_of::text FROM tickets_all WHERE id = $1`, again.ID).Scan(&dupOf)
+	if dupOf == nil || *dupOf != first.ID {
+		t.Fatalf("duplicate_of = %v", dupOf)
+	}
+
+	// what actually happened: a mistyped original id. The 404 says it's duplicate_of that's unknown, not the ticket
+	third, _ := s.CreateBacklog(ctx, org, pid, "bug", "crash on save", "")
+	for _, original := range []string{"ffa39efc-9a6f-4729-b8c4-000000000000", "not-a-uuid"} {
+		rec = httptest.NewRecorder()
+		req = httptest.NewRequest("POST", "/", strings.NewReader(`{"duplicate_of":"`+original+`"}`)).
+			WithContext(auth.WithAPIKey(ctx, "user_owner", org, "Claude", "ai"))
+		req.Header.Set("Accept", "application/json")
+		req.SetPathValue("id", third.ID)
+		h.MarkDuplicate(rec, req)
+		if rec.Code != 404 || !strings.Contains(rec.Body.String(), "duplicate_of_not_found") {
+			t.Fatalf("unknown original %q: %d %s", original, rec.Code, rec.Body)
+		}
+	}
+	// the ticket itself missing is still a plain not found
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest("POST", "/", strings.NewReader(`{"duplicate_of":"`+first.ID+`"}`)).
+		WithContext(auth.WithAPIKey(ctx, "user_owner", org, "Claude", "ai"))
+	req.Header.Set("Accept", "application/json")
+	req.SetPathValue("id", "ffa39efc-9a6f-4729-b8c4-000000000000")
+	h.MarkDuplicate(rec, req)
+	if rec.Code != 404 || strings.Contains(rec.Body.String(), "duplicate_of") {
+		t.Fatalf("unknown ticket: %d %s", rec.Code, rec.Body)
+	}
+}
