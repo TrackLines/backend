@@ -557,15 +557,16 @@ func (s *Service) Handler() http.Handler {
 
 	// Embedding (TL-494): an org's admins list the origins its public roadmap/request-form widgets may
 	// be loaded on; those origins get dynamic CORS on the public routes above (wired at the bottom).
-	em := embed.NewSystem(s.DB).WithAdmins(o.AdminModel())
-	mux.Handle("GET /api/embed/origins", signedIn(em.List))
-	mux.Handle("POST /api/embed/origins", signedIn(em.Add))
-	mux.Handle("DELETE /api/embed/origins/{id}", signedIn(em.Remove))
+	// embedding is the project's (TL-683): the sites that may show its roadmaps and request form
+	em := embed.NewSystem(s.DB).WithManagers(o.AdminModel())
+	mux.Handle("GET /api/projects/{id}/embed/origins", signedIn(em.List))
+	mux.Handle("POST /api/projects/{id}/embed/origins", signedIn(em.Add))
+	mux.Handle("DELETE /api/projects/{id}/embed/origins/{origin}", signedIn(em.Remove))
 	// embed keys: public identifiers in the widget snippet, for usage stats (TL-497)
-	mux.Handle("GET /api/embed/keys", signedIn(em.ListKeys))
-	mux.Handle("POST /api/embed/keys", signedIn(em.CreateKey))
-	mux.Handle("DELETE /api/embed/keys/{id}", signedIn(em.DeleteKey))
-	mux.Handle("GET /api/embed/keys/{id}/usage", signedIn(em.KeyUsage))
+	mux.Handle("GET /api/projects/{id}/embed/keys", signedIn(em.ListKeys))
+	mux.Handle("POST /api/projects/{id}/embed/keys", signedIn(em.CreateKey))
+	mux.Handle("DELETE /api/projects/{id}/embed/keys/{key}", signedIn(em.DeleteKey))
+	mux.Handle("GET /api/projects/{id}/embed/keys/{key}/usage", signedIn(em.KeyUsage))
 
 	// Outbound webhooks (TL-635): org admins (session or their API key), behind the "webhooks" flag; Pro and Enterprise
 	wh := webhooks.NewSystem(s.DB, box, o.AdminModel(), s.flag("webhooks"))
@@ -618,10 +619,10 @@ func (s *Service) Handler() http.Handler {
 	res := embed.Resolver{DB: s.DB}
 	store := embed.Store{DB: s.DB}
 	// a widget hit is counted off the request path (best-effort, non-blocking) for embed usage stats
-	recordUsage := func(org, origin, path, key string) {
-		go store.RecordUsage(context.Background(), org, origin, path, key)
+	recordUsage := func(project, origin, path, key string) {
+		go store.RecordUsage(context.Background(), project, origin, path, key)
 	}
-	corsHandler := embed.CORS(parties, s.flag("embedding"), res.OrgFor, store.Allowed, recordUsage, "GET, POST, OPTIONS", "Content-Type")(cors.CORS(muxZoned), muxZoned)
+	corsHandler := embed.CORS(parties, s.flag("embedding"), res.ProjectFor, store.Allowed, recordUsage, "GET, POST, OPTIONS", "Content-Type")(cors.CORS(muxZoned), muxZoned)
 	// BadKeys first: an address that keeps presenting invalid keys is refused before more key lookups
 	handler = ratelimit.BadKeys(limits, 20, time.Now)(apikeys.Middleware(s.DB, keyMember)(ratelimit.Middleware(s.Valkey, config.Get(s.Config).RateLimit, time.Now)(optional(users.Ensure(s.DB)(
 		bm.Recoverer(bm.RequestID(bm.Logger(corsHandler))))))))

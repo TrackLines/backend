@@ -75,6 +75,8 @@ tags:
     description: Hosted standups and refinements that people join and follow.
   - name: Roadmaps
     description: Project roadmaps and linked ticket progress.
+  - name: Embed
+    description: The sites allowed to show a project's roadmaps and request form, and the keys their widgets count usage under.
   - name: API keys
     description: Manage AI agent and server/service API keys with a Clerk session.
   - name: Billing
@@ -1464,6 +1466,101 @@ paths:
       responses:
         '200': { description: Settings., content: { application/json: { schema: { $ref: '#/components/schemas/IntakeSettings' } } } }
         '403': { description: Not a signed-in org admin. }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /projects/{projectId}/embed/origins:
+    parameters:
+      - { name: projectId, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      tags: [Embed]
+      operationId: listEmbedOrigins
+      summary: The sites allowed to show this project's roadmaps and request form
+      description: Any member of the project's organization. can_manage says whether the caller may change the list.
+      responses:
+        '200':
+          description: The list.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  origins: { type: array, items: { type: object, properties: { id: { type: string, format: uuid }, origin: { type: string, example: 'https://example.com' }, created_by: { type: string }, created_at: { type: string, format: date-time } } } }
+                  can_manage: { type: boolean }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [Embed]
+      operationId: addEmbedOrigin
+      summary: Allow a site to show this project's roadmaps and request form
+      description: The project's managers (org admins, or leaders of a team with a board in it), in a signed-in session; API keys get 403. Up to 50 sites per project.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [origin], properties: { origin: { type: string, example: 'https://example.com' } } }
+      responses:
+        '201': { description: Added (or already there). }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { description: Not a signed-in manager of the project (code embed_managers). }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /projects/{projectId}/embed/origins/{originId}:
+    parameters:
+      - { name: projectId, in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: originId, in: path, required: true, schema: { type: string, format: uuid } }
+    delete:
+      tags: [Embed]
+      operationId: removeEmbedOrigin
+      summary: Stop a site showing this project's roadmaps and request form
+      description: The project's managers, signed in.
+      responses:
+        '204': { description: Removed. }
+        '403': { description: Not a signed-in manager of the project (code embed_managers). }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /projects/{projectId}/embed/keys:
+    parameters:
+      - { name: projectId, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      tags: [Embed]
+      operationId: listEmbedKeys
+      summary: The project's embed keys, with usage so far
+      description: Keys are public identifiers in a widget's snippet, for usage stats; they don't grant access.
+      responses:
+        '200': { description: Keys and can_manage. }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [Embed]
+      operationId: createEmbedKey
+      summary: A new embed key for the project
+      description: The project's managers, signed in.
+      requestBody:
+        content:
+          application/json:
+            schema: { type: object, properties: { label: { type: string, maxLength: 100 } } }
+      responses:
+        '201': { description: The key. }
+        '403': { description: Not a signed-in manager of the project (code embed_managers). }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /projects/{projectId}/embed/keys/{keyId}:
+    parameters:
+      - { name: projectId, in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: keyId, in: path, required: true, schema: { type: string, format: uuid } }
+    delete:
+      tags: [Embed]
+      operationId: deleteEmbedKey
+      summary: Delete an embed key and its usage
+      description: The project's managers, signed in.
+      responses:
+        '204': { description: Deleted. }
+        '403': { description: Not a signed-in manager of the project (code embed_managers). }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /projects/{projectId}/embed/keys/{keyId}/usage:
+    parameters:
+      - { name: projectId, in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: keyId, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      tags: [Embed]
+      operationId: embedKeyUsage
+      summary: An embed key's hits by site and resource
+      responses:
+        '200': { description: Usage, busiest first. }
         '404': { $ref: '#/components/responses/NotFound' }
   /projects/{projectId}/intake/submissions:
     parameters:
@@ -5619,7 +5716,7 @@ components:
       x-error-codes:
         accept_clerk_first: "accept the organization invitation through Clerk before completing this invitation"
         accept_session_required: "invitation acceptance requires a signed-in session"
-        admins_embed: "only an organization admin, signed in, can change embed origins"
+        embed_managers: "only someone who manages this project, signed in, can change where its roadmaps and request form can be embedded"
         admins_file_cleanup: "only org admins can see the file clean-up"
         admins_intake_form: "only an organization admin, signed in, can open, close or reset the request form"
         admins_make_service_keys: "only organization admins can make service keys"
@@ -5899,7 +5996,7 @@ components:
         title_required: "title is required"
         title_too_long: "title must be {max} characters or fewer"
         too_many_files: "this ticket already has as many files as it can hold: remove one to add another"
-        too_many_origins: "too many embed origins for this organization"
+        too_many_origins: "too many embed origins for this project"
         too_many_planned: "a board plans at most 2 sprints ahead"
         unknown_assignee: "assignee must be an active organization member or AI agent"
         unknown_provider: "unknown provider"
