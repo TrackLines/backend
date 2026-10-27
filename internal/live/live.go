@@ -48,9 +48,13 @@ type System struct {
 	Now    func() time.Time
 	// IsAdmin: is user an admin of org (organizations.Admins.IsAdmin); refinement needs a manager (TL-241)
 	IsAdmin func(ctx context.Context, org, user string) (bool, error)
+	// Streams caps each person's open live streams (TL-254); nil: no cap
+	Streams *StreamCap
 }
 
-func New(vk valkey.Client, db boards.Store) System { return System{VK: vk, Boards: db, Now: time.Now} }
+func New(vk valkey.Client, db boards.Store) System {
+	return System{VK: vk, Boards: db, Now: time.Now, Streams: NewStreamCap(MaxStreams)}
+}
 
 func (s System) authorize(w http.ResponseWriter, r *http.Request) bool {
 	if s.VK == nil {
@@ -267,6 +271,15 @@ func (s System) stream(w http.ResponseWriter, r *http.Request, events, channel s
 	if !ok {
 		http.Error(w, "streaming unsupported", 500)
 		return
+	}
+	if who, _ := auth.UserID(r.Context()); s.Streams != nil && who != "" {
+		release, ok := s.Streams.acquire(who)
+		if !ok {
+			w.Header().Set("Retry-After", "30")
+			httpx.Error(w, r, http.StatusTooManyRequests, ErrTooManyStreams)
+			return
+		}
+		defer release()
 	}
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")

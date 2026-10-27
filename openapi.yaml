@@ -3717,6 +3717,7 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { description: No active organization in the caller's session or API key. }
         '404': { $ref: '#/components/responses/NotFound' }
+        '429': { description: "Too many live streams open: each person (their sessions and API keys together) can hold 10 at once (code live_streams); Retry-After says when to try again." }
         '503': { description: Valkey is unavailable. }
 
   /boards/{boardId}/live/standup:
@@ -3772,6 +3773,7 @@ paths:
         '200': { description: Server-sent event stream., content: { text/event-stream: { schema: { type: string } } } }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '429': { description: "Too many live streams open: each person (their sessions and API keys together) can hold 10 at once (code live_streams); Retry-After says when to try again." }
         '503': { description: Valkey is unavailable. }
 
   /projects/{projectId}/live/refinement:
@@ -6066,6 +6068,7 @@ components:
         layout_unnamed: "every column needs a name"
         leader_not_in_team: "add them to the team before making them a leader"
         live_session_unavailable: "live session unavailable"
+        live_streams: "too many live views open: close some tabs and try again"
         live_unavailable: "live sessions unavailable"
         load_members_failed: "could not load organization members"
         member_limit: "your plan includes up to {limit} members, counting invitations not yet accepted; upgrade to Enterprise for unlimited members"
