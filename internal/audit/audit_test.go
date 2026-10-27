@@ -355,3 +355,40 @@ func TestRelay(t *testing.T) {
 		t.Fatalf("sent %d (%d distinct), %d waiting", len(sent), len(seen), waiting())
 	}
 }
+
+// TL-667: the backfill queues history written before the outbox under the same ids the trigger uses, and
+// running it again queues nothing twice
+func TestBackfill(t *testing.T) {
+	ctx := context.Background()
+	p := db(t)
+	project, b, cols := board(t, "org_bf")
+	var ticket string
+	if err := p.QueryRow(ctx, `INSERT INTO tickets (project_id, board_id, column_id, title, position, created_by) VALUES ($1, $2, $3, 't', 0, 'user_1') RETURNING id`,
+		project, b, cols[2]).Scan(&ticket); err != nil {
+		t.Fatal(err)
+	}
+	queuedNow := len(outbox(t, "org_bf"))
+	// as if written before the outbox existed (or already delivered)
+	if _, err := p.Exec(ctx, `DELETE FROM audit_outbox WHERE org_id = 'org_bf'`); err != nil {
+		t.Fatal(err)
+	}
+	sql, err := os.ReadFile("../migrations/000097_audit_backfill.up.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if _, err := p.Exec(ctx, string(sql)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got := outbox(t, "org_bf")
+	if len(got) != queuedNow || queuedNow != 4 {
+		t.Fatalf("backfilled %d, the trigger queued %d", len(got), queuedNow)
+	}
+	var mismatched int
+	_ = p.QueryRow(ctx, `SELECT count(*) FROM ticket_history h WHERE h.ticket_id = $1
+		AND NOT EXISTS (SELECT 1 FROM audit_outbox o WHERE o.id = audit_stage_id(h.id) AND o.data->>'stage' = h.stage)`, ticket).Scan(&mismatched)
+	if mismatched != 0 || got[0].ActorKind != "person" || *got[0].Actor != "user_1" {
+		t.Fatalf("%d rows without their event; first %+v", mismatched, got[0])
+	}
+}
