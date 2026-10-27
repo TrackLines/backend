@@ -15,6 +15,9 @@ var (
 	ErrAlreadyDuplicate = httpx.Code("already_duplicate", "ticket is already marked as a duplicate")
 	ErrDuplicateTarget  = httpx.Code("duplicate_target", "the original ticket must not itself be a duplicate")
 	ErrSelfDuplicate    = httpx.Code("self_duplicate", "a ticket can't be a duplicate of itself")
+	// ErrOriginalNotFound: duplicate_of names no ticket in the caller's org (TL-693). Said apart from the
+	// ticket itself being missing, so a wrong or mistyped original id doesn't read as the ticket being gone.
+	ErrOriginalNotFound = httpx.Code("duplicate_of_not_found", "duplicate_of isn't a ticket in this organization: check its id or key")
 )
 
 type DuplicateOptions struct {
@@ -47,7 +50,10 @@ func (s Store) MarkDuplicate(ctx context.Context, owner, actor, id, canonical st
 		if err := tx.QueryRow(ctx, `SELECT t.project_id FROM tickets t
 			JOIN projects p ON p.id = t.project_id AND p.owner_clerk_id = $2 WHERE t.id = $1`, canonical, owner).
 			Scan(&originalProject); err != nil {
-			return notFound(err)
+			if errors.Is(notFound(err), ErrNotFound) {
+				return ErrOriginalNotFound
+			}
+			return err
 		}
 		if projectID != originalProject {
 			return ErrOtherProject
@@ -167,6 +173,8 @@ func (h System) MarkDuplicate(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case errors.Is(err, ErrAgentReview):
 			httpx.Error(w, r, http.StatusForbidden, err)
+		case errors.Is(err, ErrOriginalNotFound):
+			httpx.Error(w, r, http.StatusNotFound, err)
 		case errors.Is(err, ErrSelfDuplicate), errors.Is(err, ErrOtherProject), errors.Is(err, ErrDuplicateTarget):
 			httpx.Error(w, r, http.StatusBadRequest, err)
 		case errors.Is(err, ErrAlreadyDuplicate):
