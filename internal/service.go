@@ -324,7 +324,7 @@ func (s *Service) Handler() http.Handler {
 		CachingUsers(clerkcache.Users{Next: user.NewClient(&clerk.ClientConfig{}), VK: s.Valkey, TTL: time.Minute})
 	if pc := config.Get(s.Config); pc.AuditURL != "" && pc.AuditSecret != "" { // ticket history from the auditor (TL-667)
 		auditor := audit.Client{URL: pc.AuditURL, Secret: pc.AuditSecret, HTTP: &http.Client{Timeout: 5 * time.Second}}
-		t = t.HistoryFromAuditor(auditor.History, s.flag("audit-service"))
+		t = t.HistoryFromAuditor(auditor.History, s.flag("audit-service")).ActivityFromAuditor(auditor.Activity, s.flag("audit-service"))
 	}
 	push.People = t.People // pushes name who did it
 	if chat != nil {
@@ -363,6 +363,7 @@ func (s *Service) Handler() http.Handler {
 	mux.Handle("GET /api/tickets/{id}", signedIn(t.Get))                // one ticket + where it lives (deep links)
 	mux.Handle("GET /api/tickets/{id}/org", signedIn(t.Where))          // which of my orgs it's in, when it isn't in the active one
 	mux.Handle("GET /api/tickets/{id}/history", signedIn(t.History))    // lifecycle: stages entered or skipped, when, by whom (TL-76)
+	mux.Handle("GET /api/tickets/{id}/activity", signedIn(t.Activity))  // everything that happened to it (TL-679)
 	mux.Handle("GET /api/projects/{id}/epics", signedIn(t.Epics))       // epics with progress and size (TL-213)
 	mux.Handle("GET /api/tickets/{id}/group", signedIn(t.GroupPreview)) // open sub-tickets that would move with it (TL-218)
 	mux.Handle("GET /api/search", signedIn(t.Search))                   // full-text over titles, descriptions, comments; exact keys first

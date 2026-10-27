@@ -227,12 +227,17 @@ type Client struct {
 
 // History is ticket's stages as the auditor holds them, oldest first, in the endpoint's own shape.
 func (c Client) History(ctx context.Context, org, ticket string) ([]tickets.HistoryEntry, error) {
+	var out []tickets.HistoryEntry
+	return out, c.get(ctx, "/internal/orgs/"+url.PathEscape(org)+"/tickets/"+url.PathEscape(ticket)+"/history", &out)
+}
+
+// get reads path from the auditor into out.
+func (c Client) get(ctx context.Context, path string, out any) error {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
-		strings.TrimRight(c.URL, "/")+"/internal/orgs/"+url.PathEscape(org)+"/tickets/"+url.PathEscape(ticket)+"/history", nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(c.URL, "/")+path, nil)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	req.Header.Set("Authorization", "Bearer "+c.Secret)
 	client := c.HTTP
@@ -241,12 +246,17 @@ func (c Client) History(ctx context.Context, org, ticket string) ([]tickets.Hist
 	}
 	res, err := client.Do(req)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	defer res.Body.Close()
 	if res.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("auditor answered %s", res.Status)
+		return fmt.Errorf("auditor answered %s", res.Status)
 	}
-	var out []tickets.HistoryEntry
-	return out, json.NewDecoder(res.Body).Decode(&out)
+	return json.NewDecoder(res.Body).Decode(out)
+}
+
+// Activity is everything that happened to ticket as the auditor holds it, oldest first (TL-679).
+func (c Client) Activity(ctx context.Context, org, ticket string) ([]tickets.ActivityEntry, error) {
+	var out []tickets.ActivityEntry
+	return out, c.get(ctx, "/internal/orgs/"+url.PathEscape(org)+"/tickets/"+url.PathEscape(ticket)+"/activity", &out)
 }

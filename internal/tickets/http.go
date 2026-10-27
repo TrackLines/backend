@@ -42,9 +42,36 @@ type System struct {
 	// standup (they're running it); nil: no auto-assign
 	boardManager   func(ctx context.Context, org, user, board string) (bool, error)
 	standupRunning func(ctx context.Context, board string) bool
-	// history from the auditor while auditOn says so (TL-667); otherwise from ticket_history
-	auditHistory HistorySource
-	auditOn      func() bool
+	// history and activity from the auditor while auditOn says so (TL-667, TL-679); otherwise from ticket_history
+	auditHistory  HistorySource
+	auditActivity ActivitySource
+	auditOn       func() bool
+}
+
+// ActivityFromAuditor reads ticket activity from the auditor while on is true (the "audit-service" flag).
+func (h System) ActivityFromAuditor(source ActivitySource, on func() bool) System {
+	h.auditActivity, h.auditOn = source, on
+	return h
+}
+
+// Activity: GET /api/tickets/{id}/activity, everything that happened to ticket {id}, oldest first (TL-679):
+// its stages, edits, assignments, labels, links, comments, files and pull requests, and who did each.
+// Same access as reading the ticket. The auditor unreachable is a 503 (history_unavailable).
+func (h System) Activity(w http.ResponseWriter, r *http.Request) {
+	var remote ActivitySource
+	if h.auditActivity != nil && h.auditOn != nil && h.auditOn() {
+		remote = h.auditActivity
+	}
+	out, err := h.store.Activity(r.Context(), auth.OrgID(r.Context()), r.PathValue("id"), remote)
+	if errors.Is(err, ErrHistoryUnavailable) {
+		httpx.Error(w, r, http.StatusServiceUnavailable, err)
+		return
+	}
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, out)
 }
 
 // HistoryFromAuditor reads ticket history from the auditor while on is true (the "audit-service" flag).
