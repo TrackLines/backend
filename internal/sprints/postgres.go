@@ -276,19 +276,26 @@ func (s Store) AutoClose(ctx context.Context) (int, error) {
 	closed, failed := 0, []string{}
 	var errs []error
 	for {
-		var id string
+		var id, when string
 		var over *overCapacity
+		var waiting *waitingSprint
 		err := pgx.BeginFunc(ctx, s.DB, func(tx pgx.Tx) error {
-			err := tx.QueryRow(ctx, `SELECT id FROM sprints WHERE closed_at IS NULL AND starts_at <= now() AND ends_at <= now()
-				AND NOT (id::text = ANY($1)) ORDER BY ends_at LIMIT 1 FOR UPDATE SKIP LOCKED`, failed).Scan(&id)
+			err := tx.QueryRow(ctx, `SELECT s.id, b.when_sprint_ends FROM sprints s JOIN boards b ON b.id = s.board_id
+				WHERE s.closed_at IS NULL AND s.starts_at <= now() AND s.ends_at <= now()
+				AND NOT (s.id::text = ANY($1)) ORDER BY s.ends_at LIMIT 1 FOR UPDATE OF s SKIP LOCKED`, failed).Scan(&id, &when)
 			if err != nil {
 				return err
 			}
-			_, over, err = closeSprint(ctx, tx, id, CloseOptions{StartNext: true}) // ran out: straight into the next
+			// ran out: straight into the next, or (the board's choice, TL-279) end it and wait for a manager
+			_, over, err = closeSprint(ctx, tx, id, CloseOptions{StartNext: when != "wait"})
+			if err == nil && when == "wait" {
+				waiting, err = endedWaiting(ctx, tx, id)
+			}
 			return err
 		})
 		if err == nil {
 			s.warnOver(ctx, over) // committed: now tell them
+			s.tellWaiting(ctx, waiting)
 		}
 		switch {
 		case errors.Is(err, pgx.ErrNoRows):

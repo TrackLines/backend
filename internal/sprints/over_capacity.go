@@ -69,3 +69,31 @@ func (s Store) warnOver(ctx context.Context, o *overCapacity) {
 
 // num writes 14 as "14" and 12.1 as "12.1".
 func num(f float64) string { return strconv.FormatFloat(f, 'f', -1, 64) }
+
+// waitingSprint is a sprint that ended on a board set to wait (TL-279): nobody's started the next yet.
+type waitingSprint struct {
+	org, board, boardName string
+	number                int
+}
+
+func endedWaiting(ctx context.Context, tx pgx.Tx, sprint string) (*waitingSprint, error) {
+	w := waitingSprint{}
+	err := tx.QueryRow(ctx, `SELECT p.owner_clerk_id, b.id, b.name, s.number FROM sprints s JOIN boards b ON b.id = s.board_id
+		JOIN projects p ON p.id = b.project_id WHERE s.id = $1`, sprint).Scan(&w.org, &w.board, &w.boardName, &w.number)
+	return &w, err
+}
+
+// tellWaiting tells the board's managers a sprint ended and the next is theirs to start (after the commit).
+func (s Store) tellWaiting(ctx context.Context, w *waitingSprint) {
+	if w == nil || s.Notify == nil {
+		return
+	}
+	to, err := notifications.Store{DB: s.DB}.BoardManagers(ctx, w.org, w.board)
+	if err != nil || len(to) == 0 {
+		return
+	}
+	notifications.Send(ctx, s.Notify, w.org, to, notifications.Event{
+		Kind: "sprint_waiting", Actor: "TrackLin.es", BoardID: w.board,
+		Text: fmt.Sprintf("ended sprint %d on %s: start sprint %d when the team's ready", w.number, w.boardName, w.number+1),
+	})
+}

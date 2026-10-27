@@ -1232,6 +1232,7 @@ paths:
                 estimate_scale: { $ref: '#/components/schemas/EstimateScale' }
                 style: { type: string, enum: [sprints, kanban] }
                 agent_review: { type: boolean, description: "Agents' moves into Done wait for a person's review." }
+                when_sprint_ends: { type: string, enum: [start_next, wait], description: "When a sprint reaches its end date: start the next straight away, or end it and wait for a manager to start the next." }
                 dev_complete_column_id:
                   type: string
                   description: >-
@@ -5838,6 +5839,8 @@ components:
         hidden_done: { type: integer, description: "Kanban only. Done tickets finished more than 14 days ago, left off the board." }
         to_review: { type: integer, description: "Imported tickets set aside for review: until it's 0, the board can't start or plan a sprint (TL-541). Omitted when 0." }
         team_id: { type: [string, 'null'], format: uuid, description: The team whose leaders run this board. }
+        when_sprint_ends: { type: string, enum: [start_next, wait], description: "When a sprint reaches its end date: start_next opens the next one straight away; wait ends it, leaves unfinished tickets on the board and tells its managers (notification sprint_waiting), and the next starts when a manager starts it." }
+        last_sprint_number: { type: integer, description: "The latest closed sprint's number, so a board waiting between sprints can say which ended. Omitted before any has closed." }
         sprint: { $ref: '#/components/schemas/Sprint' }
         columns:
           type: array
@@ -5932,6 +5935,7 @@ components:
         webhooks_plan: "webhooks need the Pro or Enterprise plan"
         bad_email: "a valid email address is required"
         bad_estimate: "estimate isn't on this board's scale"
+        bad_when_sprint_ends: "when_sprint_ends must be start_next or wait"
         bad_estimate_scale: "estimate_scale must be none, fibonacci, tshirt, powers or linear"
         bad_external: "external needs source (bugfixes), project and id; url must be http(s)"
         bad_file: "file must be an UploadThing upload (https, *.ufs.sh or utfs.io) with a key and name"
@@ -5984,7 +5988,7 @@ components:
         block_cycle: "that would make tickets block each other in a loop"
         blocked: "ticket is blocked by tickets that aren't done yet"
         board_archived: "this board is archived; restore it first"
-        board_update_empty: "name, estimate_scale, style, agent_review, dev_complete_column_id or review_column_id is required"
+        board_update_empty: "name, estimate_scale, style, agent_review, dev_complete_column_id, review_column_id or when_sprint_ends is required"
         board_used: "this board has been used; archive it instead, so its history is kept"
         builtin_template: "built-in templates can't be deleted"
         calendar_admin_email: "the admin email must be an address at {domain}"

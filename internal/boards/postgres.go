@@ -138,26 +138,30 @@ type Column struct {
 }
 
 type Board struct {
-	ID            string   `json:"id"`
-	ProjectID     string   `json:"project_id"`
-	OwnerClerkID  string   `json:"owner_clerk_id"`
-	Name          string   `json:"name"`
-	Description   string   `json:"description"`
-	EstimateScale string   `json:"estimate_scale"`
-	Style         string   `json:"style"`
-	AgentReview   bool     `json:"agent_review"`           // agents' moves into Done wait for a person's review
-	DevComplete   *string  `json:"dev_complete_column_id"` // set: merged PRs land here, a release moves them to Done (TL-531)
-	ReviewColumn  *string  `json:"review_column_id"`       // agent review waits here (TL-592); null: the column before Done
-	ArchivedAt    *string  `json:"archived_at"`            // archived: off the project\'s boards, history kept, no new work
-	Deletable     bool     `json:"deletable"`              // never used (no tickets, no sprints): can be deleted outright
-	TeamID        *string  `json:"team_id"`                // the team whose leaders run this board                 // sprints | kanban
-	HiddenDone    int      `json:"hidden_done,omitempty"`  // kanban: Done tickets older than KanbanDoneDays, left off the view // a key of Scales
-	ToReview      int      `json:"to_review,omitempty"`    // imported tickets set aside, waiting for a decision before its first sprint (TL-541)
-	CreatedAt     string   `json:"created_at"`
-	UpdatedAt     string   `json:"updated_at"`
-	Sprint        *Sprint  `json:"sprint,omitempty"` // open sprint, if the board runs sprints
-	Columns       []Column `json:"columns,omitempty"`
-	Stats         *Stats   `json:"stats,omitempty"` // ListByProject only
+	ID            string  `json:"id"`
+	ProjectID     string  `json:"project_id"`
+	OwnerClerkID  string  `json:"owner_clerk_id"`
+	Name          string  `json:"name"`
+	Description   string  `json:"description"`
+	EstimateScale string  `json:"estimate_scale"`
+	Style         string  `json:"style"`
+	AgentReview   bool    `json:"agent_review"`           // agents' moves into Done wait for a person's review
+	DevComplete   *string `json:"dev_complete_column_id"` // set: merged PRs land here, a release moves them to Done (TL-531)
+	ReviewColumn  *string `json:"review_column_id"`       // agent review waits here (TL-592); null: the column before Done
+	ArchivedAt    *string `json:"archived_at"`            // archived: off the project\'s boards, history kept, no new work
+	Deletable     bool    `json:"deletable"`              // never used (no tickets, no sprints): can be deleted outright
+	TeamID        *string `json:"team_id"`                // the team whose leaders run this board                 // sprints | kanban
+	// WhenSprintEnds: start_next (the next sprint starts as one ends) or wait (it ends; a manager starts the next) (TL-279)
+	WhenSprintEnds string `json:"when_sprint_ends"`
+	// LastSprintNumber: the latest closed sprint, so a board waiting between sprints can say which ended
+	LastSprintNumber *int     `json:"last_sprint_number,omitempty"`
+	HiddenDone       int      `json:"hidden_done,omitempty"` // kanban: Done tickets older than KanbanDoneDays, left off the view // a key of Scales
+	ToReview         int      `json:"to_review,omitempty"`   // imported tickets set aside, waiting for a decision before its first sprint (TL-541)
+	CreatedAt        string   `json:"created_at"`
+	UpdatedAt        string   `json:"updated_at"`
+	Sprint           *Sprint  `json:"sprint,omitempty"` // open sprint, if the board runs sprints
+	Columns          []Column `json:"columns,omitempty"`
+	Stats            *Stats   `json:"stats,omitempty"` // ListByProject only
 }
 
 // ToReview is how many of board's imported tickets still wait for a decision (TL-541): set aside by
@@ -187,6 +191,7 @@ type Stats struct {
 type Store struct{ DB *pgxpool.Pool }
 
 const cols = `id, project_id, owner_clerk_id, name, description, estimate_scale, style, team_id, agent_review, dev_complete_column_id, review_column_id,
+	when_sprint_ends, (SELECT max(ls.number) FROM sprints ls WHERE ls.board_id = boards.id AND ls.closed_at IS NOT NULL),
 	to_char(archived_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
 	NOT EXISTS (SELECT 1 FROM tickets t WHERE t.board_id = boards.id) AND NOT EXISTS (SELECT 1 FROM sprints sp WHERE sp.board_id = boards.id),
 	to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
@@ -194,7 +199,8 @@ const cols = `id, project_id, owner_clerk_id, name, description, estimate_scale,
 
 func scan(row pgx.Row) (Board, error) {
 	var b Board
-	err := row.Scan(&b.ID, &b.ProjectID, &b.OwnerClerkID, &b.Name, &b.Description, &b.EstimateScale, &b.Style, &b.TeamID, &b.AgentReview, &b.DevComplete, &b.ReviewColumn, &b.ArchivedAt, &b.Deletable, &b.CreatedAt, &b.UpdatedAt)
+	err := row.Scan(&b.ID, &b.ProjectID, &b.OwnerClerkID, &b.Name, &b.Description, &b.EstimateScale, &b.Style, &b.TeamID, &b.AgentReview, &b.DevComplete, &b.ReviewColumn,
+		&b.WhenSprintEnds, &b.LastSprintNumber, &b.ArchivedAt, &b.Deletable, &b.CreatedAt, &b.UpdatedAt)
 	return b, notFound(err)
 }
 
@@ -216,6 +222,7 @@ func (s Store) Create(ctx context.Context, owner, projectID, name, desc string) 
 // ListByProject lists a project's boards (without columns); callers check ownership.
 func (s Store) ListByProject(ctx context.Context, projectID string) ([]Board, error) {
 	rows, err := s.DB.Query(ctx, `SELECT boards.id, boards.project_id, boards.owner_clerk_id, boards.name, boards.description, boards.estimate_scale, boards.style, boards.team_id, boards.agent_review, boards.dev_complete_column_id, boards.review_column_id,
+		boards.when_sprint_ends, (SELECT max(ls.number) FROM sprints ls WHERE ls.board_id = boards.id AND ls.closed_at IS NOT NULL),
 		to_char(boards.archived_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
 		NOT EXISTS (SELECT 1 FROM tickets ut WHERE ut.board_id = boards.id) AND NOT EXISTS (SELECT 1 FROM sprints us WHERE us.board_id = boards.id),
 		to_char(boards.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
@@ -239,7 +246,8 @@ func (s Store) ListByProject(ctx context.Context, projectID string) ([]Board, er
 	}
 	out, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (Board, error) {
 		b, st := Board{}, Stats{}
-		err := row.Scan(&b.ID, &b.ProjectID, &b.OwnerClerkID, &b.Name, &b.Description, &b.EstimateScale, &b.Style, &b.TeamID, &b.AgentReview, &b.DevComplete, &b.ReviewColumn, &b.ArchivedAt, &b.Deletable, &b.CreatedAt, &b.UpdatedAt,
+		err := row.Scan(&b.ID, &b.ProjectID, &b.OwnerClerkID, &b.Name, &b.Description, &b.EstimateScale, &b.Style, &b.TeamID, &b.AgentReview, &b.DevComplete, &b.ReviewColumn,
+			&b.WhenSprintEnds, &b.LastSprintNumber, &b.ArchivedAt, &b.Deletable, &b.CreatedAt, &b.UpdatedAt,
 			&st.Open, &st.InProgress, &st.Done, &st.Urgent, &st.Active, &st.SprintNumber, &st.SprintEndsAt, &b.ToReview)
 		b.Stats = &st
 		return b, err
@@ -293,6 +301,18 @@ const KanbanDoneDays = 14
 // SetStyle switches the board between sprints and kanban. Going kanban ends the open sprint, if
 // any: it closes now with no successor, its done tickets stay with it (velocity history) and the
 // rest leave it, so they show on the kanban board.
+// SetWhenSprintEnds sets what happens when a sprint reaches its end date (TL-279): start_next or wait.
+func (s Store) SetWhenSprintEnds(ctx context.Context, id, owner, when string) error {
+	tag, err := s.DB.Exec(ctx, `UPDATE boards SET when_sprint_ends = $3, updated_at = now() WHERE id = $1 AND owner_clerk_id = $2`, id, owner, when)
+	if err != nil {
+		return notFound(err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // SetAgentReview turns agent review on or off. Tickets already waiting keep waiting (a person settles them).
 func (s Store) SetAgentReview(ctx context.Context, id, owner string, on bool) error {
 	tag, err := s.DB.Exec(ctx, `UPDATE boards SET agent_review = $3, updated_at = now() WHERE id = $1 AND owner_clerk_id = $2`, id, owner, on)

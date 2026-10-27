@@ -116,18 +116,23 @@ func (h System) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in struct {
-		Name          *string `json:"name"`
-		EstimateScale *string `json:"estimate_scale"`
-		Style         *string `json:"style"` // sprints | kanban
-		AgentReview   *bool   `json:"agent_review"`
-		DevComplete   *string `json:"dev_complete_column_id"` // "" turns finishing on release off
-		ReviewColumn  *string `json:"review_column_id"`       // "": the column before Done (TL-592)
+		Name           *string `json:"name"`
+		EstimateScale  *string `json:"estimate_scale"`
+		Style          *string `json:"style"` // sprints | kanban
+		AgentReview    *bool   `json:"agent_review"`
+		DevComplete    *string `json:"dev_complete_column_id"` // "" turns finishing on release off
+		ReviewColumn   *string `json:"review_column_id"`       // "": the column before Done (TL-592)
+		WhenSprintEnds *string `json:"when_sprint_ends"`       // start_next | wait (TL-279)
 	}
 	if !httpx.Decode(w, r, &in) {
 		return
 	}
-	if in.Name == nil && in.EstimateScale == nil && in.Style == nil && in.AgentReview == nil && in.DevComplete == nil && in.ReviewColumn == nil {
-		httpx.Error(w, r, http.StatusBadRequest, httpx.Code("board_update_empty", "name, estimate_scale, style, agent_review, dev_complete_column_id or review_column_id is required"))
+	if in.Name == nil && in.EstimateScale == nil && in.Style == nil && in.AgentReview == nil && in.DevComplete == nil && in.ReviewColumn == nil && in.WhenSprintEnds == nil {
+		httpx.Error(w, r, http.StatusBadRequest, httpx.Code("board_update_empty", "name, estimate_scale, style, agent_review, dev_complete_column_id, review_column_id or when_sprint_ends is required"))
+		return
+	}
+	if in.WhenSprintEnds != nil && *in.WhenSprintEnds != "start_next" && *in.WhenSprintEnds != "wait" {
+		httpx.Error(w, r, http.StatusBadRequest, httpx.Code("bad_when_sprint_ends", "when_sprint_ends must be start_next or wait"))
 		return
 	}
 	name := ""
@@ -150,6 +155,12 @@ func (h System) Update(w http.ResponseWriter, r *http.Request) {
 	}
 	if in.Style != nil {
 		if err := h.store.SetStyle(r.Context(), r.PathValue("id"), auth.OrgID(r.Context()), *in.Style); err != nil {
+			writeErr(w, r, err)
+			return
+		}
+	}
+	if in.WhenSprintEnds != nil {
+		if err := h.store.SetWhenSprintEnds(r.Context(), r.PathValue("id"), auth.OrgID(r.Context()), *in.WhenSprintEnds); err != nil {
 			writeErr(w, r, err)
 			return
 		}
