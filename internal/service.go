@@ -65,6 +65,7 @@ import (
 	"github.com/tracklines/backend/internal/users"
 	"github.com/tracklines/backend/internal/views"
 	"github.com/tracklines/backend/internal/webhooks"
+	"github.com/tracklines/backend/internal/workweek"
 	"github.com/tracklines/backend/retention"
 )
 
@@ -583,6 +584,12 @@ func (s *Service) Handler() http.Handler {
 
 	// Outbound webhooks (TL-635): org admins (session or their API key), behind the "webhooks" flag; Pro and Enterprise
 	wh := webhooks.NewSystem(s.DB, box, o.AdminModel(), s.flag("webhooks"))
+	// the working week (TL-702): everyone reads it; admins set the org's, a project's managers its own
+	ww := workweek.System{Store: workweek.Store{DB: s.DB}, IsAdmin: o.AdminModel().IsAdmin, IsProjectManager: o.AdminModel().IsProjectManager}
+	mux.Handle("GET /api/working-week", signedIn(ww.Get))
+	mux.Handle("PUT /api/working-week", signedIn(ww.SetOrg))
+	mux.Handle("PUT /api/projects/{id}/working-week", signedIn(ww.SetProject))
+	mux.Handle("DELETE /api/projects/{id}/working-week", signedIn(ww.ResetProject))
 	mux.Handle("GET /api/org/webhooks", signedIn(wh.List))
 	mux.Handle("POST /api/org/webhooks", signedIn(wh.Create)) // 201 {endpoint, secret}: the secret is shown once
 	mux.Handle("PATCH /api/org/webhooks/{id}", signedIn(wh.Update))

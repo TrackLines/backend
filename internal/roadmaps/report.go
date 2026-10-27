@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/tracklines/backend/internal/httpx"
+	"github.com/tracklines/backend/internal/workweek"
 )
 
 // Roadmap reports (TL-616): the burn-up as JSON for the website's PDF, or the whole report as
@@ -51,20 +52,19 @@ func (s Store) stamps(ctx context.Context, id string) ([]stamp, error) {
 // burnWeeks is the most a burn-up looks back, so an old ticket doesn't stretch it over years.
 const burnWeeks = 12
 
-func monday(t time.Time, loc *time.Location) time.Time {
-	t = t.In(loc)
-	day := time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, loc)
-	return day.AddDate(0, 0, -((int(day.Weekday()) + 6) % 7))
+// weekOf is the first day (at midnight, in loc) of the week t is in, as the project's working week starts it (TL-702).
+func weekOf(t time.Time, loc *time.Location, week workweek.Week) time.Time {
+	return week.StartOfWeek(t.In(loc))
 }
 
 // burnup: weekly from the earliest ticket's week (at most burnWeeks back) to now's week; none
 // without tickets.
-func burnup(stamps []stamp, now time.Time, loc *time.Location) []Week {
+func burnup(stamps []stamp, now time.Time, loc *time.Location, week workweek.Week) []Week {
 	out := []Week{}
 	if len(stamps) == 0 {
 		return out
 	}
-	this := monday(now, loc)
+	this := weekOf(now, loc, week)
 	start := this.AddDate(0, 0, -7*burnWeeks)
 	earliest := stamps[0].created
 	for _, s := range stamps {
@@ -72,7 +72,7 @@ func burnup(stamps []stamp, now time.Time, loc *time.Location) []Week {
 			earliest = s.created
 		}
 	}
-	if first := monday(earliest, loc); first.After(start) {
+	if first := weekOf(earliest, loc, week); first.After(start) {
 		start = first
 	}
 	for w := start; !w.After(this); w = w.AddDate(0, 0, 7) {
@@ -104,7 +104,14 @@ func (h System) Report(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, r, err)
 		return
 	}
-	weeks := burnup(stamps, now, loc)
+	ww := workweek.Default() // the roadmap's project's week, where it has one
+	var project *string
+	if h.store.DB.QueryRow(ctx, `SELECT project_id::text FROM roadmaps WHERE id::text = $1`, id).Scan(&project) == nil && project != nil {
+		if got, err := (workweek.Store{DB: h.store.DB}).ForProject(ctx, *project); err == nil {
+			ww = got
+		}
+	}
+	weeks := burnup(stamps, now, loc, ww)
 	if f := r.URL.Query().Get("format"); f != "md" && f != "markdown" {
 		httpx.JSON(w, http.StatusOK, map[string]any{"burnup": weeks})
 		return

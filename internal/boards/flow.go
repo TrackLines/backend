@@ -2,6 +2,7 @@ package boards
 
 import (
 	"context"
+	"github.com/tracklines/backend/internal/workweek"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -60,9 +61,12 @@ func (s Store) Flow(ctx context.Context, owner, boardID string, weeks int) (*Flo
 		return nil, notFound(err)
 	}
 
-	now := time.Now().UTC()
-	weekStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
-	weekStart = weekStart.AddDate(0, 0, -((int(weekStart.Weekday()) + 6) % 7))
+	// weeks start on the project's first day of the week (TL-702; Monday unless it's set)
+	ww, err := workweek.Store{DB: s.DB}.ForBoard(ctx, boardID)
+	if err != nil {
+		return nil, err
+	}
+	weekStart := ww.StartOfWeek(time.Now().UTC())
 	firstWeek := weekStart.AddDate(0, 0, -7*(weeks-1))
 	end := weekStart.AddDate(0, 0, 7)
 
