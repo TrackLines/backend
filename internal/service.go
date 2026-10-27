@@ -322,10 +322,16 @@ func (s *Service) Handler() http.Handler {
 	mux.Handle("DELETE /api/notifications/{id}", signedIn(nf.Dismiss))
 	t := tickets.NewSystem(s.DB).CachingMembers(members).WithNotifier(notify).
 		CachingUsers(clerkcache.Users{Next: user.NewClient(&clerk.ClientConfig{}), VK: s.Valkey, TTL: time.Minute})
-	if pc := config.Get(s.Config); pc.AuditURL != "" && pc.AuditSecret != "" { // ticket history from the auditor (TL-667)
-		auditor := audit.Client{URL: pc.AuditURL, Secret: pc.AuditSecret, HTTP: &http.Client{Timeout: 5 * time.Second}}
+	pc := config.Get(s.Config)
+	auditor := audit.Client{URL: pc.AuditURL, Secret: pc.AuditSecret, HTTP: &http.Client{Timeout: 5 * time.Second}}
+	auditOn := func() bool { return pc.AuditURL != "" && pc.AuditSecret != "" && s.flag("audit-service")() }
+	if pc.AuditURL != "" && pc.AuditSecret != "" { // ticket history from the auditor (TL-667)
 		t = t.HistoryFromAuditor(auditor.History, s.flag("audit-service")).ActivityFromAuditor(auditor.Activity, s.flag("audit-service"))
 	}
+	// the org's audit log (TL-670): admins, signed in, on Pro or Enterprise
+	auditLog := audit.OrgLog{DB: s.DB, Read: auditor.Log, On: auditOn, IsAdmin: o.AdminModel().IsAdmin}
+	mux.Handle("GET /api/org/audit", signedIn(auditLog.List))
+	mux.Handle("GET /api/org/audit/export.csv", signedIn(auditLog.Export))
 	push.People = t.People // pushes name who did it
 	if chat != nil {
 		chat.People = t.People // so do Google Chat posts
