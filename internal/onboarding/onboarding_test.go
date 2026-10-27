@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -75,10 +76,20 @@ func session(org, user string) context.Context {
 func TestSetupPermissionsResumeAndGuideVersions(t *testing.T) {
 	h, org := fixture(t)
 	ctx := session(org, "admin")
-	if s := call(t, h.Status, session(org, "member"), "", 200); s.Admin || s.Guide.Available {
-		t.Fatalf("member offered guide: %+v", s)
+	if s := call(t, h.Status, session(org, "member"), "", 200); s.Admin || !s.Guide.Available || s.Step != "complete" || slices.Contains(s.Chapters, "github") || !slices.Contains(s.Chapters, "project") {
+		t.Fatalf("member guide permissions: %+v", s)
 	}
-	for _, f := range []http.HandlerFunc{h.Status, h.Create, h.Finish, h.CompleteGuide} {
+	if s := call(t, h.CompleteGuide, session(org, "member"), `{"id":"getting-started","version":1}`, 200); s.Guide.Available {
+		t.Fatal("member cannot finish independently of admin setup")
+	}
+	if s := call(t, h.ResetGuide, session(org, "member"), fmt.Sprintf(`{"org_id":%q}`, org), 200); !s.Guide.Available {
+		t.Fatal("member cannot reset independently of admin setup")
+	}
+	var setupRows int
+	if err := h.DB.QueryRow(context.Background(), `SELECT count(*) FROM org_onboarding WHERE org_id=$1`, org).Scan(&setupRows); err != nil || setupRows != 0 {
+		t.Fatalf("member status changed org setup: %d %v", setupRows, err)
+	}
+	for _, f := range []http.HandlerFunc{h.Status, h.Create, h.Finish, h.CompleteGuide, h.ResetGuide} {
 		call(t, f, auth.WithAPIKey(context.Background(), "admin", org, "agent", "ai"), `{}`, 403)
 	}
 	call(t, h.Create, session(org, "member"), `{}`, 403)
@@ -130,6 +141,67 @@ func TestSetupPermissionsResumeAndGuideVersions(t *testing.T) {
 	if err != nil || !next.Guide.Available || next.Step != "complete" {
 		t.Fatalf("new guide without repeating setup: %+v %v", next, err)
 	}
+}
+
+func TestMemberResetIsPersonalAndPreservesSetup(t *testing.T) {
+	h, org := fixture(t)
+	admin, member := session(org, "admin"), session(org, "member")
+	call(t, h.Status, admin, "", 200)
+	call(t, h.Create, admin, `{"name":"Team","key_prefix":"TEAM"}`, 200)
+	setup := call(t, h.Finish, admin, "", 200)
+	call(t, h.CompleteGuide, admin, `{"id":"getting-started","version":1}`, 200)
+	for range 2 {
+		call(t, h.CompleteGuide, member, `{"id":"getting-started","version":1}`, 200)
+	}
+	_, err := h.DB.Exec(context.Background(), `INSERT INTO guide_completions (org_id,user_id,guide_id,version) VALUES ($1,'member','getting-started',1), ($2,'member','other-guide',1)`, org+"_other", org)
+	if err != nil {
+		t.Fatal(err)
+	}
+	call(t, h.ResetGuide, member, fmt.Sprintf(`{"org_id":%q}`, org+"_other"), 403)
+	if s := call(t, h.Status, member, "", 200); s.Guide.Available {
+		t.Fatal("mismatched-org reset changed completion")
+	}
+	for range 2 {
+		s := call(t, h.ResetGuide, member, fmt.Sprintf(`{"org_id":%q,"user_id":"admin"}`, org), 200)
+		if s.Admin || !s.Guide.Available || s.Step != "complete" || slices.Contains(s.Chapters, "github") {
+			t.Fatalf("reset member: %+v", s)
+		}
+	}
+	if s := call(t, h.Status, admin, "", 200); s.Guide.Available || s.Step != setup.Step || s.ProjectID == nil || *s.ProjectID != *setup.ProjectID || s.BoardID == nil || *s.BoardID != *setup.BoardID || s.CompletedAt == nil || !s.CompletedAt.Equal(*setup.CompletedAt) {
+		t.Fatalf("reset changed admin completion/setup: %+v", s)
+	}
+	var count int
+	if err := h.DB.QueryRow(context.Background(), `SELECT count(*) FROM guide_completions WHERE org_id IN ($1,$2)`, org, org+"_other").Scan(&count); err != nil || count != 3 {
+		t.Fatalf("reset touched other records: %d %v", count, err)
+	}
+	call(t, h.ResetGuide, context.Background(), fmt.Sprintf(`{"org_id":%q}`, org), 403)
+	call(t, h.ResetGuide, member, `{}`, 403)
+}
+
+func TestGuideChaptersRespectRoleAndProjectCapacity(t *testing.T) {
+	h, org := fixture(t)
+	admin, member := session(org, "admin"), session(org, "member")
+	s := call(t, h.Status, admin, "", 200)
+	if !slices.Equal(s.Chapters, []string{"project", "ticket", "github", "tui", "mcp"}) {
+		t.Fatalf("admin chapters: %v", s.Chapters)
+	}
+	s = call(t, h.Status, member, "", 200)
+	if !slices.Equal(s.Chapters, []string{"project", "ticket", "tui", "mcp"}) {
+		t.Fatalf("member chapters: %v", s.Chapters)
+	}
+	call(t, h.Create, admin, `{"name":"Team","key_prefix":"TEAM"}`, 200)
+	s = call(t, h.Status, member, "", 200)
+	if !slices.Equal(s.Chapters, []string{"ticket", "tui", "mcp"}) {
+		t.Fatalf("free plan full: %v", s.Chapters)
+	}
+	if _, err := h.DB.Exec(context.Background(), `INSERT INTO org_billing (org_id,stripe_status,plan) VALUES ($1,'active','pro')`, org); err != nil {
+		t.Fatal(err)
+	}
+	s = call(t, h.Status, member, "", 200)
+	if !slices.Contains(s.Chapters, "project") || slices.Contains(s.Chapters, "github") {
+		t.Fatalf("upgraded member: %v", s.Chapters)
+	}
+	call(t, h.Finish, member, "", 403)
 }
 
 func TestEmptyStartCreatesDefaultBoardWithoutTickets(t *testing.T) {

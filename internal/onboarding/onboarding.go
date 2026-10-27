@@ -34,6 +34,7 @@ type Guide struct {
 
 type State struct {
 	Admin       bool       `json:"admin"`
+	Chapters    []string   `json:"chapters"`
 	Step        string     `json:"step"`
 	ProjectID   *string    `json:"project_id"`
 	BoardID     *string    `json:"board_id"`
@@ -72,40 +73,73 @@ func (h System) state(ctx context.Context, org, user string) (State, error) {
 }
 
 func (h System) stateForGuide(ctx context.Context, org, user string, guide Guide) (State, error) {
-	s := State{Admin: true, Guide: guide}
-	err := h.DB.QueryRow(ctx, `SELECT step, project_id::text, board_id::text, completed_at,
-		NOT EXISTS (SELECT 1 FROM guide_completions WHERE org_id = $1 AND user_id = $2 AND guide_id = $3 AND version >= $4)
-		FROM org_onboarding WHERE org_id = $1`, org, user, guide.ID, guide.Version).
-		Scan(&s.Step, &s.ProjectID, &s.BoardID, &s.CompletedAt, &s.Guide.Available)
-	return s, err
+	return h.stateForRole(ctx, org, user, guide, true)
 }
 
-func (h System) Status(w http.ResponseWriter, r *http.Request) {
-	org, user := auth.OrgID(r.Context()), ""
-	var signedIn bool
-	user, signedIn = auth.UserID(r.Context())
+func (h System) stateForRole(ctx context.Context, org, user string, guide Guide, admin bool) (State, error) {
+	s := State{Admin: admin, Guide: guide, Chapters: []string{}}
+	var projectCount int
+	err := h.DB.QueryRow(ctx, `SELECT CASE WHEN $5 THEN COALESCE(o.step, 'project') ELSE 'complete' END,
+		CASE WHEN $5 THEN o.project_id::text ELSE NULL END,
+		CASE WHEN $5 THEN o.board_id::text ELSE NULL END,
+		CASE WHEN $5 THEN o.completed_at ELSE NULL END,
+		NOT EXISTS (SELECT 1 FROM guide_completions WHERE org_id = $1 AND user_id = $2 AND guide_id = $3 AND version >= $4)
+		, (SELECT count(*) FROM projects WHERE owner_clerk_id = $1)
+		FROM (SELECT 1) root LEFT JOIN org_onboarding o ON o.org_id = $1`, org, user, guide.ID, guide.Version, admin).
+		Scan(&s.Step, &s.ProjectID, &s.BoardID, &s.CompletedAt, &s.Guide.Available, &projectCount)
+	if err != nil {
+		return s, err
+	}
+	limit, err := billing.ProjectLimit(ctx, h.DB, org)
+	if err != nil {
+		return s, err
+	}
+	// Project and backlog creation accept all signed-in members; connecting GitHub requires an admin.
+	canCreateProject := limit < 0 || projectCount < limit
+	if canCreateProject {
+		s.Chapters = append(s.Chapters, "project")
+	}
+	if projectCount > 0 || canCreateProject {
+		s.Chapters = append(s.Chapters, "ticket")
+	}
+	if admin {
+		s.Chapters = append(s.Chapters, "github")
+	}
+	s.Chapters = append(s.Chapters, "tui", "mcp") // personal and AI keys are available to members
+	return s, nil
+}
+
+func (h System) guideUser(w http.ResponseWriter, r *http.Request) (org, user string, admin, ok bool) {
+	org = auth.OrgID(r.Context())
+	user, signedIn := auth.UserID(r.Context())
 	if !signedIn || org == "" || auth.ViaAPIKey(r.Context()) {
 		w.WriteHeader(http.StatusForbidden)
-		return
+		return "", "", false, false
 	}
 	admin, err := h.Admins.IsAdmin(r.Context(), org, user)
 	if err != nil {
 		writeErr(w, r, err)
-		return
+		return "", "", false, false
 	}
-	if !admin {
-		httpx.JSON(w, http.StatusOK, State{Step: "complete"})
-		return
-	}
-	if err := h.initialize(r.Context(), org); err != nil {
-		writeErr(w, r, err)
-		return
-	}
-	h.respond(w, r, org, user)
+	return org, user, admin, true
 }
 
-func (h System) respond(w http.ResponseWriter, r *http.Request, org, user string) {
-	s, err := h.state(r.Context(), org, user)
+func (h System) Status(w http.ResponseWriter, r *http.Request) {
+	org, user, admin, ok := h.guideUser(w, r)
+	if !ok {
+		return
+	}
+	if admin {
+		if err := h.initialize(r.Context(), org); err != nil {
+			writeErr(w, r, err)
+			return
+		}
+	}
+	h.respond(w, r, org, user, admin)
+}
+
+func (h System) respond(w http.ResponseWriter, r *http.Request, org, user string, admin bool) {
+	s, err := h.stateForRole(r.Context(), org, user, Guide{ID: GuideID, Version: GuideVersion}, admin)
 	if err != nil {
 		writeErr(w, r, err)
 		return
@@ -134,7 +168,7 @@ func (h System) Create(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, r, err)
 		return
 	}
-	h.respond(w, r, org, user)
+	h.respond(w, r, org, user, true)
 }
 
 func (h System) setup(ctx context.Context, org string, in Setup, limit int) error {
@@ -214,11 +248,11 @@ func (h System) Finish(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, r, err)
 		return
 	}
-	h.respond(w, r, org, user)
+	h.respond(w, r, org, user, true)
 }
 
 func (h System) CompleteGuide(w http.ResponseWriter, r *http.Request) {
-	org, user, ok := h.Admins.RequireAdmin(w, r)
+	org, user, admin, ok := h.guideUser(w, r)
 	if !ok {
 		return
 	}
@@ -233,22 +267,54 @@ func (h System) CompleteGuide(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, r, http.StatusConflict, httpx.Code("guide_version", "refresh to load the current guide"))
 		return
 	}
-	var complete bool
-	err := h.DB.QueryRow(r.Context(), `SELECT EXISTS (SELECT 1 FROM org_onboarding WHERE org_id = $1 AND step = 'complete')`, org).Scan(&complete)
+	if admin {
+		var complete bool
+		err := h.DB.QueryRow(r.Context(), `SELECT EXISTS (SELECT 1 FROM org_onboarding WHERE org_id = $1 AND step = 'complete')`, org).Scan(&complete)
+		if err != nil {
+			writeErr(w, r, err)
+			return
+		}
+		if !complete {
+			writeErr(w, r, errSetup)
+			return
+		}
+	}
+	_, err := h.DB.Exec(r.Context(), `INSERT INTO guide_completions (org_id, user_id, guide_id, version) VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING`, org, user, in.ID, in.Version)
 	if err != nil {
 		writeErr(w, r, err)
 		return
 	}
-	if !complete {
-		writeErr(w, r, errSetup)
+	h.respond(w, r, org, user, admin)
+}
+
+// ResetGuide changes only this person's completion in the active org, never organization setup.
+func (h System) ResetGuide(w http.ResponseWriter, r *http.Request) {
+	org, user, admin, ok := h.guideUser(w, r)
+	if !ok {
 		return
 	}
-	_, err = h.DB.Exec(r.Context(), `INSERT INTO guide_completions (org_id, user_id, guide_id, version) VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING`, org, user, in.ID, in.Version)
+	var in struct {
+		OrgID string `json:"org_id"`
+	}
+	if !httpx.Decode(w, r, &in) {
+		return
+	}
+	if in.OrgID != org {
+		httpx.Error(w, r, http.StatusForbidden, httpx.Code("guide_organization", "refresh after switching organizations"))
+		return
+	}
+	if admin {
+		if err := h.initialize(r.Context(), org); err != nil {
+			writeErr(w, r, err)
+			return
+		}
+	}
+	_, err := h.DB.Exec(r.Context(), `DELETE FROM guide_completions WHERE org_id = $1 AND user_id = $2 AND guide_id = $3`, org, user, GuideID)
 	if err != nil {
 		writeErr(w, r, err)
 		return
 	}
-	h.respond(w, r, org, user)
+	h.respond(w, r, org, user, admin)
 }
 
 func writeErr(w http.ResponseWriter, r *http.Request, err error) {
