@@ -351,6 +351,62 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { description: Not finished (import_not_done), or someone has acted on it (import_changed). }
 
+  /working-week:
+    get:
+      tags: [Organizations]
+      operationId: getWorkingWeek
+      summary: The organization's working week, and each project's own
+      description: >-
+        Everyone in the organization. A project not listed under projects follows the organization's week. With nothing
+        set, the week is Monday to Friday, Monday first, 09:00 to 17:00. Hours are in each person's own timezone. It
+        drives spike timeboxes (a timebox day is one working day), team availability, report week starts, and when
+        sprints end (on a working day). Changes are in the audit log as working_week.changed.
+      responses:
+        '200':
+          description: The weeks.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  org: { $ref: '#/components/schemas/WorkingWeek' }
+                  projects: { type: object, additionalProperties: { $ref: '#/components/schemas/WorkingWeek' } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    put:
+      tags: [Organizations]
+      operationId: setWorkingWeek
+      summary: Set the organization's working week
+      description: Org admins, signed in (not an API key).
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/WorkingWeek' } } } }
+      responses:
+        '204': { description: Saved. }
+        '400': { description: "Not a working week (code bad_working_week)." }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: "Not an org admin (code admins_working_week)." }
+
+  /projects/{projectId}/working-week:
+    parameters:
+      - $ref: '#/components/parameters/ProjectId'
+    put:
+      tags: [Projects]
+      operationId: setProjectWorkingWeek
+      summary: Give a project its own working week
+      description: Those who manage the project, signed in. It replaces the organization's week for this project.
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/WorkingWeek' } } } }
+      responses:
+        '204': { description: Saved. }
+        '400': { description: "Not a working week (code bad_working_week)." }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: "Doesn't manage this project (code managers_working_week)." }
+    delete:
+      tags: [Projects]
+      operationId: resetProjectWorkingWeek
+      summary: The project follows the organization's working week again
+      responses:
+        '204': { description: Done. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: "Doesn't manage this project (code managers_working_week)." }
+
   /org/audit:
     get:
       tags: [Audit log]
@@ -5947,6 +6003,14 @@ components:
         note: { type: string, description: What changed. }
         published_at: { type: string, format: date-time }
         published_by: { type: string, description: Staff routes only. }
+    WorkingWeek:
+      type: object
+      required: [days, week_start, start_minute, end_minute]
+      properties:
+        days: { type: array, items: { type: integer, minimum: 0, maximum: 6 }, minItems: 1, maxItems: 7, description: "Working days, 0 Sunday to 6 Saturday." }
+        week_start: { type: integer, minimum: 0, maximum: 6, description: The first day of the week. }
+        start_minute: { type: integer, minimum: 0, maximum: 1380, description: When work starts, in minutes from midnight. }
+        end_minute: { type: integer, maximum: 1440, description: When it ends; at least an hour after it starts. }
     ErrorResponse:
       type: object
       description: >-
@@ -5958,6 +6022,9 @@ components:
         code: { type: string, description: Stable error code, for translating the message. }
         error: { type: string, description: The English message, as the plain-text response would give it. }
       x-error-codes:
+        admins_working_week: "only organization admins, signed in, can change the working week"
+        bad_working_week: "a working week needs at least one working day, a first day of the week, and hours of at least one hour within the day"
+        managers_working_week: "only someone who manages this project, signed in, can change its working week"
         accept_clerk_first: "accept the organization invitation through Clerk before completing this invitation"
         accept_session_required: "invitation acceptance requires a signed-in session"
         embed_managers: "only someone who manages this project, signed in, can change where its roadmaps and request form can be embedded"

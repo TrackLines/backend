@@ -3,6 +3,7 @@ package sprints
 import (
 	"context"
 	"errors"
+	"github.com/tracklines/backend/internal/workweek"
 	"os"
 	"testing"
 	"time"
@@ -27,13 +28,13 @@ func TestBusinessMinutes(t *testing.T) {
 		{"2026-10-05T12:00:00Z", "2026-10-05T11:00:00Z", 0},       // backwards
 		{"2026-10-05T09:00:00Z", "2026-10-07T17:00:00Z", 24 * 60}, // three whole days
 	} {
-		if got := businessMinutes(at(c.from), at(c.to)); got != c.want {
+		if got := workweek.Default().BusinessMinutes(at(c.from), at(c.to)); got != c.want {
 			t.Errorf("%s → %s: %v minutes, want %v", c.from, c.to, got, c.want)
 		}
 	}
 	// the working day is the caller's: 13:00–21:00 UTC is 09:00–17:00 in New York (EDT)
 	ny, _ := time.LoadLocation("America/New_York")
-	if got := businessMinutes(at("2026-10-05T13:00:00Z").In(ny), at("2026-10-05T21:00:00Z").In(ny)); got != 8*60 {
+	if got := workweek.Default().BusinessMinutes(at("2026-10-05T13:00:00Z").In(ny), at("2026-10-05T21:00:00Z").In(ny)); got != 8*60 {
 		t.Errorf("New York day: %v minutes", got)
 	}
 }

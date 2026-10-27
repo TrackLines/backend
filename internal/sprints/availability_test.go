@@ -3,6 +3,7 @@ package sprints
 import (
 	"context"
 	"errors"
+	"github.com/tracklines/backend/internal/workweek"
 	"os"
 	"testing"
 	"time"
@@ -23,12 +24,12 @@ func TestTeamAvailability(t *testing.T) {
 
 	// 4 people, two weeks (10 working days): 6 person-days away → 85%
 	got := teamAvailability(4, []away{allDay(u("a"), 0, 5), allDay(u("b"), 7, 8),
-		allDay(u("a"), 5, 7)}, mon, 14) // a's weekend doesn't count
+		allDay(u("a"), 5, 7)}, mon, 14, workweek.Default()) // a's weekend doesn't count
 	if got == nil || got.Percent != 85 || got.PersonDaysAway != 6 {
 		t.Fatalf("85%%: %+v", got)
 	}
 	// a company day off leaves the working days (and whoever's off that day isn't counted twice)
-	got = teamAvailability(2, []away{allDay(nil, 0, 1), allDay(u("a"), 0, 1)}, mon, 7)
+	got = teamAvailability(2, []away{allDay(nil, 0, 1), allDay(u("a"), 0, 1)}, mon, 7, workweek.Default())
 	if got == nil || got.Percent != 100 || got.PersonDaysAway != 0 {
 		t.Fatalf("company day: %+v", got)
 	}
@@ -36,12 +37,12 @@ func TestTeamAvailability(t *testing.T) {
 	got = teamAvailability(1, []away{
 		{u("a"), day(0).Add(9 * time.Hour), day(0).Add(13 * time.Hour), false},
 		{u("a"), day(1).Add(-time.Hour), day(2).Add(-time.Hour), true},
-	}, mon, 5)
+	}, mon, 5, workweek.Default())
 	if got == nil || got.PersonDaysAway != 1.5 || got.Percent != 70 {
 		t.Fatalf("part days: %+v", got)
 	}
 	// nothing to count: a weekend-only sprint
-	if got := teamAvailability(3, nil, day(5), 2); got != nil {
+	if got := teamAvailability(3, nil, day(5), 2, workweek.Default()); got != nil {
 		t.Fatalf("weekend only: %+v", got)
 	}
 }

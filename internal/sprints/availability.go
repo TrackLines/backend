@@ -2,6 +2,7 @@ package sprints
 
 import (
 	"context"
+	"github.com/tracklines/backend/internal/workweek"
 	"math"
 	"time"
 
@@ -46,15 +47,20 @@ func availability(ctx context.Context, q querier, boardID string, start time.Tim
 	if _, err := pgx.ForEachRow(rows, []any{&a.user, &a.start, &a.end, &a.allDay}, func() error { list = append(list, a); return nil }); err != nil {
 		return nil, err
 	}
-	return teamAvailability(len(members), list, from, days), nil
+	week := workweek.Default() // its project's working days (TL-702)
+	var workDays []int
+	if q.QueryRow(ctx, `SELECT array(SELECT unnest(working_days($1::uuid))::int)`, boardID).Scan(&workDays) == nil {
+		week.Days = workDays
+	}
+	return teamAvailability(len(members), list, from, days, week), nil
 }
 
-// teamAvailability counts working days (weekdays that aren't company days off) from from, and each
+// teamAvailability counts working days (the week's working days that aren't company days off) from from, and each
 // member's days away on them: a whole day for an all-day absence, else hours away / 8 (up to a day).
 // nil when there are no working days to count.
 // ponytail: UTC days; the calendar's zone isn't stored, so an all-day absence counts on a UTC day it
 // covers 12h+ of. Store the zone with time_away if teams far from UTC see days shift.
-func teamAvailability(members int, list []away, from time.Time, days int) *Availability {
+func teamAvailability(members int, list []away, from time.Time, days int, week workweek.Week) *Availability {
 	overlap := func(a away, day time.Time) float64 {
 		s, e := max(a.start.Unix(), day.Unix()), min(a.end.Unix(), day.Add(24*time.Hour).Unix())
 		return max(0, float64(e-s)/3600)
@@ -62,7 +68,7 @@ func teamAvailability(members int, list []away, from time.Time, days int) *Avail
 	working, awayDays := 0, 0.0
 	for i := range days {
 		day := from.AddDate(0, 0, i)
-		if wd := day.Weekday(); wd == time.Saturday || wd == time.Sunday {
+		if !week.Works(day.Weekday()) {
 			continue
 		}
 		off := map[string]float64{} // member → share of the day away

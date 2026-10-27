@@ -79,7 +79,7 @@ func (s Store) Start(ctx context.Context, owner, boardID string, lengthDays int)
 		var err error
 		sp, err = boards.ScanSprint(tx.QueryRow(ctx, `INSERT INTO sprints (board_id, number, length_days, ends_at)
 			SELECT b.id, COALESCE((SELECT max(number) FROM sprints WHERE board_id = b.id), 0) + 1, $3,
-				now() + make_interval(days => $3)
+				working_end(b.id, now() + make_interval(days => $3)) -- ends on a working day (TL-702)
 			FROM boards b JOIN projects p ON p.id = b.project_id
 			WHERE b.id = $1 AND p.owner_clerk_id = $2
 			RETURNING `+boards.SprintCols, boardID, owner, lengthDays))
@@ -132,7 +132,7 @@ func (s Store) UpdateLength(ctx context.Context, owner, sprintID string, lengthD
 		return nil, ErrInvalidLength
 	}
 	sp, err := boards.ScanSprint(s.DB.QueryRow(ctx, `UPDATE sprints sp SET length_days = $3,
-		ends_at = sp.starts_at + make_interval(days => $3)
+		ends_at = working_end(sp.board_id, sp.starts_at + make_interval(days => $3))
 		WHERE sp.id = $1 AND sp.closed_at IS NULL AND EXISTS (
 			SELECT 1 FROM boards b JOIN projects p ON p.id = b.project_id
 			WHERE b.id = sp.board_id AND p.owner_clerk_id = $2)
@@ -242,7 +242,7 @@ func closeSprint(ctx context.Context, tx pgx.Tx, id string, options CloseOptions
 	}
 	next, err = boards.ScanSprint(tx.QueryRow(ctx, `INSERT INTO sprints (board_id, number, length_days, starts_at, ends_at, goal)
 		SELECT board_id, number + 1, COALESCE(NULLIF($2, 0), length_days), COALESCE($3::timestamptz, now()),
-			COALESCE($3::timestamptz, now()) + make_interval(days => COALESCE(NULLIF($2, 0), length_days)), $4
+			working_end(board_id, COALESCE($3::timestamptz, now()) + make_interval(days => COALESCE(NULLIF($2, 0), length_days))), $4
 		FROM sprints WHERE id = $1 RETURNING `+boards.SprintCols, id, options.NextLengthDays, options.NextStartsAt, goal))
 	if err != nil {
 		return Sprint{}, nil, err

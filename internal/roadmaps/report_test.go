@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/tracklines/backend/internal/workweek"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -40,21 +41,21 @@ func TestBurnup(t *testing.T) {
 		{created: at("2026-10-19T00:00:00Z"), done: atp("2026-10-21T00:00:00Z")}, // this week
 	}
 	want := []Week{{"2026-10-05", 0, 2}, {"2026-10-12", 1, 2}, {"2026-10-19", 2, 3}}
-	if got := burnup(stamps, now, time.UTC); !reflect.DeepEqual(got, want) {
+	if got := burnup(stamps, now, time.UTC, workweek.Default()); !reflect.DeepEqual(got, want) {
 		t.Errorf("burnup:\n got %+v\nwant %+v", got, want)
 	}
 	// weeks are the caller's: 23:30 UTC on Sunday 18th is Monday 19th in Auckland
 	nz, _ := time.LoadLocation("Pacific/Auckland")
-	got := burnup([]stamp{{created: at("2026-10-18T23:30:00Z")}}, now, nz)
+	got := burnup([]stamp{{created: at("2026-10-18T23:30:00Z")}}, now, nz, workweek.Default())
 	if len(got) != 1 || got[0].WeekStart != "2026-10-19" || got[0].Total != 1 {
 		t.Errorf("in Auckland: %+v", got)
 	}
 	// an old ticket doesn't stretch it past 12 weeks back
-	got = burnup([]stamp{{created: at("2025-01-01T00:00:00Z")}}, now, time.UTC)
+	got = burnup([]stamp{{created: at("2025-01-01T00:00:00Z")}}, now, time.UTC, workweek.Default())
 	if len(got) != burnWeeks+1 || got[0].WeekStart != "2026-07-27" || got[0].Total != 1 {
 		t.Errorf("capped: %d weeks from %+v", len(got), got[0])
 	}
-	if got := burnup(nil, now, time.UTC); got == nil || len(got) != 0 {
+	if got := burnup(nil, now, time.UTC, workweek.Default()); got == nil || len(got) != 0 {
 		t.Errorf("no tickets: %#v", got)
 	}
 }
@@ -248,10 +249,10 @@ func TestReportEndpoint(t *testing.T) {
 	}
 	b := out.Burnup
 	// from the week the first sub-ticket was made to this week; the epic itself never counts
-	if first := monday(time.Now().AddDate(0, 0, -30), time.UTC).Format(time.DateOnly); len(b) < 5 || b[0].WeekStart != first || b[0].Total != 1 || b[0].Done != 0 {
+	if first := weekOf(time.Now().AddDate(0, 0, -30), time.UTC, workweek.Default()).Format(time.DateOnly); len(b) < 5 || b[0].WeekStart != first || b[0].Total != 1 || b[0].Done != 0 {
 		t.Fatalf("burn-up start (want %s): %+v", first, b)
 	}
-	if last := b[len(b)-1]; last.WeekStart != monday(time.Now(), time.UTC).Format(time.DateOnly) || last.Total != 3 || last.Done != 2 {
+	if last := b[len(b)-1]; last.WeekStart != weekOf(time.Now(), time.UTC, workweek.Default()).Format(time.DateOnly) || last.Total != 3 || last.Done != 2 {
 		t.Errorf("this week: %+v", last)
 	}
 
