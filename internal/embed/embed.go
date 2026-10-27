@@ -1,7 +1,8 @@
-// Package embed lets an organisation put its public roadmap and request-form widgets on its own
-// sites (TL-494). A widget runs on the customer's page and calls the API from the customer's origin,
-// so this package keeps the per-org list of origins that are allowed to do that, and the dynamic CORS
-// that reflects Access-Control-Allow-Origin for exactly those origins on the public embed routes.
+// Package embed lets a project put its public roadmap and request-form widgets on its own sites
+// (TL-494). A widget runs on the customer's page and calls the API from the customer's origin, so this
+// package keeps each project's list of origins allowed to do that (per project since TL-683: roadmaps
+// and forms are made there), and the dynamic CORS that reflects Access-Control-Allow-Origin for exactly
+// those origins on the public embed routes.
 //
 // Everything here is the opt-in extra's backend: the app's own origins still go through the strict,
 // app-only CORS unchanged. An org opts in by adding origins; a flags.gg flag gates the feature overall.
@@ -20,17 +21,17 @@ import (
 	"github.com/tracklines/backend/internal/httpx"
 )
 
-// MaxOrigins caps a single org's list. ponytail: a sane ceiling, not a product limit; raise it if a
+// MaxOrigins caps a single project's list. ponytail: a sane ceiling, not a product limit; raise it if a
 // customer genuinely embeds on more than this many distinct origins.
 const MaxOrigins = 50
 
 var (
 	ErrInvalid  = httpx.Code("bad_origin", "an origin like https://example.com is required")
-	ErrTooMany  = httpx.Code("too_many_origins", "too many embed origins for this organization")
+	ErrTooMany  = httpx.Code("too_many_origins", "too many embed origins for this project")
 	ErrNotFound = errors.New("not found")
 )
 
-// Origin is one allowed origin in an org's list.
+// Origin is one allowed origin in a project's list.
 type Origin struct {
 	ID        string `json:"id"`
 	Origin    string `json:"origin"`
@@ -67,9 +68,18 @@ func scan(row pgx.Row) (Origin, error) {
 	return o, err
 }
 
-// List is org's allowed origins, alphabetically.
-func (s Store) List(ctx context.Context, org string) ([]Origin, error) {
-	rows, err := s.DB.Query(ctx, `SELECT `+cols+` FROM embed_origins WHERE org = $1 ORDER BY origin`, org)
+// InOrg is ErrNotFound unless project is org's: every management call checks it first.
+func (s Store) InOrg(ctx context.Context, org, project string) error {
+	var ok bool
+	if err := s.DB.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM projects WHERE id::text = $1 AND owner_clerk_id = $2)`, project, org).Scan(&ok); err != nil || !ok {
+		return ErrNotFound // a malformed id is no project either
+	}
+	return nil
+}
+
+// List is project's allowed origins, alphabetically.
+func (s Store) List(ctx context.Context, project string) ([]Origin, error) {
+	rows, err := s.DB.Query(ctx, `SELECT `+cols+` FROM embed_origins WHERE project_id = $1 ORDER BY origin`, project)
 	if err != nil {
 		return nil, err
 	}
@@ -80,19 +90,19 @@ func (s Store) List(ctx context.Context, org string) ([]Origin, error) {
 	return out, err
 }
 
-// Add normalises raw and adds it to org's list (idempotent: re-adding an existing origin is fine and
+// Add normalises raw and adds it to project's list (idempotent: re-adding an existing origin is fine and
 // returns it). ErrTooMany once the list is full, unless the origin is already there.
-func (s Store) Add(ctx context.Context, org, by, raw string) (Origin, error) {
+func (s Store) Add(ctx context.Context, org, project, by, raw string) (Origin, error) {
 	origin, err := NormalizeOrigin(raw)
 	if err != nil {
 		return Origin{}, err
 	}
 	var n int
-	if err := s.DB.QueryRow(ctx, `SELECT count(*) FROM embed_origins WHERE org = $1`, org).Scan(&n); err != nil {
+	if err := s.DB.QueryRow(ctx, `SELECT count(*) FROM embed_origins WHERE project_id = $1`, project).Scan(&n); err != nil {
 		return Origin{}, err
 	}
 	if n >= MaxOrigins {
-		here, err := s.Allowed(ctx, org, origin)
+		here, err := s.Allowed(ctx, project, origin)
 		if err != nil {
 			return Origin{}, err
 		}
@@ -100,14 +110,14 @@ func (s Store) Add(ctx context.Context, org, by, raw string) (Origin, error) {
 			return Origin{}, ErrTooMany
 		}
 	}
-	return scan(s.DB.QueryRow(ctx, `INSERT INTO embed_origins (org, origin, created_by) VALUES ($1, $2, $3)
-		ON CONFLICT (org, origin) DO UPDATE SET origin = EXCLUDED.origin
-		RETURNING `+cols, org, origin, by))
+	return scan(s.DB.QueryRow(ctx, `INSERT INTO embed_origins (org, project_id, origin, created_by) VALUES ($1, $2, $3, $4)
+		ON CONFLICT (project_id, origin) DO UPDATE SET origin = EXCLUDED.origin
+		RETURNING `+cols, org, project, origin, by))
 }
 
-// Remove drops origin id from org's list. ErrNotFound if it isn't the org's.
-func (s Store) Remove(ctx context.Context, org, id string) error {
-	tag, err := s.DB.Exec(ctx, `DELETE FROM embed_origins WHERE id::text = $1 AND org = $2`, id, org)
+// Remove drops origin id from project's list. ErrNotFound if it isn't the project's.
+func (s Store) Remove(ctx context.Context, project, id string) error {
+	tag, err := s.DB.Exec(ctx, `DELETE FROM embed_origins WHERE id::text = $1 AND project_id = $2`, id, project)
 	if err != nil {
 		return err
 	}
@@ -117,14 +127,14 @@ func (s Store) Remove(ctx context.Context, org, id string) error {
 	return nil
 }
 
-// Allowed reports whether origin is in org's list (exact match on the normalised form).
-func (s Store) Allowed(ctx context.Context, org, origin string) (bool, error) {
+// Allowed reports whether origin is in project's list (exact match on the normalised form).
+func (s Store) Allowed(ctx context.Context, project, origin string) (bool, error) {
 	var ok bool
-	err := s.DB.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM embed_origins WHERE org = $1 AND origin = $2)`, org, origin).Scan(&ok)
+	err := s.DB.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM embed_origins WHERE project_id::text = $1 AND origin = $2)`, project, origin).Scan(&ok)
 	return ok, err
 }
 
-// Resolver maps a public embed request's path to the organisation that owns the resource, so its
+// Resolver maps a public embed request's path to the project that owns the resource, so its
 // allow-list can be checked without a session.
 type Resolver struct{ DB *pgxpool.Pool }
 
@@ -148,37 +158,38 @@ func match(path string) (kind, key string) {
 	return "", ""
 }
 
-// OrgFor returns the org that owns the resource addressed by path, "" if path isn't an embed route or
-// the resource doesn't exist. A missing resource is not an error: the caller just falls back to strict CORS.
-func (r Resolver) OrgFor(ctx context.Context, path string) (string, error) {
+// ProjectFor returns the project that owns the resource addressed by path, "" if path isn't an embed
+// route or the resource doesn't exist. A missing resource is not an error: the caller just falls back to
+// strict CORS.
+func (r Resolver) ProjectFor(ctx context.Context, path string) (string, error) {
 	kind, key := match(path)
-	var q, org string
+	var q, project string
 	switch kind {
 	case "roadmap":
-		q = `SELECT p.owner_clerk_id FROM roadmaps rm JOIN projects p ON p.id = rm.project_id WHERE rm.id::text = $1`
+		q = `SELECT project_id::text FROM roadmaps WHERE id::text = $1`
 	case "intake":
-		q = `SELECT owner_clerk_id FROM projects WHERE intake_token = $1`
+		q = `SELECT id::text FROM projects WHERE intake_token = $1`
 	default:
 		return "", nil
 	}
-	err := r.DB.QueryRow(ctx, q, key).Scan(&org)
+	err := r.DB.QueryRow(ctx, q, key).Scan(&project)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", nil
 	}
-	return org, err
+	return project, err
 }
 
 // CORS wraps the strict (app-only) CORS so that a request from a third-party origin that is in the
-// owning org's allow-list gets Access-Control-Allow-Origin reflected and its preflight answered; an
+// owning project's allow-list gets Access-Control-Allow-Origin reflected and its preflight answered; an
 // allowed non-preflight request is served through `pass` (the mux directly) so the strict CORS, which
 // 403s unknown origins, never sees it. Everything else — no Origin, an app origin, the feature off, an
 // unknown origin, a non-embed path — goes to `strict` exactly as before.
 // record, when set, is called for an allowed, non-preflight embed request that carries a data-key
 // (the `embed` query param), to attribute the hit for usage stats (TL-497). It must not block.
 func CORS(appOrigins []string, enabled func() bool,
-	orgFor func(context.Context, string) (string, error),
+	projectFor func(context.Context, string) (string, error),
 	allowed func(context.Context, string, string) (bool, error),
-	record func(org, origin, path, key string),
+	record func(project, origin, path, key string),
 	methods, headers string) func(strict, pass http.Handler) http.Handler {
 	app := make(map[string]bool, len(appOrigins))
 	for _, o := range appOrigins {
@@ -191,12 +202,12 @@ func CORS(appOrigins []string, enabled func() bool,
 				strict.ServeHTTP(w, r)
 				return
 			}
-			org, err := orgFor(r.Context(), r.URL.Path)
-			if err != nil || org == "" {
+			project, err := projectFor(r.Context(), r.URL.Path)
+			if err != nil || project == "" {
 				strict.ServeHTTP(w, r)
 				return
 			}
-			ok, err := allowed(r.Context(), org, origin)
+			ok, err := allowed(r.Context(), project, origin)
 			if err != nil || !ok {
 				strict.ServeHTTP(w, r)
 				return
@@ -212,7 +223,7 @@ func CORS(appOrigins []string, enabled func() bool,
 				return
 			}
 			if key := r.URL.Query().Get("embed"); key != "" && record != nil {
-				record(org, origin, r.URL.Path, key)
+				record(project, origin, r.URL.Path, key)
 			}
 			pass.ServeHTTP(w, r)
 		})

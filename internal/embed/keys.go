@@ -41,8 +41,8 @@ func newKey() (string, error) {
 	return "tle_" + base64.RawURLEncoding.EncodeToString(b), nil
 }
 
-// CreateKey mints a new public embed key for org with the given label.
-func (s Store) CreateKey(ctx context.Context, org, by, label string) (Key, error) {
+// CreateKey mints a new public embed key for project with the given label.
+func (s Store) CreateKey(ctx context.Context, org, project, by, label string) (Key, error) {
 	label = strings.TrimSpace(label)
 	if len([]rune(label)) > MaxLabel {
 		return Key{}, ErrInvalid
@@ -52,20 +52,20 @@ func (s Store) CreateKey(ctx context.Context, org, by, label string) (Key, error
 		return Key{}, err
 	}
 	var k Key
-	err = s.DB.QueryRow(ctx, `INSERT INTO embed_keys (org, key, label, created_by) VALUES ($1, $2, $3, $4)
+	err = s.DB.QueryRow(ctx, `INSERT INTO embed_keys (org, project_id, key, label, created_by) VALUES ($1, $2, $3, $4, $5)
 		RETURNING id::text, key, label, created_by, to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')`,
-		org, tok, label, by).Scan(&k.ID, &k.Key, &k.Label, &k.CreatedBy, &k.CreatedAt)
+		org, project, tok, label, by).Scan(&k.ID, &k.Key, &k.Label, &k.CreatedBy, &k.CreatedAt)
 	return k, err
 }
 
-// ListKeys is org's keys, newest first, each with its usage totals so far.
-func (s Store) ListKeys(ctx context.Context, org string) ([]Key, error) {
+// ListKeys is project's keys, newest first, each with its usage totals so far.
+func (s Store) ListKeys(ctx context.Context, project string) ([]Key, error) {
 	rows, err := s.DB.Query(ctx, `SELECT k.id::text, k.key, k.label, k.created_by,
 			to_char(k.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
 			COALESCE(SUM(u.hits), 0)::bigint, COUNT(DISTINCT u.origin)::bigint,
 			to_char(MAX(u.day), 'YYYY-MM-DD')
 		FROM embed_keys k LEFT JOIN embed_usage u ON u.embed_key_id = k.id
-		WHERE k.org = $1 GROUP BY k.id ORDER BY k.created_at DESC`, org)
+		WHERE k.project_id = $1 GROUP BY k.id ORDER BY k.created_at DESC`, project)
 	if err != nil {
 		return nil, err
 	}
@@ -82,9 +82,9 @@ func (s Store) ListKeys(ctx context.Context, org string) ([]Key, error) {
 	return out, err
 }
 
-// DeleteKey removes key id from org, and its usage by cascade. ErrNotFound if it isn't the org's.
-func (s Store) DeleteKey(ctx context.Context, org, id string) error {
-	tag, err := s.DB.Exec(ctx, `DELETE FROM embed_keys WHERE id::text = $1 AND org = $2`, id, org)
+// DeleteKey removes key id from project, and its usage by cascade. ErrNotFound if it isn't the project's.
+func (s Store) DeleteKey(ctx context.Context, project, id string) error {
+	tag, err := s.DB.Exec(ctx, `DELETE FROM embed_keys WHERE id::text = $1 AND project_id = $2`, id, project)
 	if err != nil {
 		return err
 	}
@@ -94,10 +94,10 @@ func (s Store) DeleteKey(ctx context.Context, org, id string) error {
 	return nil
 }
 
-// KeyUsage is key id's hits grouped by site and resource, busiest first. ErrNotFound if not org's.
-func (s Store) KeyUsage(ctx context.Context, org, id string) ([]Usage, error) {
+// KeyUsage is key id's hits grouped by site and resource, busiest first. ErrNotFound if not project's.
+func (s Store) KeyUsage(ctx context.Context, project, id string) ([]Usage, error) {
 	var ok bool
-	if err := s.DB.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM embed_keys WHERE id::text = $1 AND org = $2)`, id, org).Scan(&ok); err != nil {
+	if err := s.DB.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM embed_keys WHERE id::text = $1 AND project_id = $2)`, id, project).Scan(&ok); err != nil {
 		return nil, err
 	}
 	if !ok {
@@ -123,14 +123,15 @@ func (s Store) KeyUsage(ctx context.Context, org, id string) ([]Usage, error) {
 }
 
 // RecordUsage bumps the counter for a widget request from origin to path carrying key — but only when
-// key is a live key of org and path is an embed resource. Best-effort: it's stats, so errors are dropped.
-func (s Store) RecordUsage(ctx context.Context, org, origin, path, key string) {
+// key is a live key of the project the resource belongs to, and path is an embed resource. Best-effort:
+// it's stats, so errors are dropped.
+func (s Store) RecordUsage(ctx context.Context, project, origin, path, key string) {
 	kind, _ := match(path)
 	if kind == "" || key == "" {
 		return
 	}
 	_, _ = s.DB.Exec(ctx, `INSERT INTO embed_usage (embed_key_id, origin, resource, day, hits)
-		SELECT k.id, $2, $3, current_date, 1 FROM embed_keys k WHERE k.org = $1 AND k.key = $4
+		SELECT k.id, $2, $3, current_date, 1 FROM embed_keys k WHERE k.project_id::text = $1 AND k.key = $4
 		ON CONFLICT (embed_key_id, origin, resource, day) DO UPDATE SET hits = embed_usage.hits + 1`,
-		org, origin, kind, key)
+		project, origin, kind, key)
 }
