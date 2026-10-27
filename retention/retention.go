@@ -66,7 +66,7 @@ func PurgeBin(ctx context.Context, db *pgxpool.Pool, now time.Time) (int64, erro
 	return tag.RowsAffected(), err
 }
 
-// OrgData deletes everything an organization owns. Deleting its projects cascades to their boards,
+// OrgData deletes everything an organization owns, and tells the auditor to do the same. Deleting its projects cascades to their boards,
 // tickets, comments, attachments (whose files the Sweeper then deletes from UploadThing), roadmaps,
 // intake and repo links; the rest is keyed by org directly. A new org-owned table belongs here.
 var OrgData = []string{
@@ -88,6 +88,10 @@ var OrgData = []string{
 	`DELETE FROM jira_connections WHERE org_id = $1`,
 	`DELETE FROM linear_connections WHERE org_id = $1`,
 	`DELETE FROM deleted_orgs WHERE org_id = $1`,
+	// last: the auditor deletes everything it holds for the org (TL-665), so its events still waiting
+	// here go, and org.purged is all that's sent
+	`DELETE FROM audit_outbox WHERE org_id = $1`,
+	`INSERT INTO audit_outbox (org_id, actor_kind, action, target_type, target_id) VALUES ($1, 'system', 'org.purged', 'org', $1)`,
 }
 
 // PurgeOrgs permanently deletes the data of organizations deleted more than Retention before now,
