@@ -392,3 +392,23 @@ func TestBackfill(t *testing.T) {
 		t.Fatalf("%d rows without their event; first %+v", mismatched, got[0])
 	}
 }
+
+// TL-679: the client reads a ticket's activity from the auditor, with the secret
+func TestClientActivity(t *testing.T) {
+	auditor := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer s3cret" || r.URL.Path != "/internal/orgs/org_1/tickets/t%2F1/activity" && r.URL.EscapedPath() != "/internal/orgs/org_1/tickets/t%2F1/activity" {
+			http.Error(w, "no", http.StatusNotFound)
+			return
+		}
+		_, _ = w.Write([]byte(`[{"id":"e1","at":"2026-10-27T09:00:00Z","actor":"user_1","actor_kind":"person","action":"ticket.assigned","data":{"to":"user_1"}}]`))
+	}))
+	defer auditor.Close()
+	c := Client{URL: auditor.URL, Secret: "s3cret"}
+	got, err := c.Activity(context.Background(), "org_1", "t/1")
+	if err != nil || len(got) != 1 || got[0].Action != "ticket.assigned" || string(got[0].Data) != `{"to":"user_1"}` {
+		t.Fatalf("%+v %v", got, err)
+	}
+	if _, err := (Client{URL: auditor.URL, Secret: "wrong"}).Activity(context.Background(), "org_1", "t/1"); err == nil {
+		t.Fatal("a refusal read as success")
+	}
+}

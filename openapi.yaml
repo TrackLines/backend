@@ -2009,6 +2009,54 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '503': { description: "The history is held by the audit service, which can't be reached (code history_unavailable). The ticket itself still loads." }
 
+  /tickets/{ticketId}/activity:
+    get:
+      tags: [Tickets]
+      operationId: getTicketActivity
+      summary: Everything that happened to a ticket, oldest first
+      description: >-
+        Its stages, edits, assignments, labels, links, comments, files and pull requests, and who did each. Text
+        changes (title, description, comments) are recorded as changed, never what they say. Same access as reading
+        the ticket. Where the audit service holds the history and can't be reached, 503 (code history_unavailable);
+        the ticket itself still loads. Older clients can keep using /history, which has the stages only.
+      parameters:
+        - name: ticketId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Entries, oldest first.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  required: [id, at, actor_kind, action, data]
+                  properties:
+                    id: { type: string, format: uuid }
+                    at: { type: string, format: date-time }
+                    actor: { type: [string, 'null'], description: "A user id, or an agent's or service key's name; null when the system did it." }
+                    actor_kind: { type: string, enum: [person, agent, service, system] }
+                    action:
+                      type: string
+                      description: >-
+                        What happened, and what data holds:
+                        ticket.stage (stage backlog/column/resolved, outcome entered/skipped, stage_order, board_id, board_name, column_id, column_name, done, resolution);
+                        ticket.assigned (from, to);
+                        ticket.updated (fields: type, priority, estimate, due_date, timebox_days, timebox_hours as {from, to}; title, description as true);
+                        ticket.labels_changed and ticket.blocked_by_changed (added or removed);
+                        ticket.parent_changed, ticket.sprint_changed and ticket.planned_changed (from, to);
+                        ticket.reopened (was); ticket.duplicate_of (of); ticket.deleted; ticket.restored; ticket.review_requested; ticket.review_ended;
+                        comment.added (comment_id, reply_to), comment.edited and comment.deleted (comment_id);
+                        attachment.added (attachment_id, name, size), attachment.removed and attachment.kept (attachment_id, name);
+                        pr.linked (provider, repo, number, state), pr.state_changed (provider, repo, number, from, to), pr.unlinked (provider, repo, number).
+                    data: { type: object }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { description: "The history is held by the audit service, which can't be reached (code history_unavailable)." }
+
   /tickets/{ticketId}/prs:
     parameters:
       - $ref: '#/components/parameters/TicketId'
