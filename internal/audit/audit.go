@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"sort"
@@ -249,6 +250,10 @@ func (c Client) get(ctx context.Context, path string, out any) error {
 		return err
 	}
 	defer res.Body.Close()
+	if res.StatusCode == http.StatusBadRequest { // a filter it can't use: its reason is for the caller
+		why, _ := io.ReadAll(io.LimitReader(res.Body, 512))
+		return FilterError(strings.TrimSpace(string(why)))
+	}
 	if res.StatusCode != http.StatusOK {
 		return fmt.Errorf("auditor answered %s", res.Status)
 	}

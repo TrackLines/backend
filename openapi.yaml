@@ -53,6 +53,8 @@ tags:
     description: Bringing projects, boards and tickets over from another tracker (Jira), once.
   - name: Projects
     description: Create, list, inspect, update, and delete projects.
+  - name: Audit log
+    description: Who did what across the organization (Pro keeps a year, Enterprise everything); org admins, signed in.
   - name: Webhooks
     description: An organization's outbound webhooks, signed and retried (Pro and Enterprise).
   - name: Organizations
@@ -348,6 +350,96 @@ paths:
         '403': { description: Not an org admin, or an API key. }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { description: Not finished (import_not_done), or someone has acted on it (import_changed). }
+
+  /org/audit:
+    get:
+      tags: [Audit log]
+      operationId: getAuditLog
+      summary: The organization's audit log, newest first
+      description: >-
+        Who did what across the organization: members and admins, API keys, projects, boards, teams, sprints,
+        integrations, webhooks, imports, exports, bulk edits and ticket deletions. Org admins only, signed in (API
+        keys can't). Pro and Enterprise: Free gets 403 (code audit_plan). Pro shows the last year, Enterprise
+        everything. Actors are ids, as elsewhere. Never secrets, keys, emails or ticket text.
+      parameters:
+        - { name: actor, in: query, schema: { type: string }, description: "A user id, or an agent's or service key's name." }
+        - { name: action, in: query, schema: { type: string }, description: "An action (api_key.created), or a prefix ending in a dot (api_key.). Without one, ticket activity is left out except deletions." }
+        - { name: target_type, in: query, schema: { type: string } }
+        - { name: target, in: query, schema: { type: string }, description: The target's id. }
+        - { name: project, in: query, schema: { type: string, format: uuid } }
+        - { name: from, in: query, schema: { type: string, format: date-time }, description: Inclusive. }
+        - { name: to, in: query, schema: { type: string, format: date-time }, description: Exclusive. }
+        - { name: cursor, in: query, schema: { type: string }, description: "The last page's next_cursor, for the next (older) page." }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+      responses:
+        '200':
+          description: A page of entries.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [events, next_cursor]
+                properties:
+                  events:
+                    type: array
+                    items:
+                      type: object
+                      required: [id, at, actor_kind, action, data]
+                      properties:
+                        id: { type: string, format: uuid }
+                        at: { type: string, format: date-time }
+                        actor: { type: [string, 'null'], description: "A user id, or an agent's or service key's name; null when the system did it." }
+                        actor_kind: { type: string, enum: [person, agent, service, system] }
+                        action:
+                          type: string
+                          description: >-
+                            member.invited and member.invitation_revoked (scope, target); member.joined and member.removed (target: the user);
+                            admin.granted and admin.revoked (target: the user); api_key.created and api_key.revoked (kind, name, owner, read_only, expires_at);
+                            project.created and project.deleted (name), project.renamed (from, to); board.created, board.archived, board.restored and
+                            board.deleted (name), board.renamed (from, to); team.created and team.deleted (name), team.members_changed (name, user,
+                            change added/removed/made_leader/no_longer_leader, leader); sprint.started (board, board_name, number, length_days),
+                            sprint.closed (board, board_name, number); integration.connected and integration.disconnected (provider, and account,
+                            site, workspace, domain or project where it has one); calendar.domain_changed (from, to); webhook.created, webhook.updated
+                            and webhook.deleted (host, events, enabled); import.run (source, state, created, total); export.downloaded (kind);
+                            tickets.bulk_edited (action, count, changed); org.plan_changed (plan, from); org.deleted; ticket.deleted, ticket.restored
+                            and ticket.purged.
+                        target_type: { type: [string, 'null'] }
+                        target_id: { type: [string, 'null'] }
+                        project_id: { type: [string, 'null'], format: uuid }
+                        data: { type: object }
+                  next_cursor: { type: [string, 'null'], description: Pass as cursor for the next page; null on the last. }
+        '400': { description: "A filter the audit service can't use (a bad time, cursor or limit); the message says which." }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: "Not an org admin signed in (code admins_audit_log), or a Free organization (code audit_plan)." }
+        '503': { description: "The audit service can't be reached (code audit_unavailable)." }
+
+  /org/audit/export.csv:
+    get:
+      tags: [Audit log]
+      operationId: exportAuditLog
+      summary: The organization's audit log as CSV
+      description: >-
+        Every entry matching the filters, newest first, with the same access and plan rules as the log. Columns:
+        At, Actor, Actor kind, Action, Target type, Target, Project, Data (the entry's details as JSON). The
+        download is itself recorded (export.downloaded, kind audit_csv).
+      parameters:
+        - { name: actor, in: query, schema: { type: string }, description: "A user id, or an agent's or service key's name." }
+        - { name: action, in: query, schema: { type: string }, description: "An action (api_key.created), or a prefix ending in a dot (api_key.). Without one, ticket activity is left out except deletions." }
+        - { name: target_type, in: query, schema: { type: string } }
+        - { name: target, in: query, schema: { type: string }, description: The target's id. }
+        - { name: project, in: query, schema: { type: string, format: uuid } }
+        - { name: from, in: query, schema: { type: string, format: date-time }, description: Inclusive. }
+        - { name: to, in: query, schema: { type: string, format: date-time }, description: Exclusive. }
+      responses:
+        '200':
+          description: The CSV file.
+          content:
+            text/csv:
+              schema: { type: string }
+        '400': { description: "A filter the audit service can't use; the message says which." }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: "Not an org admin signed in (code admins_audit_log), or a Free organization (code audit_plan)." }
+        '503': { description: "The audit service can't be reached (code audit_unavailable)." }
 
   /org/webhooks:
     get:
@@ -5765,6 +5857,7 @@ components:
         accept_clerk_first: "accept the organization invitation through Clerk before completing this invitation"
         accept_session_required: "invitation acceptance requires a signed-in session"
         embed_managers: "only someone who manages this project, signed in, can change where its roadmaps and request form can be embedded"
+        admins_audit_log: "only org admins, signed in, can see the audit log"
         admins_file_cleanup: "only org admins can see the file clean-up"
         admins_intake_form: "only an organization admin, signed in, can open, close or reset the request form"
         admins_make_service_keys: "only organization admins can make service keys"
@@ -5903,6 +5996,8 @@ components:
         calendar_refused: "{Google's reason for refusing the set-up}"
         cant_keep_file: "only an organization admin or whoever uploaded it can keep this file"
         cant_remove_file: "only an organization admin or whoever uploaded it can remove this file"
+        audit_plan: "the audit log needs the Pro or Enterprise plan"
+        audit_unavailable: "the audit log can't be loaded right now: try again shortly"
         history_unavailable: "this ticket's history can't be loaded right now: try again shortly"
         chat_app_not_configured: "the Google Chat app isn't set up on this server"
         chat_test_refused: "Google Chat refused the test message: {reason}"
