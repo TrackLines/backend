@@ -1,0 +1,1 @@
+-- nothing to undo: queued events are delivered or deleted by the relay

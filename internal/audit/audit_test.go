@@ -412,3 +412,52 @@ func TestClientActivity(t *testing.T) {
 		t.Fatal("a refusal read as success")
 	}
 }
+
+// TL-676: every org already on a paid plan is reported once, so the auditor knows whose log to keep a year
+func TestCurrentPlansReported(t *testing.T) {
+	ctx := context.Background()
+	p := db(t)
+	for _, q := range []string{
+		`DELETE FROM audit_outbox WHERE org_id IN ('org_cp_pro', 'org_cp_ent', 'org_cp_free')`,
+		`DELETE FROM org_billing WHERE org_id IN ('org_cp_pro', 'org_cp_ent', 'org_cp_free')`,
+	} {
+		if _, err := p.Exec(ctx, q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// as they were before the queue existed: no plan_changed queued for them
+	tx, err := p.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(ctx)
+	for _, q := range []string{
+		`ALTER TABLE org_billing DISABLE TRIGGER queue_plan_changed`,
+		`INSERT INTO org_billing (org_id, stripe_status, plan) VALUES ('org_cp_pro', 'active', 'pro'), ('org_cp_ent', 'trialing', NULL), ('org_cp_free', 'canceled', 'pro')`,
+		`ALTER TABLE org_billing ENABLE TRIGGER queue_plan_changed`,
+	} {
+		if _, err := tx.Exec(ctx, q); err != nil {
+			t.Fatal(q, err)
+		}
+	}
+	sql, err := os.ReadFile("../migrations/000100_audit_current_plans.up.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(ctx, string(sql)); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := tx.Query(ctx, `SELECT org_id, data->>'plan' FROM audit_outbox WHERE org_id LIKE 'org_cp_%' AND action = 'org.plan_changed' ORDER BY org_id`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for rows.Next() {
+		var org, plan string
+		_ = rows.Scan(&org, &plan)
+		got = append(got, org+"="+plan)
+	}
+	if fmt.Sprint(got) != "[org_cp_ent=enterprise org_cp_pro=pro]" {
+		t.Fatalf("reported: %v", got)
+	}
+}
