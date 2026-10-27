@@ -94,7 +94,7 @@ paths:
     get:
       tags: [Organizations]
       summary: Resume setup and check the current published guide
-      description: Human sessions only. Members receive admin false and no guide. For admins, initializes setup once per organization; organizations already containing projects are treated as set up. Guide completion is scoped to user and organization, independent of setup.
+      description: Human sessions only. All members receive guide status and permitted chapters based on action permissions and project capacity. Only admins resume organization setup; member status does not initialize or change it. Guide completion is scoped to user and organization, independent of setup.
       responses:
         '200': { description: Onboarding status, content: { application/json: { schema: { $ref: '#/components/schemas/OnboardingState' } } } }
         '403': { description: A signed-in person with an active organization is required }
@@ -133,7 +133,7 @@ paths:
     post:
       tags: [Organizations]
       summary: Persist completion of the current published guide
-      description: Human org admins only, after organization setup. Stores user, org, guide ID, version and completion time idempotently. A routine deployment does not reset completion; a new matching guide version must be deliberately published in backend and frontend.
+      description: Human organization members. Admins must finish organization setup first; members skip that setup. Stores user, org, guide ID, version and completion time idempotently. Routine deployment does not reset completion; publish a matching new guide version deliberately.
       requestBody:
         required: true
         content:
@@ -147,8 +147,26 @@ paths:
       responses:
         '200': { description: Completion persisted, content: { application/json: { schema: { $ref: '#/components/schemas/OnboardingState' } } } }
         '400': { description: Organization setup is incomplete }
-        '403': { description: A human org admin is required }
+        '403': { description: A signed-in organization member is required }
         '409': { description: Reload the current guide version }
+  /onboarding/guide/reset:
+    post:
+      tags: [Organizations]
+      summary: Reset only the caller's guide in their active organization
+      description: Human members only. Idempotently deletes the caller's completion records for this guide ID in the active org, across versions. Leaves organization setup, other users, other organizations and other guide IDs untouched. org_id must match the session's active organization, so a stale page cannot reset a newly selected organization.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [org_id]
+              properties:
+                org_id: { type: string }
+      responses:
+        '200': { description: Guide reset and permitted chapters, content: { application/json: { schema: { $ref: '#/components/schemas/OnboardingState' } } } }
+        '400': { description: Invalid JSON }
+        '403': { description: A human member and matching active organization are required }
   /organizations/members:
     get:
       tags: [Organizations]
@@ -5011,9 +5029,13 @@ components:
   schemas:
     OnboardingState:
       type: object
-      required: [admin, step, project_id, board_id, completed_at, guide]
+      required: [admin, chapters, step, project_id, board_id, completed_at, guide]
       properties:
         admin: { type: boolean }
+        chapters:
+          type: array
+          description: Permitted guide chapters. Project creation is omitted at the plan limit; GitHub connection is admin-only. Ticket creation, personal TUI and MCP usage are available to members.
+          items: { type: string, enum: [project, ticket, github, tui, mcp] }
         step: { type: string, enum: [project, invite, complete] }
         project_id: { type: [string, 'null'], format: uuid }
         board_id: { type: [string, 'null'], format: uuid }
@@ -6098,6 +6120,7 @@ components:
         code: { type: string, description: Stable error code, for translating the message. }
         error: { type: string, description: The English message, as the plain-text response would give it. }
       x-error-codes:
+        guide_organization: "refresh after switching organizations"
         onboarding_board: "choose a board in this organization"
         onboarding_incomplete: "finish organization setup before completing the guide"
         guide_version: "refresh to load the current guide"

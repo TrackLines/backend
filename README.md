@@ -10,7 +10,7 @@ Bugfixes for error reporting, Flags.gg for feature flags.
 
 ## Organization onboarding (TL-705)
 
-Human org admins use `GET /api/onboarding` to resume setup, `POST /api/onboarding/setup`
+Human members use `GET /api/onboarding` for their guide and permitted chapters. Org admins use `POST /api/onboarding/setup`
 to atomically create a project/board or adopt an imported board, and `POST /api/onboarding/finish`
 after optional invitations. Existing organizations skip setup. Project creation shares the plan
 limit lock with normal creation and imports, and retries return the same saved board.
@@ -19,6 +19,10 @@ limit lock with normal creation and imports, and retries return the same saved b
 completion time. Publish a new `GuideVersion` in `internal/onboarding/onboarding.go` only with
 matching frontend guide content for new features. Routine releases never reset completion.
 Migration 106 adds the two tables; user removal and organization purge clean up these records.
+`POST /api/onboarding/guide/reset` with the matching `org_id` resets only the caller's guide in
+that organization. It never resets organization setup or someone else's progress. Chapters follow
+actual action permissions: members can create projects within their plan, add tickets, and use
+their personal TUI/MCP keys; only admins get the GitHub connection chapter.
 
 ## Run it
 

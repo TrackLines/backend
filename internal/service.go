@@ -214,6 +214,7 @@ func (s *Service) Handler() http.Handler {
 	mux.Handle("POST /api/onboarding/setup", signedIn(on.Create))
 	mux.Handle("POST /api/onboarding/finish", signedIn(on.Finish))
 	mux.Handle("POST /api/onboarding/guide/complete", signedIn(on.CompleteGuide))
+	mux.Handle("POST /api/onboarding/guide/reset", signedIn(on.ResetGuide))
 	mux.Handle("GET /api/organizations/members", signedIn(o.Members))
 	mux.Handle("GET /api/organizations/me", signedIn(o.Me))             // the caller's admin flag and the teams they lead
 	mux.Handle("GET /api/organizations/admins", signedIn(o.ListAdmins)) // first admin is resolved from Clerk on demand
