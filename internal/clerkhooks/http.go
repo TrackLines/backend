@@ -129,6 +129,7 @@ func (s System) apply(ctx context.Context, e event) error {
 		args = []any{org, user}
 		stmts = []string{
 			`DELETE FROM org_admins WHERE org_id = $1 AND user_clerk_id = $2`,
+			`DELETE FROM guide_completions WHERE org_id = $1 AND user_id = $2`,
 			`DELETE FROM team_members WHERE user_clerk_id = $2 AND team_id IN (SELECT id FROM teams WHERE org_id = $1)`,
 			`UPDATE api_keys SET revoked_at = now() WHERE org_id = $1 AND owner_clerk_id = $2 AND revoked_at IS NULL`,
 			unassign("$1", "$2", "Unassigned automatically: the assignee left the organization, so this ticket is free to pick up."),
@@ -141,6 +142,7 @@ func (s System) apply(ctx context.Context, e event) error {
 		args = []any{e.Data.ID}
 		stmts = []string{
 			`DELETE FROM org_admins WHERE user_clerk_id = $1`,
+			`DELETE FROM guide_completions WHERE user_id = $1`,
 			`DELETE FROM team_members WHERE user_clerk_id = $1`,
 			`UPDATE api_keys SET revoked_at = now() WHERE owner_clerk_id = $1 AND revoked_at IS NULL`,
 			unassign("", "$1", "Unassigned automatically: the assignee’s account was deleted, so this ticket is free to pick up."),
