@@ -35,6 +35,7 @@ type fakeGoogle struct {
 	dms   map[string]string // users/… → their chat with the app
 	jwks  jose.JSONWebKeySet
 	auths []string
+	certs int // times the signing keys were fetched
 }
 
 func (f *fakeGoogle) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -42,6 +43,7 @@ func (f *fakeGoogle) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	defer f.mu.Unlock()
 	switch {
 	case r.URL.Path == "/certs":
+		f.certs++
 		_ = json.NewEncoder(w).Encode(f.jwks)
 	case r.URL.Path == "/token":
 		_ = r.ParseForm()
@@ -198,6 +200,27 @@ func TestChatApp(t *testing.T) {
 		if rec := event(token, dm("MESSAGE", "users/ava", "spaces/DMAVA")); rec.Code != 401 {
 			t.Errorf("%s: %d", name, rec.Code)
 		}
+	}
+
+	// TL-427: made-up key ids fetch Google's keys again at most once a minute
+	strange, _ := jose.NewSigner(jose.SigningKey{Algorithm: jose.RS256, Key: googleKey}, (&jose.SignerOptions{}).WithType("JWT").WithHeader("kid", "made-up"))
+	strangeToken, _ := jwt.Signed(strange).Claims(map[string]any{"iss": "https://accounts.google.com", "aud": app.Endpoint, "email": "chat@system.gserviceaccount.com", "email_verified": true,
+		"iat": now.Unix(), "exp": now.Add(time.Hour).Unix()}).Serialize()
+	fetched := func() int { google.mu.Lock(); defer google.mu.Unlock(); return google.certs }
+	before := fetched()
+	for range 3 {
+		if rec := event(strangeToken, dm("MESSAGE", "users/ava", "spaces/DMAVA")); rec.Code != 401 {
+			t.Fatalf("unknown key: %d", rec.Code)
+		}
+	}
+	if got := fetched() - before; got != 0 {
+		t.Fatalf("unknown kid fetched the keys %d more times within a minute", got)
+	}
+	now = now.Add(2 * time.Minute)
+	event(strangeToken, dm("MESSAGE", "users/ava", "spaces/DMAVA"))
+	event(strangeToken, dm("MESSAGE", "users/ava", "spaces/DMAVA"))
+	if got := fetched() - before; got != 1 {
+		t.Fatalf("after a minute: %d fetches, want 1", got)
 	}
 
 	// an unlinked person gets a one-time link; a room is told it's personal only

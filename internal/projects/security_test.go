@@ -68,6 +68,13 @@ func TestProjectSecurity(t *testing.T) {
 			t.Errorf("%s can delete project: got %d, want 403", name, got)
 		}
 	}
+	// TL-427: only admins rename; a member can still edit the description under the same name
+	if got := call(member, http.MethodPatch, `{"name":"Renamed","description":""}`, h.Update).Code; got != http.StatusForbidden {
+		t.Errorf("member can rename the project: got %d, want 403", got)
+	}
+	if got := call(member, http.MethodPatch, `{"name":"Protected","description":"by a member"}`, h.Update).Code; got != http.StatusNoContent {
+		t.Errorf("member editing the description: got %d, want 204", got)
+	}
 	var name, prefix string
 	if err := db.QueryRow(ctx, `SELECT name, key_prefix FROM projects WHERE id = $1`, project.ID).Scan(&name, &prefix); err != nil {
 		t.Fatal(err)

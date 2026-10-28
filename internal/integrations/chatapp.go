@@ -136,16 +136,18 @@ func (c *ChatApp) verify(ctx context.Context, r *http.Request) error {
 	return nil
 }
 
-// signingKeys are Google's, cached for an hour and fetched again when a token names a key we don't have.
+// signingKeys are Google's, cached for an hour and fetched again when a token names a key we don't
+// have, but at most once a minute, so made-up key ids can't send every request on to Google (TL-427).
 func (c *ChatApp) signingKeys(ctx context.Context, tok *jwt.JSONWebToken) (*jose.JSONWebKeySet, error) {
 	kid := ""
 	if len(tok.Headers) > 0 {
 		kid = tok.Headers[0].KeyID
 	}
 	c.mu.Lock()
-	keys, fresh := c.keys, c.clock().Sub(c.keysAt) < time.Hour
+	age := c.clock().Sub(c.keysAt)
+	keys := c.keys
 	c.mu.Unlock()
-	if keys != nil && fresh && len(keys.Key(kid)) > 0 {
+	if keys != nil && (age < time.Minute || (age < time.Hour && len(keys.Key(kid)) > 0)) {
 		return keys, nil
 	}
 	var set jose.JSONWebKeySet
