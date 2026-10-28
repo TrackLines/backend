@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"slices"
 
 	"github.com/bugfixes/go-bugfixes/logs"
 	"github.com/clerk/clerk-sdk-go/v2"
@@ -17,29 +18,36 @@ import (
 var (
 	ErrNotMember = httpx.Code("not_member", "user is not a member of this organization")
 	ErrLastAdmin = httpx.Code("last_admin", "an organization needs at least one admin")
-	ErrNoMembers = httpx.Code("no_members", "organization has no members to make admin")
 )
 
-type orgGetter interface {
-	Get(ctx context.Context, idOrSlug string) (*clerk.Organization, error)
+// AdminRole is Clerk's role for an organization admin (TL-690); everyone else is MemberRole.
+const (
+	AdminRole  = "org:admin"
+	MemberRole = "org:member"
+)
+
+type roleUpdater interface {
+	Update(ctx context.Context, params *organizationmembership.UpdateParams) (*clerk.OrganizationMembership, error)
 }
 
-// Admins is the org-admin model: who administers each Clerk organization inside TrackLines.
-// Orgs and their membership stay in Clerk; this only records which members are admins.
+// Admins is the org-admin model. Who's an admin is Clerk's org:admin role (TL-690), so SSO and
+// Directory Sync role mappings decide it too. org_admins mirrors the role: the admin API writes it
+// (with the granting admin, for the org log) and the Clerk webhook writes changes made elsewhere,
+// so checks read Postgres and never wait on Clerk.
 type Admins struct {
 	DB          *pgxpool.Pool
-	Orgs        orgGetter
 	Memberships membershipLister
+	Roles       roleUpdater // changes a member's Clerk role (grant, revoke)
 }
 
 // Admin is one admin and how they became one.
 type Admin struct {
 	UserID    string `json:"user_id"`
-	GrantedBy string `json:"granted_by"` // clerk:creator | clerk:admin-role | clerk:earliest-member | an admin's user id
+	GrantedBy string `json:"granted_by"` // an admin's user id, or clerk:… when Clerk said so (its dashboard, SSO, the first sync)
 	CreatedAt string `json:"created_at"`
 }
 
-// List returns the org's admins, resolving the first one from Clerk if there are none yet.
+// List returns the org's admins, filling the mirror from Clerk if it has none yet.
 func (a Admins) List(ctx context.Context, org string) ([]Admin, error) {
 	if err := a.seed(ctx, org); err != nil {
 		return nil, err
@@ -55,7 +63,7 @@ func (a Admins) List(ctx context.Context, org string) ([]Admin, error) {
 	})
 }
 
-// IsAdmin reports whether user administers org, resolving the first admin if needed.
+// IsAdmin reports whether user administers org.
 func (a Admins) IsAdmin(ctx context.Context, org, user string) (bool, error) {
 	if err := a.seed(ctx, org); err != nil {
 		return false, err
@@ -65,87 +73,55 @@ func (a Admins) IsAdmin(ctx context.Context, org, user string) (bool, error) {
 	return ok, err
 }
 
-// seed gives an org with no admins its first one, in order of preference:
-//  1. the Clerk user who created the organization, if they're still a member;
-//  2. otherwise the longest-standing member with Clerk's org:admin role;
-//  3. otherwise the longest-standing member.
-//
-// An org with no members gets none (ErrNoMembers). Clerk errors are returned and nothing is
-// stored, so the next call tries again. Concurrent seeds pick the same person, so they agree.
+// seed fills an empty mirror with the org's Clerk admins: a new org's creator is one, before
+// Clerk's webhook arrives. Clerk errors are returned and nothing is stored, so the next call tries again.
 func (a Admins) seed(ctx context.Context, org string) error {
 	var has bool
 	if err := a.DB.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM org_admins WHERE org_id = $1)`, org).Scan(&has); err != nil || has {
 		return err
 	}
-	user, how, err := a.firstAdmin(ctx, org)
+	return a.pull(ctx, org)
+}
+
+// pull adds the org's Clerk admins missing from the mirror.
+func (a Admins) pull(ctx context.Context, org string) error {
+	limit := int64(100) // ponytail: one page of admins; page through if an org ever has more
+	list, err := a.Memberships.List(ctx, &organizationmembership.ListParams{OrganizationID: org, Roles: []string{AdminRole}, ListParams: clerk.ListParams{Limit: &limit}})
 	if err != nil {
 		return err
-	}
-	_, err = a.DB.Exec(ctx, `INSERT INTO org_admins (org_id, user_clerk_id, granted_by) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`, org, user, how)
-	return err
-}
-
-func (a Admins) firstAdmin(ctx context.Context, org string) (string, string, error) {
-	o, err := a.Orgs.Get(ctx, org)
-	if err != nil {
-		return "", "", err
-	}
-	if o.CreatedBy != "" {
-		if ok, err := a.member(ctx, org, o.CreatedBy); err != nil || ok {
-			return o.CreatedBy, "clerk:creator", err
-		}
-	}
-	for _, f := range []struct {
-		roles []string
-		how   string
-	}{{[]string{"org:admin"}, "clerk:admin-role"}, {nil, "clerk:earliest-member"}} {
-		limit, oldest := int64(1), "+created_at"
-		list, err := a.Memberships.List(ctx, &organizationmembership.ListParams{
-			OrganizationID: org, Roles: f.roles, OrderBy: &oldest, ListParams: clerk.ListParams{Limit: &limit},
-		})
-		if err != nil {
-			return "", "", err
-		}
-		for _, m := range list.OrganizationMemberships {
-			if m != nil && m.PublicUserData != nil && m.PublicUserData.UserID != "" {
-				return m.PublicUserData.UserID, f.how, nil
-			}
-		}
-	}
-	return "", "", ErrNoMembers
-}
-
-// member reports whether user belongs to the Clerk organization.
-func (a Admins) member(ctx context.Context, org, user string) (bool, error) {
-	limit := int64(1)
-	list, err := a.Memberships.List(ctx, &organizationmembership.ListParams{
-		OrganizationID: org, UserIDs: []string{user}, ListParams: clerk.ListParams{Limit: &limit},
-	})
-	if err != nil {
-		return false, err
 	}
 	for _, m := range list.OrganizationMemberships {
-		if m != nil && m.PublicUserData != nil && m.PublicUserData.UserID == user {
-			return true, nil
+		if m == nil || m.PublicUserData == nil || m.PublicUserData.UserID == "" || m.Role != AdminRole {
+			continue
+		}
+		if _, err := a.DB.Exec(ctx, `INSERT INTO org_admins (org_id, user_clerk_id, granted_by) VALUES ($1, $2, 'clerk:admin-role') ON CONFLICT DO NOTHING`, org, m.PublicUserData.UserID); err != nil {
+			return err
 		}
 	}
-	return false, nil
+	return nil
 }
 
-// Grant makes a Clerk member of org an admin; by is the granting admin.
-func (a Admins) Grant(ctx context.Context, org, user, by string) error {
-	ok, err := a.member(ctx, org, user)
-	if err != nil {
-		return err
-	}
-	if !ok {
+// setRole changes user's Clerk role in org; someone who isn't a member is ErrNotMember.
+func (a Admins) setRole(ctx context.Context, org, user, role string) error {
+	_, err := a.Roles.Update(ctx, &organizationmembership.UpdateParams{OrganizationID: org, UserID: user, Role: &role})
+	var api *clerk.APIErrorResponse
+	if errors.As(err, &api) && api.HTTPStatusCode == http.StatusNotFound {
 		return ErrNotMember
 	}
-	_, err = a.DB.Exec(ctx, `INSERT INTO org_admins (org_id, user_clerk_id, granted_by) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`, org, user, by)
 	return err
 }
 
-// Revoke removes an admin, refusing to remove the last one.
+// Grant makes a Clerk member of org an admin, in Clerk and the mirror; by is the granting admin.
+func (a Admins) Grant(ctx context.Context, org, user, by string) error {
+	if err := a.setRole(ctx, org, user, AdminRole); err != nil {
+		return err
+	}
+	_, err := a.DB.Exec(ctx, `INSERT INTO org_admins (org_id, user_clerk_id, granted_by) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`, org, user, by)
+	return err
+}
+
+// Revoke makes an admin a member again, refusing to remove the last one. Someone who has
+// left the org loses the row anyway.
 func (a Admins) Revoke(ctx context.Context, org, user string) error {
 	return pgx.BeginFunc(ctx, a.DB, func(tx pgx.Tx) error {
 		// lock the org's admin rows so two revokes can't both leave zero
@@ -157,12 +133,59 @@ func (a Admins) Revoke(ctx context.Context, org, user string) error {
 		if err != nil {
 			return err
 		}
-		if len(admins) == 1 && admins[0] == user {
+		if !slices.Contains(admins, user) {
+			return nil
+		}
+		if len(admins) == 1 {
 			return ErrLastAdmin
+		}
+		if err := a.setRole(ctx, org, user, MemberRole); err != nil && !errors.Is(err, ErrNotMember) {
+			return err
 		}
 		_, err = tx.Exec(ctx, `DELETE FROM org_admins WHERE org_id = $1 AND user_clerk_id = $2`, org, user)
 		return err
 	})
+}
+
+// SyncToClerk gives the admins recorded before TL-690 Clerk's org:admin role, once each, then
+// adds each of those orgs' other Clerk admins to the mirror. Safe to run on every start: rows
+// already in Clerk are skipped, and someone who left their org loses the row.
+func (a Admins) SyncToClerk(ctx context.Context) error {
+	rows, err := a.DB.Query(ctx, `SELECT org_id, user_clerk_id FROM org_admins WHERE NOT in_clerk ORDER BY org_id, created_at`)
+	if err != nil {
+		return err
+	}
+	pending, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) ([2]string, error) {
+		var p [2]string
+		return p, row.Scan(&p[0], &p[1])
+	})
+	if err != nil {
+		return err
+	}
+	orgs := map[string]bool{}
+	for _, p := range pending {
+		org, user := p[0], p[1]
+		q := `UPDATE org_admins SET in_clerk = true WHERE org_id = $1 AND user_clerk_id = $2`
+		switch err := a.setRole(ctx, org, user, AdminRole); {
+		case errors.Is(err, ErrNotMember):
+			q = `DELETE FROM org_admins WHERE org_id = $1 AND user_clerk_id = $2`
+			logs.Infof("organizations: %s left %s: no longer an admin", user, org)
+		case err != nil:
+			return err // tried again next start
+		default:
+			logs.Infof("organizations: %s is org:admin in Clerk for %s", user, org)
+		}
+		if _, err := a.DB.Exec(ctx, q, org, user); err != nil {
+			return err
+		}
+		orgs[org] = true
+	}
+	for org := range orgs {
+		if err := a.pull(ctx, org); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // RequireAdmin writes an error and returns false unless the caller is a signed-in admin of their
@@ -293,8 +316,6 @@ func WriteErr(w http.ResponseWriter, r *http.Request, err error) {
 	case errors.Is(err, ErrNotMember):
 		httpx.Error(w, r, http.StatusUnprocessableEntity, err)
 	case errors.Is(err, ErrLastAdmin):
-		httpx.Error(w, r, http.StatusConflict, err)
-	case errors.Is(err, ErrNoMembers):
 		httpx.Error(w, r, http.StatusConflict, err)
 	default:
 		logs.Errorf("organizations: admins: %v", err)

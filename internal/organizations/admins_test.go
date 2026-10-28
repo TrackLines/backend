@@ -17,20 +17,21 @@ import (
 	"github.com/tracklines/backend/internal/auth"
 )
 
-// fakeClerk is an org with a creator and members (oldest first), each with a Clerk role.
+// fakeClerk is an org's members (oldest first), each with a Clerk role; Update changes a role and
+// records it, and a non-member is Clerk's 404.
 type fakeClerk struct {
-	creator string
-	members [][2]string // user id, role
+	members *[][2]string // user id, role
 	err     error
+	updates *[]string // "user=role"
 }
 
-func (f fakeClerk) Get(context.Context, string) (*clerk.Organization, error) {
-	return &clerk.Organization{CreatedBy: f.creator}, f.err
+func newClerk(members ...[2]string) fakeClerk {
+	return fakeClerk{members: &members, updates: &[]string{}}
 }
 
 func (f fakeClerk) List(_ context.Context, p *organizationmembership.ListParams) (*clerk.OrganizationMembershipList, error) {
 	out := &clerk.OrganizationMembershipList{}
-	for _, m := range f.members {
+	for _, m := range *f.members {
 		if (len(p.UserIDs) > 0 && !slices.Contains(p.UserIDs, m[0])) || (len(p.Roles) > 0 && !slices.Contains(p.Roles, m[1])) {
 			continue
 		}
@@ -39,6 +40,20 @@ func (f fakeClerk) List(_ context.Context, p *organizationmembership.ListParams)
 		})
 	}
 	return out, f.err
+}
+
+func (f fakeClerk) Update(_ context.Context, p *organizationmembership.UpdateParams) (*clerk.OrganizationMembership, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	for i, m := range *f.members {
+		if m[0] == p.UserID {
+			(*f.members)[i][1] = *p.Role
+			*f.updates = append(*f.updates, p.UserID+"="+*p.Role)
+			return &clerk.OrganizationMembership{Role: *p.Role}, nil
+		}
+	}
+	return nil, &clerk.APIErrorResponse{HTTPStatusCode: 404}
 }
 
 func TestAdmins(t *testing.T) {
@@ -56,60 +71,82 @@ func TestAdmins(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	admins := func(f fakeClerk) Admins { return Admins{DB: db, Orgs: f, Memberships: f} }
-	first := func(a Admins, org string) Admin {
+	admins := func(f fakeClerk) Admins { return Admins{DB: db, Memberships: f, Roles: f} }
+	ids := func(a Admins, org string) []string {
 		t.Helper()
 		list, err := a.List(ctx, org)
-		if err != nil || len(list) != 1 {
-			t.Fatalf("%s: %+v %v", org, list, err)
+		if err != nil {
+			t.Fatalf("%s: %v", org, err)
 		}
-		return list[0]
+		var out []string
+		for _, ad := range list {
+			out = append(out, ad.UserID+":"+ad.GrantedBy)
+		}
+		return out
 	}
 
-	// 1. the creator, while still a member
-	if ad := first(admins(fakeClerk{creator: "u1", members: [][2]string{{"u0", "org:admin"}, {"u1", "org:member"}}}), "org_creator"); ad.UserID != "u1" || ad.GrantedBy != "clerk:creator" {
-		t.Fatalf("creator: %+v", ad)
+	// TL-690: an empty mirror is filled with Clerk's org:admin members (a new org's creator), nobody else
+	if got := ids(admins(newClerk([2]string{"u0", "org:member"}, [2]string{"u1", "org:admin"}, [2]string{"u2", "org:admin"})), "org_creator"); !slices.Equal(got, []string{"u1:clerk:admin-role", "u2:clerk:admin-role"}) {
+		t.Fatalf("seeded: %v", got)
 	}
-	// 2. creator gone: the longest-standing Clerk admin
-	if ad := first(admins(fakeClerk{creator: "gone", members: [][2]string{{"u0", "org:member"}, {"u2", "org:admin"}, {"u3", "org:admin"}}}), "org_role"); ad.UserID != "u2" || ad.GrantedBy != "clerk:admin-role" {
-		t.Fatalf("admin role: %+v", ad)
+	// no Clerk admins: none, and no error
+	if got := ids(admins(newClerk([2]string{"u4", "org:member"})), "org_none"); len(got) != 0 {
+		t.Fatalf("no admins: %v", got)
 	}
-	// 3. no Clerk admins either: the longest-standing member
-	if ad := first(admins(fakeClerk{members: [][2]string{{"u4", "org:member"}, {"u5", "org:member"}}}), "org_earliest"); ad.UserID != "u4" || ad.GrantedBy != "clerk:earliest-member" {
-		t.Fatalf("earliest: %+v", ad)
-	}
-	// once resolved it sticks, even if Clerk changes
-	if ad := first(admins(fakeClerk{creator: "someone-else", members: [][2]string{{"someone-else", "org:admin"}}}), "org_creator"); ad.UserID != "u1" {
-		t.Fatalf("seed should be stored: %+v", ad)
-	}
-	// 4. nobody to pick, or Clerk down: an error and nothing stored, so it retries
-	if _, err := admins(fakeClerk{}).List(ctx, "org_empty"); !errors.Is(err, ErrNoMembers) {
-		t.Fatal("empty org:", err)
-	}
+	// Clerk down: the error, nothing stored, so it retries
 	down := errors.New("clerk down")
-	if _, err := admins(fakeClerk{err: down}).IsAdmin(ctx, "org_down", "u1"); !errors.Is(err, down) {
+	if _, err := admins(fakeClerk{members: &[][2]string{}, err: down}).IsAdmin(ctx, "org_down", "u1"); !errors.Is(err, down) {
 		t.Fatal("clerk error:", err)
 	}
-	if ad := first(admins(fakeClerk{creator: "u9", members: [][2]string{{"u9", "org:admin"}}}), "org_down"); ad.UserID != "u9" {
-		t.Fatalf("retry after clerk error: %+v", ad)
+	if ok, err := admins(newClerk([2]string{"u9", "org:admin"})).IsAdmin(ctx, "org_down", "u9"); err != nil || !ok {
+		t.Fatalf("retry after clerk error: %v %v", ok, err)
 	}
 
-	// grant and revoke
-	a := admins(fakeClerk{creator: "u1", members: [][2]string{{"u1", "org:admin"}, {"u6", "org:member"}}})
+	// grant and revoke change the Clerk role, then the mirror
+	f := newClerk([2]string{"u1", "org:admin"}, [2]string{"u2", "org:admin"}, [2]string{"u6", "org:member"})
+	a := admins(f)
+	if _, err := db.Exec(ctx, `DELETE FROM org_admins WHERE org_id = 'org_creator' AND user_clerk_id = 'u2'`); err != nil {
+		t.Fatal(err)
+	}
 	if err := a.Grant(ctx, "org_creator", "outsider", "u1"); !errors.Is(err, ErrNotMember) {
 		t.Fatal("grant non-member:", err)
 	}
 	if err := a.Grant(ctx, "org_creator", "u6", "u1"); err != nil {
 		t.Fatal(err)
 	}
-	if ok, _ := a.IsAdmin(ctx, "org_creator", "u6"); !ok {
-		t.Fatal("u6 should be admin")
+	if ok, _ := a.IsAdmin(ctx, "org_creator", "u6"); !ok || !slices.Contains(*f.updates, "u6=org:admin") {
+		t.Fatalf("u6 should be admin, in Clerk too: %v", *f.updates)
 	}
-	if err := a.Revoke(ctx, "org_creator", "u1"); err != nil {
-		t.Fatal(err)
+	if err := a.Revoke(ctx, "org_creator", "u1"); err != nil || !slices.Contains(*f.updates, "u1=org:member") {
+		t.Fatalf("revoke: %v %v", err, *f.updates)
 	}
 	if err := a.Revoke(ctx, "org_creator", "u6"); !errors.Is(err, ErrLastAdmin) {
 		t.Fatal("last admin:", err)
+	}
+	if err := a.Revoke(ctx, "org_creator", "u0"); err != nil { // not an admin: nothing to do
+		t.Fatal("revoke non-admin:", err)
+	}
+	*f.updates = nil
+	if err := admins(fakeClerk{members: f.members, updates: f.updates, err: down}).Grant(ctx, "org_creator", "u2", "u6"); !errors.Is(err, down) {
+		t.Fatal("grant with clerk down:", err)
+	}
+	if ok, _ := a.IsAdmin(ctx, "org_creator", "u2"); ok {
+		t.Fatal("a failed Clerk change mustn't make an admin")
+	}
+	// the one-off sync: admins recorded before TL-690 get the Clerk role once; a leaver loses the row;
+	// the org's other Clerk admins join the mirror
+	sync := newClerk([2]string{"s1", "org:member"}, [2]string{"s3", "org:admin"})
+	if _, err := db.Exec(ctx, `INSERT INTO org_admins (org_id, user_clerk_id, granted_by, in_clerk) VALUES
+		('org_sync', 's1', 'clerk:creator', false), ('org_sync', 's2', 's1', false)`); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if err := admins(sync).SyncToClerk(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := ids(admins(sync), "org_sync"); !slices.Equal(got, []string{"s1:clerk:creator", "s3:clerk:admin-role"}) || !slices.Equal(*sync.updates, []string{"s1=org:admin"}) {
+		t.Fatalf("synced: %v, clerk updates %v", got, *sync.updates)
 	}
 
 	// handlers: API keys and non-admins can't grant; the admin can

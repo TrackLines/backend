@@ -1,7 +1,8 @@
 // Package clerkhooks keeps stored org data in step with Clerk: when someone leaves an org, is
 // deleted, or the org is deleted, their admin and team rows go and their API keys are revoked.
 // Access checks still ask Clerk directly (webhooks can be missed); this is cleanup. Joining also
-// completes the newcomer's TrackLin.es invitations (TL-518).
+// completes the newcomer's TrackLin.es invitations (TL-518), and a membership's role keeps the
+// org_admins mirror in step with Clerk (TL-690).
 package clerkhooks
 
 import (
@@ -17,6 +18,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/tracklines/backend/internal/billing"
 	"github.com/tracklines/backend/internal/boards"
+	"github.com/tracklines/backend/internal/organizations"
 )
 
 // Author is who a comment the system writes is by (shown as recorded: it's not a person's id).
@@ -66,11 +68,12 @@ type event struct {
 		PublicUserData struct {
 			UserID string `json:"user_id"`
 		} `json:"public_user_data"`
+		Role string `json:"role"` // organizationMembership.created/updated
 	} `json:"data"`
 }
 
 // Webhook: POST /api/webhooks/clerk. Authenticated by Svix signature, not session. Every change is
-// a delete/revoke that's safe to repeat, so Svix's at-least-once, unordered delivery is fine.
+// a delete/revoke or an insert-if-missing that's safe to repeat, so Svix's at-least-once delivery is fine.
 func (s System) Webhook(now func() time.Time) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if s.Secret == "" {
@@ -110,11 +113,25 @@ func (s System) apply(ctx context.Context, e event) error {
 	if s.Forget != nil && strings.HasPrefix(e.Type, "organizationMembership.") {
 		s.Forget(ctx, e.Data.Organization.ID) // pickers and the API key check see the change now
 	}
-	if e.Type == "organizationMembership.created" { // they joined: finish their invitations (TL-518)
+	if e.Type == "organizationMembership.created" || e.Type == "organizationMembership.updated" {
 		org, user := e.Data.Organization.ID, e.Data.PublicUserData.UserID
 		if org == "" || user == "" {
 			return nil
 		}
+		// the admin mirror follows Clerk's role (TL-690), whoever changed it: the admin API (its row is
+		// already there), Clerk's dashboard, or an SSO role mapping. ponytail: trusts delivery order;
+		// read the role back from Clerk if a stale event ever undoes a newer change.
+		q := `DELETE FROM org_admins WHERE org_id = $1 AND user_clerk_id = $2`
+		if e.Data.Role == organizations.AdminRole {
+			q = `INSERT INTO org_admins (org_id, user_clerk_id, granted_by) VALUES ($1, $2, 'clerk:admin-role') ON CONFLICT DO NOTHING`
+		}
+		if _, err := s.DB.Exec(ctx, q, org, user); err != nil {
+			return err
+		}
+		if e.Type == "organizationMembership.updated" {
+			return nil
+		}
+		// they joined: finish their invitations (TL-518)
 		if _, err := s.DB.Exec(ctx, auditMember, org, user, "member.joined"); err != nil { // the org log (TL-669)
 			return err
 		}

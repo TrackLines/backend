@@ -7,7 +7,6 @@ import (
 
 	"github.com/bugfixes/go-bugfixes/logs"
 	"github.com/clerk/clerk-sdk-go/v2"
-	"github.com/clerk/clerk-sdk-go/v2/organization"
 	"github.com/clerk/clerk-sdk-go/v2/organizationmembership"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/tracklines/backend/internal/auth"
@@ -30,10 +29,10 @@ type System struct {
 
 func NewSystem(db *pgxpool.Pool) System {
 	m := organizationmembership.NewClient(&clerk.ClientConfig{})
-	return System{memberships: m, admins: Admins{DB: db, Orgs: organization.NewClient(&clerk.ClientConfig{}), Memberships: m}}
+	return System{memberships: m, admins: Admins{DB: db, Memberships: m, Roles: m}}
 }
 
-// CachingMembers serves the member list through l (e.g. clerkcache). Admin checks still ask Clerk directly.
+// CachingMembers serves the member list through l (e.g. clerkcache). Admin changes still ask Clerk directly.
 func (h System) CachingMembers(l membershipLister) System { h.memberships = l; return h }
 
 // AdminModel exposes the org-admin model to other packages (teams checks admins with it).
