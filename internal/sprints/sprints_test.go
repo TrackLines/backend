@@ -156,7 +156,11 @@ func TestSprints(t *testing.T) {
 	}
 	starts, _ := time.Parse(time.RFC3339, updated.StartsAt)
 	ends, _ := time.Parse(time.RFC3339, updated.EndsAt)
-	if !ends.Equal(starts.Add(10 * 24 * time.Hour)) {
+	want := starts.Add(10 * 24 * time.Hour)
+	for want.Weekday() == time.Saturday || want.Weekday() == time.Sunday { // ends on a working day (TL-702)
+		want = want.Add(24 * time.Hour)
+	}
+	if !ends.Equal(want) {
 		t.Fatalf("updated end date: starts %s ends %s", starts, ends)
 	}
 

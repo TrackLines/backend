@@ -8,6 +8,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"net"
 	"time"
 
 	"github.com/bugfixes/go-bugfixes/logs"
@@ -30,7 +32,44 @@ type Memberships struct {
 }
 
 func (m Memberships) List(ctx context.Context, params *organizationmembership.ListParams) (*clerk.OrganizationMembershipList, error) {
-	return cached(ctx, m.VK, m.TTL, "clerk:memberships:"+params.OrganizationID+":", params, m.Next.List)
+	return cached(ctx, m.VK, m.TTL, "clerk:memberships:"+params.OrganizationID+":", params, retried(m.Next.List))
+}
+
+// Forget drops every cached member list of org, so a join or leave shows at once instead of after
+// the TTL (TL-520). Valkey errors are logged, not returned: the TTL still clears it.
+func (m Memberships) Forget(ctx context.Context, org string) {
+	if m.VK == nil || org == "" {
+		return
+	}
+	var cursor uint64
+	for {
+		res, err := m.VK.Do(ctx, m.VK.B().Scan().Cursor(cursor).Match("clerk:memberships:"+org+":*").Count(100).Build()).AsScanEntry()
+		if err != nil {
+			logs.Warnf("clerkcache: forget: %v", err)
+			return
+		}
+		if len(res.Elements) > 0 {
+			if err := m.VK.Do(ctx, m.VK.B().Del().Key(res.Elements...).Build()).Error(); err != nil {
+				logs.Warnf("clerkcache: forget: %v", err)
+			}
+		}
+		if cursor = res.Cursor; cursor == 0 {
+			return
+		}
+	}
+}
+
+// retried asks again once when the connection to Clerk failed (reset, timeout) rather than Clerk
+// answering with an error (TL-710): a list is a read, so a second try is safe.
+func retried[P any, T any](fetch func(context.Context, P) (*T, error)) func(context.Context, P) (*T, error) {
+	return func(ctx context.Context, params P) (*T, error) {
+		out, err := fetch(ctx, params)
+		var ne net.Error
+		if err != nil && ctx.Err() == nil && errors.As(err, &ne) {
+			return fetch(ctx, params)
+		}
+		return out, err
+	}
 }
 
 type userLister interface {
