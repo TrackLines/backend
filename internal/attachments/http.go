@@ -141,8 +141,9 @@ func (h System) Upload(w http.ResponseWriter, r *http.Request) {
 }
 
 // uploaderOrAdmin: may this caller remove or keep a file uploaded by uploader? Whoever uploaded it
-// (a person, or an agent or service key by its name), or an org admin; agent and service keys act
-// only for themselves, never with their owner's admin rights (TL-659).
+// (a person, or an agent or service key by its name), the person who owns the agent key that uploaded
+// it (TL-712), or an org admin; agent and service keys act only for themselves, never with their
+// owner's rights (TL-659).
 func (h System) uploaderOrAdmin(r *http.Request) func(uploader string) bool {
 	return func(uploader string) bool {
 		ctx := r.Context()
@@ -150,12 +151,27 @@ func (h System) uploaderOrAdmin(r *http.Request) func(uploader string) bool {
 			return true
 		}
 		user, signedIn := auth.UserID(ctx)
-		if !signedIn || h.IsAdmin == nil || (auth.ViaAPIKey(ctx) && auth.APIKeyKind(ctx) != "personal") {
+		if !signedIn || (auth.ViaAPIKey(ctx) && auth.APIKeyKind(ctx) != "personal") {
+			return false
+		}
+		if h.ownsAgent(ctx, auth.OrgID(ctx), user, uploader) {
+			return true
+		}
+		if h.IsAdmin == nil {
 			return false
 		}
 		admin, _ := h.IsAdmin(ctx, auth.OrgID(ctx), user)
 		return admin
 	}
+}
+
+// ownsAgent: is name one of user's agent keys in org (revoked ones too: their files stay theirs)?
+// Only when nobody else in the org has an agent key by that name, for older hand-named keys.
+func (h System) ownsAgent(ctx context.Context, org, user, name string) bool {
+	var owns bool
+	err := h.store.DB.QueryRow(ctx, `SELECT bool_and(owner_clerk_id = $3) FROM api_keys WHERE org_id = $1 AND name = $2 AND kind = 'ai'`,
+		org, name, user).Scan(&owns)
+	return err == nil && owns
 }
 
 // Delete removes attachment {id}, for whoever uploaded it or an org admin; its file on UploadThing

@@ -7,7 +7,9 @@ package mcp
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -15,6 +17,7 @@ import (
 	"strings"
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/tracklines/backend/internal/attachments"
 	"github.com/tracklines/backend/internal/tickets"
 )
 
@@ -33,6 +36,12 @@ type tool struct {
 
 // caller runs an API request as the MCP client.
 type caller func(ctx context.Context, method, path string, body any) (int, []byte)
+
+// file is a request body sent as it is, with its own content type, not as JSON (add_attachment).
+type file struct {
+	data        []byte
+	contentType string
+}
 
 // Handler is the /mcp endpoint. api is the whole REST handler chain (auth middleware included).
 // Instructions tell agents how to work: like a member of the team, the whole way through a ticket. Staff
@@ -70,14 +79,49 @@ func Handler(api http.Handler, version string, prompts *PromptStore) http.Handle
 			s.AddTool(t.spec(), t.handler(call))
 		}
 		return s
-	}, &sdk.StreamableHTTPOptions{Stateless: true, JSONResponse: true})
+	}, &sdk.StreamableHTTPOptions{Stateless: true, JSONResponse: true,
+		MaxRequestBodyBytes: maxRequestBytes}) // room for add_attachment's largest file, as base64
+}
+
+// maxRequestBytes fits a 10 MB attachment as base64 (a third larger) with the rest of the message.
+const maxRequestBytes = attachments.MaxFileBytes*4/3 + 1<<20
+
+// attachFile decodes add_attachment's content_base64 (a data: URL works too) into the request body.
+func attachFile(_ context.Context, _ caller, args map[string]any) error {
+	encoded, _ := args["content_base64"].(string)
+	if _, after, ok := strings.Cut(encoded, ";base64,"); ok && strings.HasPrefix(encoded, "data:") {
+		encoded = after
+	}
+	encoded = strings.Join(strings.Fields(encoded), "")
+	data, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		if data, err = base64.RawStdEncoding.DecodeString(encoded); err != nil {
+			return errors.New("content_base64 isn't valid base64")
+		}
+	}
+	if len(data) > attachments.MaxFileBytes {
+		return errors.New("files can be up to 10 MB")
+	}
+	contentType, _ := args["content_type"].(string)
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+	args["file"] = file{data: data, contentType: contentType}
+	delete(args, "content_base64")
+	return nil
 }
 
 // requester calls the REST API in-process with the MCP request's auth headers.
 func requester(api http.Handler, header http.Header) caller {
 	return func(ctx context.Context, method, path string, body any) (int, []byte) {
 		var buf bytes.Buffer
-		if body != nil {
+		contentType := "application/json"
+		switch b := body.(type) {
+		case nil:
+		case file:
+			buf.Write(b.data)
+			contentType = b.contentType
+		default:
 			_ = json.NewEncoder(&buf).Encode(body)
 		}
 		req := httptest.NewRequestWithContext(ctx, method, path, &buf)
@@ -87,7 +131,7 @@ func requester(api http.Handler, header http.Header) caller {
 				req.Header.Set(h, v)
 			}
 		}
-		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Content-Type", contentType)
 		rec := httptest.NewRecorder()
 		api.ServeHTTP(rec, req)
 		return rec.Code, rec.Body.Bytes()

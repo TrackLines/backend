@@ -97,6 +97,17 @@ var tools = []tool{
 		method: "GET", path: "/api/tickets/{ticket_id}/comments", props: map[string]any{"ticket_id": id("Ticket")}, required: []string{"ticket_id"}, readOnly: true},
 	{name: "list_attachments", title: "List attachments", description: "A ticket's attached files (name, type, size, url): often a design, screenshot or log that explains the ticket better than its text. Open the url to see it. Check before starting a ticket with attachment_count > 0.",
 		method: "GET", path: "/api/tickets/{ticket_id}/attachments", props: map[string]any{"ticket_id": id("Ticket")}, required: []string{"ticket_id"}, readOnly: true},
+	{name: "add_attachment", title: "Attach a file", description: "Attach a file to a ticket (up to 10 MB, 10 files a ticket; not to a done ticket): a log, screenshot, " +
+		"report or design that explains the ticket or the work done better than words. Send the file as base64 in content_base64 (a data: URL works too). " +
+		"Returns the attachment (id, name, url).",
+		method: "POST", path: "/api/tickets/{ticket_id}/attachments/upload", query: []string{"name"}, rawBody: "file", prepare: attachFile,
+		props: map[string]any{"ticket_id": id("Ticket"), "name": str("File name shown on the ticket, e.g. test-run.log"),
+			"content_type":   str("Its media type, e.g. text/plain or image/png; defaults to application/octet-stream"),
+			"content_base64": str("The file's bytes, base64-encoded")},
+		required: []string{"ticket_id", "name", "content_base64"}},
+	{name: "remove_attachment", title: "Remove an attachment", description: "Remove a file from a ticket (not a done ticket). Only the agent that attached it, " +
+		"the person who owns that agent's key, or an org admin can; an agent can't remove anyone else's files.",
+		method: "DELETE", path: "/api/attachments/{attachment_id}", props: map[string]any{"attachment_id": id("Attachment")}, required: []string{"attachment_id"}, destructive: true},
 	{name: "list_notifications", title: "List notifications", description: "The key owner's inbox: assigned, mentioned, finished, won't do, needs review, approval needed. Unread first, then newest.",
 		method: "GET", path: "/api/notifications", query: []string{"page", "per_page"},
 		props: map[string]any{"page": map[string]any{"type": "integer", "minimum": 1}, "per_page": map[string]any{"type": "integer", "minimum": 1, "maximum": 100}}, readOnly: true},

@@ -3467,7 +3467,7 @@ paths:
       tags: [Attachments]
       operationId: deleteAttachment
       summary: Delete an attachment and its stored file
-      description: Whoever uploaded the file, or an org admin. Agent and service keys can only remove the files they uploaded.
+      description: Whoever uploaded the file, the person who owns the agent key that uploaded it, or an org admin. Agent and service keys can only remove the files they uploaded.
       parameters:
         - name: attachmentId
           in: path
@@ -3476,7 +3476,7 @@ paths:
       responses:
         '204': { description: Attachment deleted. }
         '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { description: Not the uploader or an org admin. }
+        '403': { description: "Not the uploader, its agent key's owner, or an org admin." }
         '404': { $ref: '#/components/responses/NotFound' }
 
   /attachments/{attachmentId}/keep:
@@ -3484,7 +3484,7 @@ paths:
       tags: [Attachments]
       operationId: keepAttachment
       summary: Keep a year-old file for another year
-      description: Files are warned about a year after they're added (or last kept) and deleted at 13 months unless kept. Org admins and the file's uploader can keep it; API keys can't.
+      description: Files are warned about a year after they're added (or last kept) and deleted at 13 months unless kept. Org admins, the file's uploader and the owner of the agent key that uploaded it can keep it; API keys can't.
       parameters:
         - name: attachmentId
           in: path
@@ -3493,7 +3493,7 @@ paths:
       responses:
         '204': { description: Kept for another year. }
         '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { description: "Not an org admin or the file's uploader, or an API key." }
+        '403': { description: "Not an org admin, the file's uploader or its agent key's owner, or an API key." }
         '404': { $ref: '#/components/responses/NotFound' }
   /attachments/retention:
     get:

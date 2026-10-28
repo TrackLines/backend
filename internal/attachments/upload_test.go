@@ -251,4 +251,34 @@ func TestUploadAndRemove(t *testing.T) {
 	if got := remove(person("user_admin"), list[1].ID); got != http.StatusNoContent {
 		t.Fatalf("admin: %d", got)
 	}
+
+	// TL-712: the person who owns the agent key removes its files, signed in or with their personal key;
+	// not while someone else in the org has an agent key by the same name
+	if _, err := db.Exec(ctx, `DELETE FROM api_keys WHERE org_id = $1`, org); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(ctx, `INSERT INTO api_keys (owner_clerk_id, org_id, name, kind, prefix, hash) VALUES
+			('user_ava', $1, 'Ava', 'ai', 'tl_a', 'h-up-ava'), ('user_ava', $1, 'Dup', 'ai', 'tl_a', 'h-up-dup1'), ('user_x', $1, 'Dup', 'ai', 'tl_a', 'h-up-dup2')`, org); err != nil {
+		t.Fatal(err)
+	}
+	expect(upload(ava, open, "name=mine.txt", "text/plain", "m"), 201, `"created_by":"Ava"`)
+	dup := agent(org, "user_ava", "Dup")
+	expect(upload(dup, open, "name=dup.txt", "text/plain", "d"), 201, `"created_by":"Dup"`)
+	byName := map[string]string{}
+	all, _ := h.store.List(ctx, org, open)
+	for _, a := range all {
+		byName[a.Name] = a.ID
+	}
+	if got := remove(person("user_x"), byName["mine.txt"]); got != http.StatusForbidden {
+		t.Fatalf("someone else removed the agent's file: %d", got)
+	}
+	if got := remove(agent(org, "user_ava", "Bob"), byName["mine.txt"]); got != http.StatusForbidden {
+		t.Fatalf("the owner's other agent removed it: %d", got)
+	}
+	if got := remove(person("user_ava"), byName["dup.txt"]); got != http.StatusForbidden {
+		t.Fatalf("a name two people's keys share counted as owned: %d", got)
+	}
+	if got := remove(person("user_ava"), byName["mine.txt"]); got != http.StatusNoContent {
+		t.Fatalf("the agent key's owner: %d", got)
+	}
 }
