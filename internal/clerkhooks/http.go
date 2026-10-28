@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/bugfixes/go-bugfixes/logs"
@@ -49,6 +50,8 @@ type System struct {
 	Invites interface {
 		CompleteFor(ctx context.Context, org, userID string) (int, error)
 	}
+	// Forget drops an org's cached member lists when its membership changes (TL-520); nil: left to the TTL
+	Forget func(ctx context.Context, org string)
 }
 
 func NewSystem(db *pgxpool.Pool, secret string) System { return System{DB: db, Secret: secret} }
@@ -103,6 +106,9 @@ func (s System) Webhook(now func() time.Time) http.HandlerFunc {
 func (s System) apply(ctx context.Context, e event) error {
 	if e.Type == "organization.created" { // a new organization starts on Free: up to 20 members (TL-418)
 		return billing.SyncMemberCap(ctx, s.DB, s.ClerkOrgs, e.Data.ID)
+	}
+	if s.Forget != nil && strings.HasPrefix(e.Type, "organizationMembership.") {
+		s.Forget(ctx, e.Data.Organization.ID) // pickers and the API key check see the change now
 	}
 	if e.Type == "organizationMembership.created" { // they joined: finish their invitations (TL-518)
 		org, user := e.Data.Organization.ID, e.Data.PublicUserData.UserID

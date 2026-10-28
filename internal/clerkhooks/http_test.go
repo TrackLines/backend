@@ -296,7 +296,9 @@ func (j *joins) CompleteFor(_ context.Context, org, user string) (int, error) {
 func TestMembershipCreatedCompletesInvitations(t *testing.T) {
 	now := time.Unix(1_800_000_000, 0)
 	invites := &joins{}
-	h := System{DB: testDB(t), Secret: secret, Invites: invites}.Webhook(func() time.Time { return now })
+	var forgot []string // TL-520: the org's cached member lists go on any membership change
+	forget := func(_ context.Context, org string) { forgot = append(forgot, org) }
+	h := System{DB: testDB(t), Secret: secret, Invites: invites, Forget: forget}.Webhook(func() time.Time { return now })
 	send := func(body string) int {
 		req := httptest.NewRequest("POST", "/api/webhooks/clerk", strings.NewReader(body))
 		req.Header.Set("svix-id", "msg_join")
@@ -309,6 +311,15 @@ func TestMembershipCreatedCompletesInvitations(t *testing.T) {
 	join := `{"type":"organizationMembership.created","data":{"organization":{"id":"org_a"},"public_user_data":{"user_id":"dana"}}}`
 	if code := send(join); code != http.StatusNoContent || len(invites.got) != 1 || invites.got[0] != "org_a/dana" {
 		t.Fatalf("join: %d %v", code, invites.got)
+	}
+	if code := send(`{"type":"organizationMembership.updated","data":{"organization":{"id":"org_b"},"public_user_data":{"user_id":"dana"}}}`); code != http.StatusNoContent {
+		t.Fatalf("updated: %d", code)
+	}
+	if code := send(`{"type":"user.deleted","data":{"id":"nobody"}}`); code != http.StatusNoContent {
+		t.Fatalf("user.deleted: %d", code)
+	}
+	if strings.Join(forgot, ",") != "org_a,org_b" {
+		t.Fatalf("forgot %v, want org_a,org_b", forgot)
 	}
 	if code := send(`{"type":"organizationMembership.created","data":{"organization":{"id":""},"public_user_data":{"user_id":"dana"}}}`); code != http.StatusNoContent || len(invites.got) != 1 {
 		t.Fatalf("no org: %d %v", code, invites.got)

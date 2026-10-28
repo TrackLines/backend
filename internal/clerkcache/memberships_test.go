@@ -2,6 +2,10 @@ package clerkcache
 
 import (
 	"context"
+	"errors"
+	"net"
+	"net/url"
+	"syscall"
 	"testing"
 	"time"
 
@@ -57,6 +61,13 @@ func TestMemberships(t *testing.T) {
 	if list, _ := m.List(ctx, params("org_b")); list.OrganizationMemberships[0].PublicUserData.UserID != "user_org_b" || calls != 2 {
 		t.Fatalf("org_b: %d calls", calls)
 	}
+	// TL-520: a membership change forgets that org's lists, and only that org's
+	m.Forget(ctx, "org_a")
+	m.List(ctx, params("org_a"))
+	m.List(ctx, params("org_b"))
+	if calls != 3 {
+		t.Fatalf("after forgetting org_a: %d calls, want 3 (org_a refetched, org_b still cached)", calls)
+	}
 	// Valkey gone: still answers, straight from Clerk
 	vk.Close()
 	if list, err := m.List(ctx, params("org_c")); err != nil || list.OrganizationMemberships[0].PublicUserData.UserID != "user_org_c" {
@@ -65,5 +76,46 @@ func TestMemberships(t *testing.T) {
 	// no Valkey configured at all
 	if _, err := (Memberships{Next: countingClerk{&calls}}).List(ctx, params("org_d")); err != nil {
 		t.Fatal(err)
+	}
+	(Memberships{}).Forget(ctx, "org_d") // nothing to forget without Valkey
+}
+
+// flaky fails its first calls with err, then answers.
+type flaky struct {
+	calls *int
+	fails int
+	err   error
+}
+
+func (f flaky) List(ctx context.Context, p *organizationmembership.ListParams) (*clerk.OrganizationMembershipList, error) {
+	if *f.calls++; *f.calls <= f.fails {
+		return nil, f.err
+	}
+	return countingClerk{new(int)}.List(ctx, p)
+}
+
+// TL-710: a dropped connection to Clerk is tried once more; Clerk's own errors aren't.
+func TestMembershipsRetryDroppedConnection(t *testing.T) {
+	ctx := context.Background()
+	reset := &url.Error{Op: "Get", URL: "https://api.clerk.com", Err: &net.OpError{Op: "read", Net: "tcp", Err: syscall.ECONNRESET}}
+	params := &organizationmembership.ListParams{OrganizationID: "org_a"}
+
+	calls := 0
+	if _, err := (Memberships{Next: flaky{&calls, 1, reset}}).List(ctx, params); err != nil || calls != 2 {
+		t.Fatalf("reset once: %v after %d calls, want an answer after 2", err, calls)
+	}
+	calls = 0
+	if _, err := (Memberships{Next: flaky{&calls, 2, reset}}).List(ctx, params); !errors.Is(err, syscall.ECONNRESET) || calls != 2 {
+		t.Fatalf("reset twice: %v after %d calls, want the error after 2", err, calls)
+	}
+	calls = 0
+	if _, err := (Memberships{Next: flaky{&calls, 1, errors.New("forbidden")}}).List(ctx, params); err == nil || calls != 1 {
+		t.Fatalf("clerk error: %v after %d calls, want no retry", err, calls)
+	}
+	calls = 0
+	gone, cancel := context.WithCancel(ctx)
+	cancel()
+	if _, err := (Memberships{Next: flaky{&calls, 1, reset}}).List(gone, params); err == nil || calls != 1 {
+		t.Fatalf("caller gone: %v after %d calls, want no retry", err, calls)
 	}
 }
