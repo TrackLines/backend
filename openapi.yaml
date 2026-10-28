@@ -4709,7 +4709,9 @@ paths:
       description: >-
         Authenticates the raw payload with the Svix headers and CLERK_WEBHOOK_SECRET (timestamps more than 5 minutes off are rejected).
         organizationMembership.created completes the new member's pending TrackLin.es invitations to that org (team and project access included) for their verified emails (TL-518);
+        organizationMembership.created and .updated make the member a TrackLin.es admin when their Clerk role is org:admin, and not otherwise (TL-690);
         organizationMembership.deleted removes the user's admin and team rows in that org and revokes their API keys for it;
+        organizationInvitation.revoked marks that pending invitation revoked, so it stops counting towards the member limit (TL-524);
         user.deleted does the same across every org; organization.deleted removes the org's admins and teams and revokes its API keys
         (projects, boards and tickets are kept). Other event types are acknowledged and ignored. Safe to replay.
       security: []

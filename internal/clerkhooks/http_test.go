@@ -443,3 +443,41 @@ func TestMembershipRoleMirrored(t *testing.T) {
 		t.Fatalf("org log:\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
 	}
 }
+
+// TL-524: an invitation revoked in Clerk's dashboard stops being pending here; an accepted one, or a
+// payload naming another org, is left alone; a redelivery changes nothing.
+func TestInvitationRevoked(t *testing.T) {
+	ctx := context.Background()
+	db := testDB(t)
+	now := time.Unix(1_800_000_000, 0)
+	h := NewSystem(db, secret).Webhook(func() time.Time { return now })
+	send := func(id, org string) {
+		t.Helper()
+		body := fmt.Sprintf(`{"type":"organizationInvitation.revoked","data":{"id":%q,"organization_id":%q}}`, id, org)
+		req := httptest.NewRequest("POST", "/api/webhooks/clerk", strings.NewReader(body))
+		req.Header.Set("svix-id", "msg_i")
+		req.Header.Set("svix-timestamp", fmt.Sprint(now.Unix()))
+		req.Header.Set("svix-signature", sign(key, "msg_i", now, body))
+		rec := httptest.NewRecorder()
+		h(rec, req)
+		if rec.Code != http.StatusNoContent {
+			t.Fatalf("revoked: %d", rec.Code)
+		}
+	}
+	if _, err := db.Exec(ctx, `DELETE FROM invitations WHERE org_id = 'org_ir';
+		INSERT INTO invitations (org_id, clerk_invitation_id, email_address, scope, invited_by, accept_url, expires_at, status) VALUES
+			('org_ir', 'orginv_ir_pending', 'a@example.test', 'organization', 'u', 'https://x', now() + interval '3 days', 'pending'),
+			('org_ir', 'orginv_ir_other', 'b@example.test', 'organization', 'u', 'https://x', now() + interval '3 days', 'pending'),
+			('org_ir', 'orginv_ir_accepted', 'c@example.test', 'organization', 'u', 'https://x', now() + interval '3 days', 'accepted')`); err != nil {
+		t.Fatal(err)
+	}
+	send("orginv_ir_pending", "org_ir")
+	send("orginv_ir_pending", "org_ir") // redelivered
+	send("orginv_ir_other", "org_elsewhere")
+	send("orginv_ir_accepted", "org_ir")
+	rows, _ := db.Query(ctx, `SELECT clerk_invitation_id || '=' || status FROM invitations WHERE org_id = 'org_ir' ORDER BY 1`)
+	got, _ := pgx.CollectRows(rows, pgx.RowTo[string])
+	if want := "orginv_ir_accepted=accepted,orginv_ir_other=pending,orginv_ir_pending=revoked"; strings.Join(got, ",") != want {
+		t.Fatalf("got %v, want %s", got, want)
+	}
+}

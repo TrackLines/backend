@@ -61,14 +61,15 @@ func NewSystem(db *pgxpool.Pool, secret string) System { return System{DB: db, S
 type event struct {
 	Type string `json:"type"`
 	Data struct {
-		ID           string `json:"id"` // user.deleted, organization.deleted
+		ID           string `json:"id"` // user.deleted, organization.deleted, organizationInvitation.revoked
 		Organization struct {
 			ID string `json:"id"`
 		} `json:"organization"` // organizationMembership.deleted
 		PublicUserData struct {
 			UserID string `json:"user_id"`
 		} `json:"public_user_data"`
-		Role string `json:"role"` // organizationMembership.created/updated
+		Role           string `json:"role"`            // organizationMembership.created/updated
+		OrganizationID string `json:"organization_id"` // organizationInvitation.revoked
 	} `json:"data"`
 }
 
@@ -158,6 +159,12 @@ func (s System) apply(ctx context.Context, e event) error {
 			unassign("$1", "$2", "Unassigned automatically: the assignee left the organization, so this ticket is free to pick up."),
 			`SELECT audit_org($1, 'member.removed', 'user', $2, NULL, '{}')`, // the org log (TL-669)
 		}
+	case "organizationInvitation.revoked": // revoked in Clerk's dashboard: no longer pending, nor counted (TL-524)
+		if e.Data.ID == "" || e.Data.OrganizationID == "" {
+			return nil
+		}
+		args = []any{e.Data.ID, e.Data.OrganizationID}
+		stmts = []string{`UPDATE invitations SET status = 'revoked' WHERE clerk_invitation_id = $1 AND org_id = $2 AND status = 'pending'`}
 	case "user.deleted":
 		if e.Data.ID == "" {
 			return nil
