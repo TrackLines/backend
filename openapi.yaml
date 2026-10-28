@@ -1222,7 +1222,7 @@ paths:
       tags: [Projects]
       operationId: updateProject
       summary: Update a project
-      description: key_prefix (optional) renames every ticket key in the project (TL-123 → TRK-123); only organization admins can change it. Use 2–6 capital letters or digits starting with a letter; 409 if another project in the org uses it.
+      description: Only organization admins can change the name or key_prefix; any member can change the description (send the current name). key_prefix (optional) renames every ticket key in the project (TL-123 → TRK-123). Use 2–6 capital letters or digits starting with a letter; 409 if another project in the org uses it.
       requestBody:
         required: true
         content:
@@ -1230,7 +1230,7 @@ paths:
             schema: { $ref: '#/components/schemas/ProjectInput' }
       responses:
         '204': { description: Project updated. }
-        '403': { description: Changing key_prefix requires an organization admin session. }
+        '403': { description: Changing the name or key_prefix requires an organization admin session. }
         '409': { description: key_prefix is used by another project in the organization. }
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }

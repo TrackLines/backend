@@ -27,6 +27,8 @@ type CalendarSystem struct {
 	// Users proves the admin connecting a domain has a verified address in it: our service account
 	// is shared, so a domain must never be connectable by an organization that doesn't own it.
 	Users userLister
+	// Base is the service's context: a first sync outlives its request but not shutdown (TL-427). nil: never cancelled
+	Base context.Context
 }
 
 // ownsDomain: does the person have a verified email address at domain?
@@ -138,7 +140,11 @@ func (h CalendarSystem) Connect(w http.ResponseWriter, r *http.Request) {
 	}
 	if h.Sync != nil { // a first sync now, so people show as away without waiting an hour
 		go func() {
-			ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 5*time.Minute)
+			base := h.Base
+			if base == nil {
+				base = context.WithoutCancel(r.Context())
+			}
+			ctx, cancel := context.WithTimeout(base, 5*time.Minute)
 			defer cancel()
 			if err := h.Sync.Org(ctx, org); err != nil {
 				logs.Warnf("google calendar: first sync %s: %v", org, err)

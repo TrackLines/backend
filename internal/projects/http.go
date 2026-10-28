@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/bugfixes/go-bugfixes/logs"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/tracklines/backend/internal/auth"
 	"github.com/tracklines/backend/internal/billing"
@@ -101,12 +102,18 @@ func (h System) Update(w http.ResponseWriter, r *http.Request) {
 	if !httpx.Decode(w, r, &in) || !in.valid(w, r) {
 		return
 	}
-	if in.KeyPrefix != nil {
+	org := auth.OrgID(r.Context())
+	// only org admins rename a project or change its ticket keys (TL-427); anyone can edit its description
+	var renamed bool
+	if err := h.db.QueryRow(r.Context(), `SELECT name <> $3 FROM projects WHERE id::text = $1 AND owner_clerk_id = $2`, r.PathValue("id"), org, in.Name).Scan(&renamed); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		writeErr(w, r, err)
+		return
+	}
+	if in.KeyPrefix != nil || renamed {
 		if _, _, ok := h.admins.RequireAdmin(w, r); !ok {
 			return
 		}
 	}
-	org := auth.OrgID(r.Context())
 	err := h.store.Update(r.Context(), r.PathValue("id"), org, in.Name, in.Description)
 	if err == nil && in.KeyPrefix != nil {
 		err = h.store.SetKeyPrefix(r.Context(), r.PathValue("id"), org, strings.ToUpper(strings.TrimSpace(*in.KeyPrefix)))

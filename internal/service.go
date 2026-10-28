@@ -82,6 +82,7 @@ type Service struct {
 	// KeyMember overrides how API keys check their owner is still in the org (tests); nil asks Clerk
 	KeyMember apikeys.Member
 
+	ctx          context.Context // cancelled at shutdown; set by Start before the routes are built (nil in tests)
 	calendarOnce sync.Once
 	gcal         *integrations.GoogleCalendar // Google Calendar (TL-404); nil without a service account
 }
@@ -174,12 +175,12 @@ func (s *Service) Start() error {
 	go tickets.DueReminders{Store: tickets.Store{DB: s.DB}, Notify: notify}.Run(ctx, time.Hour)
 	// every organization's Clerk member cap matches its plan: 20 on Free and Pro, unlimited on Enterprise (TL-418)
 	go billing.SyncAllMemberCaps(ctx, s.DB, billing.Skip{OrgUpdater: organization.NewClient(&clerk.ClientConfig{}), Orgs: config.Get(s.Config).ClerkUncappedOrgs})
-	// a new version of the Terms or Privacy policy on the web app: everyone's told once, in-app (TL-424)
 	go func() { // admins from before TL-690 get Clerk's org:admin role, once each
 		if err := organizations.NewSystem(s.DB).AdminModel().SyncToClerk(ctx); err != nil {
 			logs.Errorf("organizations: sync admins to clerk: %v", err)
 		}
 	}()
+	// a new version of the Terms or Privacy policy on the web app: everyone's told once, in-app (TL-424)
 	go legal.Announcer{DB: s.DB, Site: siteURL(config.Get(s.Config).AuthorizedParties())}.Run(ctx, time.Hour)
 	// who's on holiday, from Google Calendar (TL-406): every connected org, hourly
 	go s.calendarSync(clerkcache.Memberships{Next: organizationmembership.NewClient(&clerk.ClientConfig{}), VK: s.Valkey, TTL: time.Minute}).Run(ctx, time.Hour)
@@ -189,6 +190,7 @@ func (s *Service) Start() error {
 		// API keys still check membership on use, but removals, deletions and admin clean-up wait on it
 		logs.Warnf("CLERK_WEBHOOK_SECRET is not set: Clerk webhooks are refused, so org removals aren't synced")
 	}
+	s.ctx = ctx // work a request starts in the background stops at shutdown too
 	return s.serve(ctx, s.Handler())
 }
 
@@ -414,7 +416,7 @@ func (s *Service) Handler() http.Handler {
 	// Google Calendar (TL-404): who's on holiday, read with the Chat app's service account once a
 	// Workspace admin delegates to it. Before {provider}: more specific.
 	calSync := s.calendarSync(members)
-	cal := integrations.CalendarSystem{DB: s.DB, Admins: o.AdminModel(), Google: calSync.Google, Sync: &calSync, Users: calSync.Users}
+	cal := integrations.CalendarSystem{DB: s.DB, Admins: o.AdminModel(), Google: calSync.Google, Sync: &calSync, Users: calSync.Users, Base: s.ctx}
 	mux.Handle("GET /api/integrations/google-calendar", signedIn(cal.Get))
 	mux.Handle("PUT /api/integrations/google-calendar", signedIn(cal.Connect)) // org admins; checks Google first
 	mux.Handle("POST /api/integrations/google-calendar/test", signedIn(cal.Test))

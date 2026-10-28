@@ -36,7 +36,7 @@ func TestMemberCaps(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	if _, err := db.Exec(ctx, `DELETE FROM org_billing WHERE org_id LIKE 'org_mc%'; DELETE FROM projects WHERE owner_clerk_id LIKE 'org_mc%';
+	if _, err := db.Exec(ctx, `DELETE FROM org_billing WHERE org_id LIKE 'org_mc%'; DELETE FROM projects WHERE owner_clerk_id LIKE 'org_mc%'; DELETE FROM member_caps WHERE org_id LIKE 'org_mc%';
 		INSERT INTO org_billing (org_id, stripe_status, plan) VALUES ('org_mc_pro', 'active', 'pro'), ('org_mc_ent', 'active', 'enterprise'), ('org_mc_lapsed', 'canceled', 'enterprise');
 		INSERT INTO projects (owner_clerk_id, name) VALUES ('org_mc_free', 'p')`); err != nil {
 		t.Fatal(err)
@@ -48,6 +48,17 @@ func TestMemberCaps(t *testing.T) {
 		if v, ok := got[org]; !ok || v != cap {
 			t.Errorf("%s: cap %d (set %v), want %d", org, v, ok, cap)
 		}
+	}
+	// TL-427: the next start only tells Clerk about caps that changed
+	again := fakeOrgs{}
+	SyncAllMemberCaps(ctx, db, again)
+	if len(again) != 0 {
+		t.Errorf("unchanged caps sent to Clerk again: %v", again)
+	}
+	db.Exec(ctx, `UPDATE org_billing SET stripe_status = 'active' WHERE org_id = 'org_mc_lapsed'`)
+	SyncAllMemberCaps(ctx, db, again)
+	if len(again) != 1 || again["org_mc_lapsed"] != 0 {
+		t.Errorf("after org_mc_lapsed renewed Enterprise: %v, want only it, at 0", again)
 	}
 	for org, limit := range map[string]int{"org_mc_free": 20, "org_mc_pro": 20, "org_mc_ent": -1} {
 		if l, err := MemberLimitOf(ctx, db, org); err != nil || l != limit {
