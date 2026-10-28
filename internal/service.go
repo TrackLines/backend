@@ -175,6 +175,11 @@ func (s *Service) Start() error {
 	// every organization's Clerk member cap matches its plan: 20 on Free and Pro, unlimited on Enterprise (TL-418)
 	go billing.SyncAllMemberCaps(ctx, s.DB, billing.Skip{OrgUpdater: organization.NewClient(&clerk.ClientConfig{}), Orgs: config.Get(s.Config).ClerkUncappedOrgs})
 	// a new version of the Terms or Privacy policy on the web app: everyone's told once, in-app (TL-424)
+	go func() { // admins from before TL-690 get Clerk's org:admin role, once each
+		if err := organizations.NewSystem(s.DB).AdminModel().SyncToClerk(ctx); err != nil {
+			logs.Errorf("organizations: sync admins to clerk: %v", err)
+		}
+	}()
 	go legal.Announcer{DB: s.DB, Site: siteURL(config.Get(s.Config).AuthorizedParties())}.Run(ctx, time.Hour)
 	// who's on holiday, from Google Calendar (TL-406): every connected org, hourly
 	go s.calendarSync(clerkcache.Memberships{Next: organizationmembership.NewClient(&clerk.ClientConfig{}), VK: s.Valkey, TTL: time.Minute}).Run(ctx, time.Hour)

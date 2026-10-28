@@ -834,24 +834,20 @@ paths:
                   admin: { type: boolean }
                   leads: { type: array, items: { type: string, format: uuid } }
         '403': { description: No active organization. }
-        '502': { description: Clerk could not be reached to resolve the first admin. }
+        '502': { description: Clerk could not be reached to read the organization's admins. }
   /organizations/admins:
     get:
       tags: [Organizations]
       operationId: listOrganizationAdmins
       summary: List the organization's TrackLin.es admins
       description: >-
-        Organizations and their members live in Clerk; TrackLin.es only records which members are admins.
-        The first time an org's admins are needed, one is chosen from Clerk and stored: the user who created
-        the organization if they are still a member, otherwise the longest-standing member with the Clerk
-        org:admin role, otherwise the longest-standing member. granted_by records which rule applied
-        (clerk:creator, clerk:admin-role, clerk:earliest-member) or the admin who granted it. If Clerk can't be
-        reached nothing is stored and the next request tries again (502); an organization with no members gets
-        no admin (409).
+        An admin is a member with Clerk's org:admin role, so changes made in Clerk's dashboard or by an SSO
+        role mapping count too (TL-690). granted_by is the admin who granted it in TrackLin.es, or
+        clerk:… when Clerk said so (clerk:admin-role; clerk:creator and clerk:earliest-member on older
+        records). If Clerk can't be reached the first time it's needed, the next request tries again (502).
       responses:
         '200': { description: Admins oldest first, content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/OrgAdmin' } } } } }
         '403': { description: No active organization. }
-        '409': { description: The organization has no members to make admin. }
         '502': { description: Clerk could not be reached. }
   /organizations/admins/{userId}:
     parameters:
@@ -863,20 +859,22 @@ paths:
       tags: [Organizations]
       operationId: grantOrganizationAdmin
       summary: Make an organization member an admin
-      description: Org admins only, signed in with a Clerk session (API keys are refused). The user must be a Clerk member of the organization.
+      description: Org admins only, signed in with a Clerk session (API keys are refused). Gives the member Clerk's org:admin role. The user must be a Clerk member of the organization.
       responses:
         '204': { description: Granted (or already an admin). }
         '403': { description: Not a signed-in org admin. }
         '422': { description: The user is not a member of this organization. }
+        '502': { description: Clerk could not be reached; nothing changed. }
     delete:
       tags: [Organizations]
       operationId: revokeOrganizationAdmin
       summary: Remove an admin
-      description: Org admins only, signed in with a Clerk session. The last admin can't be removed.
+      description: Org admins only, signed in with a Clerk session. Gives them Clerk's org:member role. The last admin can't be removed.
       responses:
-        '204': { description: Removed. }
+        '204': { description: Removed (or wasn't an admin). }
         '403': { description: Not a signed-in org admin. }
         '409': { description: That is the organization's last admin. }
+        '502': { description: Clerk could not be reached; nothing changed. }
   /invitations:
     get:
       tags: [Organizations]
@@ -5141,7 +5139,7 @@ components:
       type: object
       properties:
         user_id: { type: string }
-        granted_by: { type: string, description: "clerk:creator, clerk:admin-role, clerk:earliest-member, or the user id of the admin who granted it" }
+        granted_by: { type: string, description: "The user id of the admin who granted it, or clerk:admin-role when Clerk did (clerk:creator and clerk:earliest-member on older records)" }
         created_at: { type: string, format: date-time }
     InvitationInput:
       type: object
@@ -6353,7 +6351,6 @@ components:
         name_required: "name is required"
         no_bugfixes_report: "this ticket has no Bugfixes report"
         no_live_session: "no live session"
-        no_members: "organization has no members to make admin"
         no_session_running: "no session running"
         no_subscription_to_change: "there's no subscription to change: upgrade with checkout, or this plan was granted by hand"
         no_subscription_yet: "no subscription yet — upgrade first"

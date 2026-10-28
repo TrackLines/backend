@@ -19,6 +19,7 @@ import (
 	"github.com/golang-migrate/migrate/v4"
 	_ "github.com/golang-migrate/migrate/v4/database/pgx/v5"
 	_ "github.com/golang-migrate/migrate/v4/source/file"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/tracklines/backend/internal/apikeys"
 )
@@ -391,5 +392,54 @@ func TestMembershipAudited(t *testing.T) {
 	}
 	if got := log("org_ma_free"); got != "" {
 		t.Fatalf("free: %s", got)
+	}
+}
+
+// TL-690: the admin mirror follows Clerk's role, whoever changed it, and the org log says so: the
+// system for a change made in Clerk, the granting admin for one made in TrackLin.es.
+func TestMembershipRoleMirrored(t *testing.T) {
+	ctx := context.Background()
+	db := testDB(t)
+	now := time.Unix(1_800_000_000, 0)
+	h := NewSystem(db, secret).Webhook(func() time.Time { return now })
+	send := func(kind, user, role string) {
+		t.Helper()
+		body := fmt.Sprintf(`{"type":"organizationMembership.%s","data":{"organization":{"id":"org_rm"},"public_user_data":{"user_id":%q},"role":%q}}`, kind, user, role)
+		req := httptest.NewRequest("POST", "/api/webhooks/clerk", strings.NewReader(body))
+		req.Header.Set("svix-id", "msg_r")
+		req.Header.Set("svix-timestamp", fmt.Sprint(now.Unix()))
+		req.Header.Set("svix-signature", sign(key, "msg_r", now, body))
+		rec := httptest.NewRecorder()
+		h(rec, req)
+		if rec.Code != http.StatusNoContent {
+			t.Fatalf("%s: %d", kind, rec.Code)
+		}
+	}
+	admins := func() string {
+		rows, _ := db.Query(ctx, `SELECT user_clerk_id FROM org_admins WHERE org_id = 'org_rm' ORDER BY 1`)
+		got, _ := pgx.CollectRows(rows, pgx.RowTo[string])
+		return strings.Join(got, ",")
+	}
+	if _, err := db.Exec(ctx, `INSERT INTO org_billing (org_id, stripe_status, plan) VALUES ('org_rm', 'active', 'pro') ON CONFLICT DO NOTHING`); err != nil {
+		t.Fatal(err)
+	}
+	send("created", "user_sso", "org:admin")  // an SSO role mapping made them an admin on joining
+	send("created", "user_new", "org:member") // a plain member
+	send("updated", "user_new", "org:admin")  // promoted in Clerk's dashboard
+	send("updated", "user_sso", "org:member") // demoted
+	send("updated", "user_new", "org:admin")  // a repeat changes nothing
+	if got := admins(); got != "user_new" {
+		t.Fatalf("admins: %s", got)
+	}
+	// granted in TrackLin.es: the admin API writes the row as the granting admin
+	if _, err := db.Exec(ctx, `INSERT INTO org_admins (org_id, user_clerk_id, granted_by) VALUES ('org_rm', 'user_mo', 'user_new')`); err != nil {
+		t.Fatal(err)
+	}
+	send("updated", "user_mo", "org:admin") // Clerk's echo of that change: no second entry
+	rows, _ := db.Query(ctx, `SELECT action || ' ' || target_id || ' ' || actor_kind || ' ' || coalesce(actor, '-') FROM audit_outbox WHERE org_id = 'org_rm' AND action LIKE 'admin.%' ORDER BY queued`)
+	got, _ := pgx.CollectRows(rows, pgx.RowTo[string])
+	want := []string{"admin.granted user_sso system -", "admin.granted user_new system -", "admin.revoked user_sso system -", "admin.granted user_mo person user_new"}
+	if strings.Join(got, "; ") != strings.Join(want, "; ") {
+		t.Fatalf("org log:\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
 	}
 }
