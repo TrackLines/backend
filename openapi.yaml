@@ -116,7 +116,7 @@ paths:
                 board_id: { type: string, format: uuid }
       responses:
         '200': { description: Saved setup, content: { application/json: { schema: { $ref: '#/components/schemas/OnboardingState' } } } }
-        '400': { description: Invalid name, prefix, template or board }
+        '400': { description: "Invalid name, prefix, template or board" }
         '402': { description: Project plan limit reached }
         '403': { description: A human org admin is required }
         '409': { description: Key prefix already taken }
@@ -199,7 +199,7 @@ paths:
       responses:
         '200': { description: Imports (without their previews)., content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Import' } } } } }
         '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { description: Not an org admin, or an API key. }
+        '403': { description: "Not an org admin, or an API key." }
         '404': { description: Imports are off. }
     post:
       tags: [Imports]
@@ -244,9 +244,9 @@ paths:
                     due date, comments, assignee (by email) and uploaded files.
       responses:
         '201': { description: The preview., content: { application/json: { schema: { $ref: '#/components/schemas/Import' } } } }
-        '400': { description: Unknown source, or the source couldn't plan (it says why). }
+        '400': { description: "Unknown source, or the source couldn't plan (it says why)." }
         '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { description: Not an org admin, or an API key. }
+        '403': { description: "Not an org admin, or an API key." }
         '404': { description: Imports are off. }
   /imports/jira/connection:
     get:
@@ -255,9 +255,9 @@ paths:
       summary: The organization's Jira Cloud connection
       description: The site, and whose email and API token it imports with (never the token). null when there's none; an expired one is deleted on reading. Org admins, signed in; behind the imports flag.
       responses:
-        '200': { description: The connection, or null., content: { application/json: { schema: { $ref: '#/components/schemas/JiraConnection' } } } }
+        '200': { description: "The connection, or null.", content: { application/json: { schema: { $ref: '#/components/schemas/JiraConnection' } } } }
         '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { description: Not an org admin, or an API key. }
+        '403': { description: "Not an org admin, or an API key." }
         '404': { description: Imports are off. }
     put:
       tags: [Imports]
@@ -280,9 +280,9 @@ paths:
                 token: { type: string }
       responses:
         '200': { description: Connected., content: { application/json: { schema: { $ref: '#/components/schemas/JiraConnection' } } } }
-        '400': { description: Not a Jira Cloud address (jira_site), no email or token (jira_login), or Jira refused them (jira_unauthorized). }
+        '400': { description: "Not a Jira Cloud address (jira_site), no email or token (jira_login), or Jira refused them (jira_unauthorized)." }
         '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { description: Not an org admin, or an API key. }
+        '403': { description: "Not an org admin, or an API key." }
         '404': { description: Imports are off. }
         '502': { description: Jira couldn't be reached at that address (jira_unreachable). }
         '503': { description: The server has no key to seal tokens with (integration_not_configured). }
@@ -293,7 +293,7 @@ paths:
       responses:
         '204': { description: Deleted (or there was none). }
         '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { description: Not an org admin, or an API key. }
+        '403': { description: "Not an org admin, or an API key." }
         '404': { description: Imports are off. }
   /imports/jira/projects:
     get:
@@ -310,9 +310,9 @@ paths:
                 items: { type: object, properties: { id: { type: string }, key: { type: string }, name: { type: string } } }
         '400': { description: Jira refused the saved token (jira_unauthorized). }
         '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { description: Not an org admin, or an API key. }
+        '403': { description: "Not an org admin, or an API key." }
         '404': { description: Imports are off. }
-        '409': { description: Not connected, or the token expired (jira_not_connected). }
+        '409': { description: "Not connected, or the token expired (jira_not_connected)." }
         '502': { description: Jira couldn't be reached (jira_unreachable). }
   /imports/jira/connection/extend:
     post:
@@ -322,9 +322,9 @@ paths:
       responses:
         '200': { description: Extended., content: { application/json: { schema: { $ref: '#/components/schemas/JiraConnection' } } } }
         '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { description: Not an org admin, or an API key. }
+        '403': { description: "Not an org admin, or an API key." }
         '404': { description: Imports are off. }
-        '409': { description: No connection, or it has expired (jira_not_connected). }
+        '409': { description: "No connection, or it has expired (jira_not_connected)." }
   /imports/linear/connection:
     get:
       tags: [Imports]
@@ -332,9 +332,9 @@ paths:
       summary: The organization's Linear connection
       description: The workspace, and whose personal API key it imports with (never the key). null when there's none; an expired one is deleted on reading. Org admins, signed in; behind the imports flag.
       responses:
-        '200': { description: The connection, or null., content: { application/json: { schema: { $ref: '#/components/schemas/LinearConnection' } } } }
+        '200': { description: "The connection, or null.", content: { application/json: { schema: { $ref: '#/components/schemas/LinearConnection' } } } }
         '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { description: Not an org admin, or an API key. }
+        '403': { description: "Not an org admin, or an API key." }
         '404': { description: Imports are off. }
     put:
       tags: [Imports]
@@ -348,9 +348,9 @@ paths:
             schema: { type: object, required: [key], properties: { key: { type: string } } }
       responses:
         '200': { description: Connected., content: { application/json: { schema: { $ref: '#/components/schemas/LinearConnection' } } } }
-        '400': { description: No key (linear_key), or Linear refused it (linear_unauthorized). }
+        '400': { description: "No key (linear_key), or Linear refused it (linear_unauthorized)." }
         '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { description: Not an org admin, or an API key. }
+        '403': { description: "Not an org admin, or an API key." }
         '404': { description: Imports are off. }
         '502': { description: Linear couldn't be reached (linear_unreachable). }
         '503': { description: The server has no key to seal tokens with (integration_not_configured). }
@@ -361,7 +361,7 @@ paths:
       responses:
         '204': { description: Deleted (or there was none). }
         '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { description: Not an org admin, or an API key. }
+        '403': { description: "Not an org admin, or an API key." }
         '404': { description: Imports are off. }
   /imports/linear/connection/extend:
     post:
@@ -371,9 +371,9 @@ paths:
       responses:
         '200': { description: Extended., content: { application/json: { schema: { $ref: '#/components/schemas/LinearConnection' } } } }
         '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { description: Not an org admin, or an API key. }
+        '403': { description: "Not an org admin, or an API key." }
         '404': { description: Imports are off. }
-        '409': { description: No connection, or it has expired (linear_not_connected). }
+        '409': { description: "No connection, or it has expired (linear_not_connected)." }
   /imports/{importId}:
     parameters:
       - { name: importId, in: path, required: true, schema: { type: string, format: uuid } }
@@ -384,7 +384,7 @@ paths:
       responses:
         '200': { description: The import., content: { application/json: { schema: { $ref: '#/components/schemas/Import' } } } }
         '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { description: Not an org admin, or an API key. }
+        '403': { description: "Not an org admin, or an API key." }
         '404': { $ref: '#/components/responses/NotFound' }
   /imports/{importId}/run:
     parameters:
@@ -397,9 +397,9 @@ paths:
       responses:
         '202': { description: Started., content: { application/json: { schema: { $ref: '#/components/schemas/Import' } } } }
         '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { description: Not an org admin, or an API key. }
+        '403': { description: "Not an org admin, or an API key." }
         '404': { $ref: '#/components/responses/NotFound' }
-        '409': { description: The preview still has problems (import_problems), or it isn't a preview any more (import_not_previewing). }
+        '409': { description: "The preview still has problems (import_problems), or it isn't a preview any more (import_not_previewing)." }
   /imports/{importId}/cancel:
     parameters:
       - { name: importId, in: path, required: true, schema: { type: string, format: uuid } }
@@ -410,7 +410,7 @@ paths:
       responses:
         '204': { description: Cancelled (a running import stops at its next step and keeps nothing). }
         '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { description: Not an org admin, or an API key. }
+        '403': { description: "Not an org admin, or an API key." }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { description: Neither a preview nor running (import_not_running). }
   /imports/{importId}/scrap:
@@ -424,9 +424,9 @@ paths:
       responses:
         '204': { description: Scrapped. }
         '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { description: Not an org admin, or an API key. }
+        '403': { description: "Not an org admin, or an API key." }
         '404': { $ref: '#/components/responses/NotFound' }
-        '409': { description: Not finished (import_not_done), or someone has acted on it (import_changed). }
+        '409': { description: "Not finished (import_not_done), or someone has acted on it (import_changed)." }
 
   /working-week:
     get:
@@ -592,7 +592,7 @@ paths:
         any plan, so an organization back on Free can still see, turn off and delete its endpoints (while on
         Free nothing is queued or sent to them).
       responses:
-        '200': { description: Endpoints, oldest first (never their secrets)., content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/WebhookEndpoint' } } } } }
+        '200': { description: "Endpoints, oldest first (never their secrets).", content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/WebhookEndpoint' } } } } }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { description: Not an org admin (admins_only). }
         '404': { description: Webhooks are off. }
@@ -644,7 +644,7 @@ paths:
                 properties:
                   endpoint: { $ref: '#/components/schemas/WebhookEndpoint' }
                   secret: { type: string, example: whsec_3q2-7wAbExample }
-        '400': { description: The URL isn't https or is a private address (bad_webhook_url), or no or unknown events (bad_webhook_events). }
+        '400': { description: "The URL isn't https or is a private address (bad_webhook_url), or no or unknown events (bad_webhook_events)." }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '402': { description: Webhooks need the Pro or Enterprise plan (webhooks_plan). }
         '403': { description: Not an org admin (admins_only). }
@@ -797,6 +797,10 @@ paths:
         '403': { description: Requires a signed-in organization admin. }
         '404': { $ref: '#/components/responses/NotFound' }
   /mcp:
+    servers:
+      - url: https://api.tracklin.es
+        description: Served at the backend's root, not under /api.
+      - url: http://localhost:8080
     post:
       tags: [MCP]
       operationId: mcp
@@ -1670,7 +1674,7 @@ paths:
                 type: { type: string, enum: [bug, feature] }
                 title: { type: string, maxLength: 200 }
                 details: { type: string, maxLength: 5000 }
-                contact: { type: string, maxLength: 200, description: Optional, e.g. an email; seen by the team only. }
+                contact: { type: string, maxLength: 200, description: "Optional, e.g. an email; seen by the team only." }
                 website: { type: string, description: Honeypot; leave empty. }
       responses:
         '202': { description: Received. }
@@ -1794,7 +1798,7 @@ paths:
       operationId: embedKeyUsage
       summary: An embed key's hits by site and resource
       responses:
-        '200': { description: Usage, busiest first. }
+        '200': { description: "Usage, busiest first." }
         '404': { $ref: '#/components/responses/NotFound' }
   /projects/{projectId}/intake/submissions:
     parameters:
@@ -1816,7 +1820,7 @@ paths:
       operationId: promoteIntakeSubmission
       summary: Turn a pending request into an unassigned backlog ticket
       responses:
-        '200': { description: Promoted, with its ticket., content: { application/json: { schema: { $ref: '#/components/schemas/IntakeSubmission' } } } }
+        '200': { description: "Promoted, with its ticket.", content: { application/json: { schema: { $ref: '#/components/schemas/IntakeSubmission' } } } }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { description: Already triaged. }
   /intake-submissions/{submissionId}/dismiss:
@@ -1893,6 +1897,18 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
 
   /me/google-chat/link:
+    get:
+      tags: [Notifications]
+      operationId: googleChatLinkCode
+      summary: Which Google account a link code would link, without using it up
+      description: Signed-in sessions only (not API keys), so the page can ask before linking.
+      parameters:
+        - { name: code, in: query, required: true, schema: { type: string } }
+      responses:
+        '200': { description: The Google account., content: { application/json: { schema: { type: object, properties: { google: { type: string } } } } } }
+        '400': { description: The code expired or was already used. }
+        '403': { description: Not a signed-in session. }
+        '503': { description: The Chat app isn't set up on this server. }
     post:
       tags: [Notifications]
       operationId: linkGoogleChat
@@ -1908,6 +1924,26 @@ paths:
         '400': { description: The code expired (30 minutes) or was already used. }
         '403': { description: Not a signed-in session. }
         '503': { description: The Chat app isn't set up on this server. }
+
+  /me/language:
+    get:
+      tags: [Users]
+      operationId: getMyLanguage
+      summary: The language you chose for the app (null follows the browser)
+      responses:
+        '200': { description: Your language., content: { application/json: { schema: { type: object, properties: { language: { type: string, nullable: true } } } } } }
+    put:
+      tags: [Users]
+      operationId: setMyLanguage
+      summary: Choose the app's language for you, or null to follow the browser
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, properties: { language: { type: string, nullable: true, enum: [en, nl, de, es, pt, fr, tlh, null] } } }
+      responses:
+        '204': { description: Saved. }
+        '400': { $ref: '#/components/responses/BadRequest' }
 
   /webhooks/google-chat:
     post:
@@ -2037,6 +2073,23 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { description: The ticket isn't waiting for review. }
 
+  /tickets/{ticketId}/parent:
+    parameters:
+      - $ref: '#/components/parameters/TicketId'
+    put:
+      tags: [Tickets]
+      operationId: setTicketParent
+      summary: Make a ticket a sub-ticket of another, or null to detach it
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, properties: { parent_id: { type: string, nullable: true } } }
+      responses:
+        '204': { description: Saved. }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /tickets/{ticketId}/external:
     parameters:
       - $ref: '#/components/parameters/TicketId'
@@ -2091,7 +2144,7 @@ paths:
         '204': { description: Connected. }
         '400': { description: The state expired or is for another org. }
         '403': { description: Not a signed-in org admin. }
-        '502': { description: The provider refused (e.g. not this app's installation, bad code). }
+        '502': { description: "The provider refused (e.g. not this app's installation, bad code)." }
 
   /integrations/{provider}/repos:
     parameters:
@@ -2133,7 +2186,7 @@ paths:
       responses:
         '201': { description: Linked., content: { application/json: { schema: { $ref: '#/components/schemas/ProjectRepo' } } } }
         '400': { description: The connection can't see that repository. }
-        '409': { description: Already linked to a project in this org, or not connected. }
+        '409': { description: "Already linked to a project in this org, or not connected." }
     delete:
       tags: [Projects]
       operationId: unlinkProjectRepo
@@ -2439,7 +2492,7 @@ paths:
                   provider: { type: string, enum: [google-calendar] }
                   available: { type: boolean, description: The server has a Google service account. }
                   connected: { type: boolean }
-                  client_id: { type: string, description: The service account's client ID, for admin.google.com → Security → API controls → Domain-wide delegation. }
+                  client_id: { type: string, description: "The service account's client ID, for admin.google.com → Security → API controls → Domain-wide delegation." }
                   scope: { type: string, description: The one scope to authorize (read-only calendars). }
                   connection:
                     type: object
@@ -2464,10 +2517,10 @@ paths:
               properties:
                 domain: { type: string, example: example.com }
                 admin_email: { type: string, description: A user in the domain. }
-                holidays_calendar: { type: string, description: Optional shared calendar of company days off, e.g. en.uk#holiday@group.v.calendar.google.com }
+                holidays_calendar: { type: string, description: "Optional shared calendar of company days off, e.g. en.uk#holiday@group.v.calendar.google.com" }
       responses:
         '204': { description: Connected. }
-        '400': { description: Bad input, or Google refused (the message says what to fix, e.g. delegation not granted). }
+        '400': { description: "Bad input, or Google refused (the message says what to fix, e.g. delegation not granted)." }
         '403': { description: Not an org admin. }
         '502': { description: Google couldn't be reached. }
         '503': { description: The server has no Google service account. }
@@ -2483,7 +2536,7 @@ paths:
       operationId: syncGoogleCalendar
       summary: Sync time away from Google Calendar now (org admins); it also runs hourly and right after connecting.
       responses:
-        '200': { description: The connection, with last_sync_at and last_sync_error (empty when it worked). }
+        '200': { description: "The connection, with last_sync_at and last_sync_error (empty when it worked)." }
         '404': { description: Not connected. }
         '503': { description: The server has no Google service account. }
   /integrations/google-calendar/test:
@@ -2531,7 +2584,7 @@ paths:
                 kinds: { type: array, items: { type: string } }
       responses:
         '204': { description: Saved. }
-        '400': { description: Not a Google Chat webhook URL, an unknown kind, or no URL yet. }
+        '400': { description: "Not a Google Chat webhook URL, an unknown kind, or no URL yet." }
         '403': { description: Not a signed-in org admin. }
     delete:
       tags: [Organizations]
@@ -3073,7 +3126,7 @@ paths:
                 copy_comments: { type: boolean, default: false }
       responses:
         '204': { description: Ticket marked as a duplicate. }
-        '400': { description: Tickets must be different, in the same project, and the original cannot itself be a duplicate. }
+        '400': { description: "Tickets must be different, in the same project, and the original cannot itself be a duplicate." }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { description: The ticket is already marked as a duplicate. }
@@ -3142,7 +3195,7 @@ paths:
                 source_path: { type: string, maxLength: 500, description: The page the form was sent from. }
       responses:
         '204': { description: Sent. }
-        '400': { description: A required field is missing, too long, or the email isn't valid. }
+        '400': { description: "A required field is missing, too long, or the email isn't valid." }
         '429': { description: Too many messages from this address. }
         '502': { description: The enquiry system couldn't be reached; try again. }
         '503': { description: Enquiries aren't configured. }
@@ -3204,7 +3257,7 @@ paths:
                     comment_id: { type: string, description: 'The comment, or "" for mentions from before they were recorded.' }
                     mentioned_at: { type: string, format: date-time }
                     muted: { type: boolean, description: The caller stopped watching this ticket (it stays listed). }
-        '400': { description: limit is not 1–100, or status isn't open, done or all. }
+        '400': { description: "limit is not 1–100, or status isn't open, done or all." }
         '401': { $ref: '#/components/responses/Unauthorized' }
 
   /mentions/page:
@@ -3230,7 +3283,7 @@ paths:
                   total: { type: integer }
                   page: { type: integer }
                   per_page: { type: integer }
-        '400': { description: page or per_page is out of range, or status isn't open, done or all. }
+        '400': { description: "page or per_page is out of range, or status isn't open, done or all." }
         '401': { $ref: '#/components/responses/Unauthorized' }
 
   /mentions/{ticketId}/mute:
@@ -3442,7 +3495,7 @@ paths:
       responses:
         '204': { description: Kept for another year. }
         '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { description: Not an org admin or the file's uploader, or an API key. }
+        '403': { description: "Not an org admin or the file's uploader, or an API key." }
         '404': { $ref: '#/components/responses/NotFound' }
   /attachments/retention:
     get:
@@ -3484,13 +3537,13 @@ paths:
                         created_by: { type: string }
                         deleted_at: { type: string, format: date-time }
         '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { description: Not an org admin, or an API key. }
+        '403': { description: "Not an org admin, or an API key." }
 
   /boards/{boardId}/reports/sprints:
     parameters:
       - { name: boardId, in: path, required: true, schema: { type: string, format: uuid } }
       - { name: from, in: query, schema: { type: string, format: date }, description: "First day (in the caller's Tracklines-Timezone); default 90 days ago." }
-      - { name: to, in: query, schema: { type: string, format: date }, description: Last day, inclusive; default today. At most two years after from. }
+      - { name: to, in: query, schema: { type: string, format: date }, description: "Last day, inclusive; default today. At most two years after from." }
       - { name: format, in: query, schema: { type: string, enum: [json, md, markdown] }, description: "md (or markdown): the report as a Markdown download (text/markdown, attachment) with Mermaid charts, for wikis and docs (TL-399)." }
     get:
       tags: [Sprints]
@@ -3509,7 +3562,7 @@ paths:
                   unit: { type: string, enum: [points, tickets] }
                   from: { type: string, format: date-time }
                   to: { type: string, format: date-time }
-                  summary: { type: string, example: Delivered 84% of planned work across 6 sprints, up from 71%. }
+                  summary: { type: string, example: "Delivered 84% of planned work across 6 sprints, up from 71%." }
                   spikes:
                     type: object
                     description: "Timeboxed spikes started and finished on this board in the period (TL-508), compared with their timebox in business hours (Mon–Fri 09:00–17:00, 8h a day) in the caller's Tracklines-Timezone. Spikes without a timebox, or never started, are left out."
@@ -3517,7 +3570,7 @@ paths:
                       done: { type: integer }
                       within: { type: integer }
                       over: { type: integer }
-                      over_hours: { type: number, description: Business hours over, summed across the spikes that went over. }
+                      over_hours: { type: number, description: "Business hours over, summed across the spikes that went over." }
                   sprints:
                     type: array
                     items:
@@ -3547,7 +3600,7 @@ paths:
     parameters:
       - { name: projectId, in: path, required: true, schema: { type: string, format: uuid } }
       - { name: from, in: query, schema: { type: string, format: date }, description: "First day (in the caller's Tracklines-Timezone); default 90 days ago." }
-      - { name: to, in: query, schema: { type: string, format: date }, description: Last day, inclusive; default today. }
+      - { name: to, in: query, schema: { type: string, format: date }, description: "Last day, inclusive; default today." }
       - { name: format, in: query, schema: { type: string, enum: [json, md, markdown] }, description: "md (or markdown): the report as a Markdown download (text/markdown, attachment) with Mermaid charts, for wikis and docs (TL-399)." }
     get:
       tags: [Sprints]
@@ -3560,7 +3613,7 @@ paths:
   /org/reports/sprints:
     parameters:
       - { name: from, in: query, schema: { type: string, format: date }, description: "First day (in the caller's Tracklines-Timezone); default 90 days ago." }
-      - { name: to, in: query, schema: { type: string, format: date }, description: Last day, inclusive; default today. }
+      - { name: to, in: query, schema: { type: string, format: date }, description: "Last day, inclusive; default today." }
       - { name: format, in: query, schema: { type: string, enum: [json, md, markdown] }, description: "md (or markdown): the report as a Markdown download (text/markdown, attachment) with Mermaid charts, for wikis and docs (TL-399)." }
     get:
       tags: [Sprints]
@@ -3604,7 +3657,7 @@ paths:
       parameters:
         - name: weeks
           in: query
-          description: Number of UTC calendar weeks including the current week.
+          description: Number of weeks, counting the current one; weeks start on the working week's first day.
           schema: { type: integer, minimum: 1, maximum: 52, default: 12 }
         - { name: format, in: query, schema: { type: string, enum: [json, md, markdown] }, description: "md (or markdown): the report as a Markdown download (text/markdown, attachment named <board>-flow-<date>.md) with Mermaid charts, each followed by a table (TL-621)." }
       responses:
@@ -3927,7 +3980,7 @@ paths:
       summary: The project's running refinement session, with who's here
       responses:
         '200': { description: The session., content: { application/json: { schema: { $ref: '#/components/schemas/HostedSession' } } } }
-        '404': { description: No session running, or the project isn't in the caller's organization. }
+        '404': { description: "No session running, or the project isn't in the caller's organization." }
         '503': { description: Valkey is unavailable. }
     post:
       tags: [Projects]
@@ -3956,7 +4009,7 @@ paths:
       summary: Join the session, and stay in it
       description: Call every 30 seconds while taking part; anyone not seen for a minute drops off the list. A host gone for two minutes ends the session.
       responses:
-        '200': { description: The session, with the caller in it., content: { application/json: { schema: { $ref: '#/components/schemas/HostedSession' } } } }
+        '200': { description: "The session, with the caller in it.", content: { application/json: { schema: { $ref: '#/components/schemas/HostedSession' } } } }
         '404': { description: No session running. }
 
   /projects/{projectId}/live/refinement/leave:
@@ -4015,7 +4068,7 @@ paths:
       description: Starting a standup makes the starter its host; ending it ends the session. Events (`standup-session`, `standup-session-ended`) go out on the board's live stream.
       responses:
         '200': { description: The session., content: { application/json: { schema: { $ref: '#/components/schemas/HostedSession' } } } }
-        '404': { description: No standup running, or the board isn't in the caller's organization. }
+        '404': { description: "No standup running, or the board isn't in the caller's organization." }
         '503': { description: Valkey is unavailable. }
 
   /boards/{boardId}/live/standup/join:
@@ -4026,7 +4079,7 @@ paths:
       operationId: joinHostedStandup
       summary: Join the standup, and stay in it (call every 30 seconds)
       responses:
-        '200': { description: The session, with the caller in it., content: { application/json: { schema: { $ref: '#/components/schemas/HostedSession' } } } }
+        '200': { description: "The session, with the caller in it.", content: { application/json: { schema: { $ref: '#/components/schemas/HostedSession' } } } }
         '404': { description: No standup running. }
 
   /boards/{boardId}/live/standup/leave:
@@ -4147,7 +4200,7 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/PlannedSprint' }
-        '403': { description: Not an org admin or the board team's leader, or an API key. }
+        '403': { description: "Not an org admin or the board team's leader, or an API key." }
         '404': { $ref: '#/components/responses/NotFound' }
 
   /tickets/{ticketId}/planned-sprint:
@@ -4174,7 +4227,7 @@ paths:
         '204': { description: Planned. }
         '400': { description: Estimate isn't on the board's scale. }
         '404': { $ref: '#/components/responses/NotFound' }
-        '409': { description: The ticket is on a board, not in the backlog. }
+        '409': { description: "The ticket is on a board, not in the backlog." }
 
   /roadmaps:
     get:
@@ -4588,7 +4641,7 @@ paths:
                   project_limit: { type: integer, description: '-1 means unlimited.' }
                   member_limit: { type: integer, description: 'People allowed in the organization (TL-418): 20 on Free and Pro, -1 (unlimited) on Enterprise. AI agents do not count.' }
                   billed: { type: boolean, description: "Paid through a Stripe subscription, so the billing portal can manage it. false for free plans and for plans granted by hand; the portal answers 409 for those." }
-                  can_manage: { type: boolean, description: The caller is an org admin, so may upgrade or manage the plan. }
+                  can_manage: { type: boolean, description: "The caller is an org admin, so may upgrade or manage the plan." }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '503': { description: Billing status unavailable. }
 
@@ -4629,7 +4682,7 @@ paths:
         '204': { description: Changed; the new project limit applies straight away. }
         '400': { description: Unknown plan. }
         '403': { description: Not a signed-in admin of the active organization. }
-        '409': { description: No subscription to change (check out instead), or the plan was granted by hand. }
+        '409': { description: "No subscription to change (check out instead), or the plan was granted by hand." }
         '502': { description: Stripe is unavailable. }
         '503': { description: Billing (or that plan) isn't configured. }
 
@@ -4672,7 +4725,7 @@ paths:
               schema: { $ref: '#/components/schemas/URLResponse' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { description: Not a signed-in admin of the active organization. }
-        '409': { description: The organization has no Stripe subscription (free, or granted by hand). }
+        '409': { description: "The organization has no Stripe subscription (free, or granted by hand)." }
         '503': { description: Billing is not configured or unavailable. }
         '502': { description: Stripe is unavailable. }
 
@@ -4727,7 +4780,7 @@ paths:
       responses:
         '204': { description: Event applied or ignored. }
         '400': { description: Invalid body or signature. }
-        '503': { description: CLERK_WEBHOOK_SECRET is not set, or the database is unavailable (Svix retries). }
+        '503': { description: "CLERK_WEBHOOK_SECRET is not set, or the database is unavailable (Svix retries)." }
 
   /staff/me:
     get:
@@ -4737,7 +4790,7 @@ paths:
       description: 'staff is true for a signed-in member of the ChewedFeed Clerk org (STAFF_ORG_ID), whatever their active org. Behind the admin-panel flag.'
       responses:
         '200': { description: Staff., content: { application/json: { schema: { type: object, properties: { staff: { type: boolean } } } } } }
-        '404': { description: Not staff, signed out, an API key, the flag is off or no staff org is configured. }
+        '404': { description: "Not staff, signed out, an API key, the flag is off or no staff org is configured." }
         '503': { description: Clerk couldn't be asked (verify_membership_failed). }
   /staff/stats:
     get:
@@ -4754,7 +4807,7 @@ paths:
                 type: object
                 properties:
                   organizations: { $ref: '#/components/schemas/StaffCount' }
-                  plans: { type: object, description: Organizations by plan (free, pro, enterprise)., additionalProperties: { type: integer } }
+                  plans: { type: object, description: "Organizations by plan (free, pro, enterprise).", additionalProperties: { type: integer } }
                   members: { $ref: '#/components/schemas/StaffCount' }
                   projects: { $ref: '#/components/schemas/StaffCount' }
                   boards: { $ref: '#/components/schemas/StaffCount' }
@@ -4881,7 +4934,7 @@ paths:
       responses:
         '200': { description: Changed., content: { application/json: { schema: { $ref: '#/components/schemas/HelpAnswer' } } } }
         '400': { description: 'Invalid: help_slug, help_english, help_locale, help_href or help_page.' }
-        '404': { description: Not staff, or no such answer (help_not_found). }
+        '404': { description: "Not staff, or no such answer (help_not_found)." }
         '409': { description: Another answer has that slug (help_slug_taken). }
     delete:
       tags: [Staff]
@@ -4889,7 +4942,7 @@ paths:
       summary: Delete a help answer
       responses:
         '204': { description: Deleted. }
-        '404': { description: Not staff, or no such answer (help_not_found). }
+        '404': { description: "Not staff, or no such answer (help_not_found)." }
   /staff/outages:
     get:
       tags: [Staff]
@@ -4911,7 +4964,7 @@ paths:
             schema: { type: object, required: [starts_at, ends_at], properties: { starts_at: { type: string, format: date-time }, ends_at: { type: string, format: date-time }, note: { type: string } } }
       responses:
         '201': { description: Recorded., content: { application/json: { schema: { $ref: '#/components/schemas/Outage' } } } }
-        '400': { description: It doesn't end after it starts, or ends in the future (outage_times). }
+        '400': { description: "It doesn't end after it starts, or ends in the future (outage_times)." }
         '404': { description: Not staff. }
   /staff/outages/{id}:
     parameters:
@@ -4922,8 +4975,8 @@ paths:
       summary: Delete a mistaken outage
       responses:
         '204': { description: Deleted. }
-        '404': { description: Not staff, or no such outage (outage_not_found). }
-        '409': { description: It has credits, so it stays (outage_has_credits). }
+        '404': { description: "Not staff, or no such outage (outage_not_found)." }
+        '409': { description: "It has credits, so it stays (outage_has_credits)." }
   /staff/outages/{id}/preview:
     parameters:
       - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
@@ -4943,7 +4996,7 @@ paths:
                   outage: { $ref: '#/components/schemas/Outage' }
                   credits: { type: array, items: { $ref: '#/components/schemas/DowntimeCredit' } }
                   problems: { type: array, items: { $ref: '#/components/schemas/DowntimeProblem' } }
-        '404': { description: Not staff, or no such outage (outage_not_found). }
+        '404': { description: "Not staff, or no such outage (outage_not_found)." }
         '503': { description: Stripe isn't configured (downtime_unavailable). }
   /staff/outages/{id}/apply:
     parameters:
@@ -4968,7 +5021,7 @@ paths:
                   credited: { type: array, items: { $ref: '#/components/schemas/DowntimeCredit' } }
                   problems: { type: array, items: { $ref: '#/components/schemas/DowntimeProblem' } }
         '400': { description: An hour or less without include_short (outage_short). }
-        '404': { description: Not staff, or no such outage (outage_not_found). }
+        '404': { description: "Not staff, or no such outage (outage_not_found)." }
         '503': { description: Stripe isn't configured (downtime_unavailable). }
   /health:
     get:
@@ -5055,7 +5108,7 @@ components:
         ends_at: { type: string, format: date-time }
         note: { type: string }
         minutes: { type: integer }
-        qualifies: { type: boolean, description: Over an hour, so its days are credited. }
+        qualifies: { type: boolean, description: "Over an hour, so its days are credited." }
         days: { type: array, items: { type: string, format: date }, description: The UTC days it touched. }
         clusters: { type: array, items: { type: string, format: date }, description: 'Its days with several outages (3+, or 2+ totalling over an hour): staff decide.' }
         credited: { type: integer, description: Credits made for it. }
@@ -5297,11 +5350,11 @@ components:
         columns: { type: integer }
         tickets: { type: integer }
         comments: { type: integer }
-        attachments: { type: integer, description: Files copied (planned - those small enough to copy, up to 16 MB each). }
+        attachments: { type: integer, description: "Files copied (planned - those small enough to copy, up to 16 MB each)." }
     ImportSkip:
       type: object
       properties:
-        kind: { type: string, description: ticket, comment, estimate, parent… }
+        kind: { type: string, description: "ticket, comment, estimate, parent…" }
         source_id: { type: string }
         reason: { type: string }
     NameInput:
@@ -5451,7 +5504,7 @@ components:
         shared: { type: boolean }
         query: { type: object, description: "The web app's backlog/search filters, kept as given." }
         mine: { type: boolean, description: You made it. }
-        can_edit: { type: boolean, description: You may rename, change or delete it. }
+        can_edit: { type: boolean, description: "You may rename, change or delete it." }
         created_at: { type: string, format: date-time }
     SavedViewInput:
       type: object
@@ -5543,7 +5596,7 @@ components:
       type: object
       required: [weeks, tickets, median_cycle_days, p85_cycle_days, throughput, wip, mix]
       properties:
-        weeks: { type: integer, description: Number of UTC calendar weeks included, including the current week. }
+        weeks: { type: integer, description: "Number of weeks included, counting the current one; weeks start on the working week's first day." }
         tickets:
           type: array
           description: Finished tickets in the date window, oldest completion first.
@@ -5633,21 +5686,21 @@ components:
                 The board team's time away over the sprint, from Google Calendar (weekends and company days off aren't
                 working days). A team figure, never per person. Null without Google Calendar or a board team.
               properties:
-                percent: { type: number, description: Share of the team's working days not away, 0–100. }
+                percent: { type: number, description: "Share of the team's working days not away, 0–100." }
                 person_days_away: { type: number }
     HostedFocus:
       type: object
       description: What the host has open, shown to followers.
       properties:
         ticketId: { type: string, nullable: true, description: The ticket open; null when none. }
-        filters: { type: object, additionalProperties: { type: array, items: { type: string } }, description: e.g. labels, priorities, assignee. }
+        filters: { type: object, additionalProperties: { type: array, items: { type: string } }, description: "e.g. labels, priorities, assignee." }
     HostedSession:
       type: object
       properties:
         host: { type: string, description: The host's user id. }
         startedAt: { type: integer, format: int64, description: Unix milliseconds. }
         focus: { $ref: '#/components/schemas/HostedFocus' }
-        people: { type: array, items: { type: string }, description: User ids in the session now (seen in the last minute), host included. }
+        people: { type: array, items: { type: string }, description: "User ids in the session now (seen in the last minute), host included." }
     LiveStandup:
       type: object
       required: [people, index, spentMs, runningSince, startedBy]
@@ -5945,7 +5998,7 @@ components:
         state: { type: string, enum: [pending, ok, failed] }
         attempts: { type: integer }
         status_code: { type: [integer, 'null'], description: The last attempt's HTTP status; null when it got no response. }
-        error: { type: [string, 'null'], description: Why the last attempt got no response (timeout, refused, private address…). }
+        error: { type: [string, 'null'], description: "Why the last attempt got no response (timeout, refused, private address…)." }
         duration_ms: { type: [integer, 'null'] }
         created_at: { type: string, format: date-time }
         next_attempt_at: { type: [string, 'null'], format: date-time, description: When it's tried next; null once ok or failed. }
@@ -6107,7 +6160,7 @@ components:
       properties:
         days: { type: array, items: { type: integer, minimum: 0, maximum: 6 }, minItems: 1, maxItems: 7, description: "Working days, 0 Sunday to 6 Saturday." }
         week_start: { type: integer, minimum: 0, maximum: 6, description: The first day of the week. }
-        start_minute: { type: integer, minimum: 0, maximum: 1380, description: When work starts, in minutes from midnight. }
+        start_minute: { type: integer, minimum: 0, maximum: 1380, description: "When work starts, in minutes from midnight." }
         end_minute: { type: integer, maximum: 1440, description: When it ends; at least an hour after it starts. }
     ErrorResponse:
       type: object
@@ -6117,8 +6170,8 @@ components:
         filled in); it's missing for a generic error, where the status says it all.
       required: [error]
       properties:
-        code: { type: string, description: Stable error code, for translating the message. }
-        error: { type: string, description: The English message, as the plain-text response would give it. }
+        code: { type: string, description: "Stable error code, for translating the message." }
+        error: { type: string, description: "The English message, as the plain-text response would give it." }
       x-error-codes:
         guide_organization: "refresh after switching organizations"
         onboarding_board: "choose a board in this organization"
