@@ -211,7 +211,7 @@ var tools = []tool{
 	{name: "add_comment", title: "Add comment", description: "Comment on a ticket (markdown), e.g. to report progress or what was done.",
 		method: "POST", path: "/api/tickets/{ticket_id}/comments", body: []string{"body"},
 		props: map[string]any{"ticket_id": id("Ticket"), "body": str("Comment (markdown)")}, required: []string{"ticket_id", "body"}},
-	{name: "set_blocked_by", title: "Set blockers", description: "Replace the tickets this one waits on (same project, no cycles); [] clears. Blocked tickets can't be claimed.",
+	{name: "set_blocked_by", title: "Set blockers", description: "Replace the tickets this one waits on (any project in the organization, no cycles); [] clears. Blocked tickets can't be claimed.",
 		method: "PUT", path: "/api/tickets/{ticket_id}/blocked-by", body: []string{"ticket_ids"},
 		props: map[string]any{"ticket_id": id("Ticket"), "ticket_ids": map[string]any{"type": "array", "items": map[string]any{"type": "string"}}}, required: []string{"ticket_id", "ticket_ids"}},
 	{name: "bulk_edit_tickets", title: "Bulk edit tickets", description: "Change up to 200 tickets in one go: action priority (priority), labels (add, remove), assign (assignee, null unassigns), parent (parent_id, null detaches), move (column_id, estimate), resolve (resolution done|wont_do, reason) or delete. Each ticket follows the same rules as a single change; results say per ticket ok or why not.",

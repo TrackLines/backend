@@ -263,7 +263,7 @@ func writeErr(w http.ResponseWriter, r *http.Request, err error) {
 	case errors.Is(err, ErrNotAssignedToCaller), errors.Is(err, ErrBlocked), errors.Is(err, ErrDoneBlock), errors.Is(err, ErrDoneParent):
 		httpx.Error(w, r, http.StatusConflict, err)
 		return
-	case errors.Is(err, ErrSelfBlock), errors.Is(err, ErrOtherProject), errors.Is(err, ErrCycle), errors.Is(err, ErrUnknownAssignee), errors.Is(err, ErrBadLabels),
+	case errors.Is(err, ErrSelfBlock), errors.Is(err, ErrUnknownBlocker), errors.Is(err, ErrOtherProject), errors.Is(err, ErrCycle), errors.Is(err, ErrUnknownAssignee), errors.Is(err, ErrBadLabels),
 		errors.Is(err, ErrSelfParent), errors.Is(err, ErrParentLoop), errors.Is(err, boards.ErrBadEstimate),
 		errors.Is(err, ErrEpicInEpic), errors.Is(err, ErrEpicEstimate):
 		httpx.Error(w, r, http.StatusBadRequest, err)

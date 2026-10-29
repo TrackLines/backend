@@ -3149,7 +3149,7 @@ paths:
       operationId: setTicketDependencies
       summary: Replace the tickets blocking this ticket
       description: >-
-        Use an empty `ticket_ids` array to clear dependencies. Dependencies must be in the same project and cannot form a cycle.
+        Use an empty `ticket_ids` array to clear dependencies. Dependencies can be in any of the organization's projects (never another organization's) and cannot form a cycle.
         A done ticket can keep or drop its blockers but not gain new ones (409).
       parameters:
         - $ref: '#/components/parameters/TicketId'
@@ -5858,6 +5858,8 @@ components:
         id: { type: string, format: uuid }
         title: { type: string }
         done: { type: boolean }
+        project_id: { type: string, format: uuid, description: 'Blockers can be in another project of the organization: show those as "Project - Title".' }
+        project_name: { type: string }
     TicketChild:
       type: object
       properties:
@@ -6473,6 +6475,7 @@ components:
         too_many_origins: "too many embed origins for this project"
         too_many_planned: "a board plans at most 2 sprints ahead"
         unknown_assignee: "assignee must be an active organization member or AI agent"
+        unknown_blocker: "blockers must be tickets in this organization"
         unknown_provider: "unknown provider"
         verify_membership_failed: "could not verify organization membership"
   responses:
