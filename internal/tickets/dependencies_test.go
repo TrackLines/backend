@@ -89,8 +89,25 @@ func TestDependencies(t *testing.T) {
 	if err := s.SetBlockedBy(ctx, "dp1", a, []string{a}); !errors.Is(err, ErrSelfBlock) {
 		t.Fatalf("self: %v", err)
 	}
-	if err := s.SetBlockedBy(ctx, "dp1", a, []string{elsewhere.ID}); !errors.Is(err, ErrOtherProject) {
+	// another project of the org is fine (TL-714), with its name; another org's ticket isn't
+	f := mk("F")
+	if err := s.SetBlockedBy(ctx, "dp1", f, []string{elsewhere.ID}); err != nil {
 		t.Fatalf("other project: %v", err)
+	}
+	if d, _ := s.Get(ctx, "dp1", f); len(d.BlockedBy) != 1 || d.BlockedBy[0].ProjectName != "other" || d.BlockedBy[0].ProjectID != otherPID || !d.Blocked {
+		t.Fatalf("F waits on the other project's ticket: %+v", d.BlockedBy)
+	}
+	if d, _ := s.Get(ctx, "dp1", elsewhere.ID); len(d.Blocks) != 1 || d.Blocks[0].ID != f || d.Blocks[0].ProjectName != "p" {
+		t.Fatalf("the other project's ticket blocks F: %+v", d.Blocks)
+	}
+	if err := s.SetBlockedBy(ctx, "dp1", elsewhere.ID, []string{f}); !errors.Is(err, ErrCycle) {
+		t.Fatalf("a loop across projects: %v", err)
+	}
+	theirPID := ""
+	_ = db.QueryRow(ctx, `INSERT INTO projects (owner_clerk_id, name) VALUES ('dp2', 'theirs') RETURNING id`).Scan(&theirPID)
+	theirs, _ := s.CreateBacklog(ctx, "dp2", theirPID, "task", "another org's", "")
+	if err := s.SetBlockedBy(ctx, "dp1", f, []string{theirs.ID}); !errors.Is(err, ErrUnknownBlocker) {
+		t.Fatalf("another org: %v", err)
 	}
 	if err := s.SetBlockedBy(ctx, "dp1", a, []string{c}); !errors.Is(err, ErrCycle) {
 		t.Fatalf("2-cycle (C waits on A, A waits on C): %v", err)
