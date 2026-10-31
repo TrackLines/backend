@@ -76,7 +76,7 @@ func session(org, user string) context.Context {
 func TestSetupPermissionsResumeAndGuideVersions(t *testing.T) {
 	h, org := fixture(t)
 	ctx := session(org, "admin")
-	if s := call(t, h.Status, session(org, "member"), "", 200); s.Admin || !s.Guide.Available || s.Step != "complete" || slices.Contains(s.Chapters, "github") || !slices.Contains(s.Chapters, "project") {
+	if s := call(t, h.Status, session(org, "member"), "", 200); s.Admin || !s.Guide.Available || s.Step != "complete" || slices.Contains(s.Chapters, "github") || slices.Contains(s.Chapters, "project") {
 		t.Fatalf("member guide permissions: %+v", s)
 	}
 	if s := call(t, h.CompleteGuide, session(org, "member"), `{"id":"getting-started","version":1}`, 200); s.Guide.Available {
@@ -185,8 +185,9 @@ func TestGuideChaptersRespectRoleAndProjectCapacity(t *testing.T) {
 	if !slices.Equal(s.Chapters, []string{"project", "ticket", "github", "tui", "mcp"}) {
 		t.Fatalf("admin chapters: %v", s.Chapters)
 	}
+	// no projects yet, and a member can't create one (TL-735), so there's nothing to raise a ticket in either
 	s = call(t, h.Status, member, "", 200)
-	if !slices.Equal(s.Chapters, []string{"project", "ticket", "tui", "mcp"}) {
+	if !slices.Equal(s.Chapters, []string{"tui", "mcp"}) {
 		t.Fatalf("member chapters: %v", s.Chapters)
 	}
 	call(t, h.Create, admin, `{"name":"Team","key_prefix":"TEAM"}`, 200)
@@ -198,8 +199,11 @@ func TestGuideChaptersRespectRoleAndProjectCapacity(t *testing.T) {
 		t.Fatal(err)
 	}
 	s = call(t, h.Status, member, "", 200)
-	if !slices.Contains(s.Chapters, "project") || slices.Contains(s.Chapters, "github") {
-		t.Fatalf("upgraded member: %v", s.Chapters)
+	if slices.Contains(s.Chapters, "project") || slices.Contains(s.Chapters, "github") {
+		t.Fatalf("upgraded member: %v", s.Chapters) // room on the plan doesn't make them an admin
+	}
+	if s = call(t, h.Status, admin, "", 200); !slices.Contains(s.Chapters, "project") {
+		t.Fatalf("upgraded admin: %v", s.Chapters)
 	}
 	call(t, h.Finish, member, "", 403)
 }

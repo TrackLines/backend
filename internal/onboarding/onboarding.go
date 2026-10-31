@@ -94,8 +94,8 @@ func (h System) stateForRole(ctx context.Context, org, user string, guide Guide,
 	if err != nil {
 		return s, err
 	}
-	// Project and backlog creation accept all signed-in members; connecting GitHub requires an admin.
-	canCreateProject := limit < 0 || projectCount < limit
+	// Creating a project and connecting GitHub need an admin (TL-735); tickets are for every member.
+	canCreateProject := admin && (limit < 0 || projectCount < limit)
 	if canCreateProject {
 		s.Chapters = append(s.Chapters, "project")
 	}
