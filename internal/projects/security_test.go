@@ -68,6 +68,26 @@ func TestProjectSecurity(t *testing.T) {
 			t.Errorf("%s can delete project: got %d, want 403", name, got)
 		}
 	}
+	// TL-735: only admins create projects
+	for name, as := range map[string]context.Context{"member": member, "API key": apiKey} {
+		if got := call(as, http.MethodPost, `{"name":"Sneaky"}`, h.Create).Code; got != http.StatusForbidden {
+			t.Errorf("%s can create a project: got %d, want 403", name, got)
+		}
+	}
+	var sneaky int
+	if err := db.QueryRow(ctx, `SELECT count(*) FROM projects WHERE owner_clerk_id = $1 AND name = 'Sneaky'`, org).Scan(&sneaky); err != nil {
+		t.Fatal(err)
+	}
+	if sneaky != 0 {
+		t.Errorf("refused creates still made %d projects", sneaky)
+	}
+	if _, err := db.Exec(ctx, `INSERT INTO org_billing (org_id, stripe_status) VALUES ($1, 'active') ON CONFLICT (org_id) DO UPDATE SET stripe_status = 'active'`, org); err != nil {
+		t.Fatal(err)
+	}
+	if got := call(admin, http.MethodPost, `{"name":"Allowed"}`, h.Create).Code; got != http.StatusCreated {
+		t.Errorf("admin can't create a project: got %d, want 201", got)
+	}
+
 	// TL-427: only admins rename; a member can still edit the description under the same name
 	if got := call(member, http.MethodPatch, `{"name":"Renamed","description":""}`, h.Update).Code; got != http.StatusForbidden {
 		t.Errorf("member can rename the project: got %d, want 403", got)

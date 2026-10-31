@@ -69,17 +69,22 @@ func (h System) List(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h System) Create(w http.ResponseWriter, r *http.Request) {
+	// only org admins add projects (TL-735), as only they delete them
+	org, _, ok := h.admins.RequireAdmin(w, r)
+	if !ok {
+		return
+	}
 	var in projectInput
 	if !httpx.Decode(w, r, &in) || !in.valid(w, r) {
 		return
 	}
-	// the org's plan sets its project limit, whoever creates the project (TL-243)
-	limit, err := billing.ProjectLimit(r.Context(), h.db, auth.OrgID(r.Context()))
+	// the org's plan sets its project limit, whichever admin creates the project (TL-243)
+	limit, err := billing.ProjectLimit(r.Context(), h.db, org)
 	if err != nil {
 		writeErr(w, r, err)
 		return
 	}
-	p, err := h.store.Create(r.Context(), auth.OrgID(r.Context()), in.Name, in.Description, limit)
+	p, err := h.store.Create(r.Context(), org, in.Name, in.Description, limit)
 	if err != nil {
 		writeErr(w, r, err)
 		return
