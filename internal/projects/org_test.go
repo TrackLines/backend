@@ -12,7 +12,6 @@ import (
 
 	"github.com/golang-migrate/migrate/v4"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/tracklines/backend/internal/auth"
 	"github.com/tracklines/backend/internal/organizations"
 )
 
@@ -40,7 +39,14 @@ func TestOrgSharing(t *testing.T) {
 		t.Fatal(err)
 	}
 	h := NewSystem(db, organizations.Admins{DB: db})
-	as := func(user, org string) context.Context { return auth.WithAPIKey(ctx, user, org, user, "ai") }
+	as := func(user, org string) context.Context { return session(ctx, user, org) }
+	if _, err := db.Exec(ctx, `DELETE FROM org_admins WHERE org_id IN ('org_x', 'org_y')`); err != nil {
+		t.Fatal(err)
+	}
+	// creating needs an admin (TL-735): these are all admins of their orgs
+	if _, err := db.Exec(ctx, `INSERT INTO org_admins (org_id, user_clerk_id, granted_by) VALUES ('org_x', 'alice', 'test'), ('org_x', 'bob', 'test'), ('org_y', 'carol', 'test')`); err != nil {
+		t.Fatal(err)
+	}
 	call := func(c context.Context, method, id, body string, fn func(http.ResponseWriter, *http.Request)) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(method, "/", strings.NewReader(body)).WithContext(c)
 		req.SetPathValue("id", id)
