@@ -5693,6 +5693,7 @@ components:
       description: What the host has open, shown to followers.
       properties:
         ticketId: { type: string, nullable: true, description: The ticket open; null when none. }
+        attachmentId: { type: string, nullable: true, description: The file on that ticket the host is previewing; absent when none. }
         filters: { type: object, additionalProperties: { type: array, items: { type: string } }, description: "e.g. labels, priorities, assignee." }
     HostedSession:
       type: object
