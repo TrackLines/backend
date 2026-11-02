@@ -27,10 +27,11 @@ var (
 	ErrNotJoined      = httpx.Code("not_joined", "they haven't joined the session")
 )
 
-// Focus is what the host has open: a ticket (nil when none) and the filters they're using.
+// Focus is what the host has open: a ticket (nil when none), a file on it, and the filters they're using.
 type Focus struct {
-	TicketID *string             `json:"ticketId"`
-	Filters  map[string][]string `json:"filters,omitempty"`
+	TicketID     *string             `json:"ticketId"`
+	AttachmentID *string             `json:"attachmentId,omitempty"`
+	Filters      map[string][]string `json:"filters,omitempty"`
 }
 
 // Hosted is a hosted session as everyone sees it.

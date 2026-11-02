@@ -146,9 +146,15 @@ func TestHostedRefinement(t *testing.T) {
 		t.Fatalf("joined: %+v", h)
 	}
 	expect(403, "bo", "org_hs", "focus", `{"ticketId":"t1"}`)
-	h = expect(200, "ava", "org_hs", "focus", `{"ticketId":"t1","filters":{"labels":["ui"]}}`)
+	h = expect(200, "ava", "org_hs", "focus", `{"ticketId":"t1","attachmentId":"a1","filters":{"labels":["ui"]}}`)
 	if h.Focus.TicketID == nil || *h.Focus.TicketID != "t1" || h.Focus.Filters["labels"][0] != "ui" {
 		t.Fatalf("focus: %+v", h.Focus)
+	}
+	if h.Focus.AttachmentID == nil || *h.Focus.AttachmentID != "a1" {
+		t.Fatalf("focus attachment: %+v", h.Focus)
+	}
+	if h = expect(200, "ava", "org_hs", "focus", `{"ticketId":"t1"}`); h.Focus.AttachmentID != nil { // closing the file clears it
+		t.Fatalf("closed attachment: %+v", h.Focus)
 	}
 
 	// a late joiner gets what the host has open now
