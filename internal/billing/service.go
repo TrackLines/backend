@@ -23,6 +23,8 @@ type Service struct {
 	IsAdmin func(ctx context.Context, org, user string) (bool, error)
 	// ClerkOrgs keeps Clerk's member cap in step with the plan (TL-418); nil: not synced
 	ClerkOrgs OrgUpdater
+	// LaunchOfferOn is the flags.gg flag launch-offer (TL-774): off, the free year can't be seen or claimed
+	LaunchOfferOn func() bool
 }
 
 func (s Service) configured() bool {

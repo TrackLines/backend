@@ -325,3 +325,29 @@ func (s Stripe) ResolvePrice(ctx context.Context, id string) (string, error) {
 	}
 	return price, nil
 }
+
+// TrialSubscription subscribes the customer to price with a free trial of days and no card (TL-774:
+// the launch offer). Without a card when it ends, Stripe cancels it, so the org drops back to Free.
+// key makes a retry the same subscription.
+func (s Stripe) TrialSubscription(ctx context.Context, org, customer, price string, days int, key string) (id string, trialEnd time.Time, err error) {
+	var sub struct {
+		ID       string `json:"id"`
+		TrialEnd int64  `json:"trial_end"`
+	}
+	form := url.Values{
+		"customer":               {customer},
+		"items[0][price]":        {price},
+		"trial_period_days":      {strconv.Itoa(days)},
+		"metadata[org_id]":       {org},
+		"metadata[launch_offer]": {"1"},
+		"payment_settings[save_default_payment_method]":        {"on_subscription"},
+		"trial_settings[end_behavior][missing_payment_method]": {"cancel"},
+	}
+	if err := s.call(ctx, http.MethodPost, "/v1/subscriptions", form, key, &sub); err != nil {
+		return "", time.Time{}, err
+	}
+	if sub.ID == "" || sub.TrialEnd == 0 {
+		return "", time.Time{}, errors.New("stripe returned no subscription id or trial end")
+	}
+	return sub.ID, time.Unix(sub.TrialEnd, 0).UTC(), nil
+}

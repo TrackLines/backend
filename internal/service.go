@@ -174,6 +174,8 @@ func (s *Service) Start() error {
 	// due dates: the day before and on the day, assignees and watchers are reminded (TL-631)
 	go tickets.DueReminders{Store: tickets.Store{DB: s.DB}, Notify: notify}.Run(ctx, time.Hour)
 	// every organization's Clerk member cap matches its plan: 20 on Free and Pro, unlimited on Enterprise (TL-418)
+	// the launch offer's free year: admins told 30 and 7 days before it ends (TL-774)
+	go billing.TrialReminders{DB: s.DB}.Run(ctx, time.Hour)
 	go billing.SyncAllMemberCaps(ctx, s.DB, billing.Skip{OrgUpdater: organization.NewClient(&clerk.ClientConfig{}), Orgs: config.Get(s.Config).ClerkUncappedOrgs})
 	go func() { // admins from before TL-690 get Clerk's org:admin role, once each
 		if err := organizations.NewSystem(s.DB).AdminModel().SyncToClerk(ctx); err != nil {
@@ -624,11 +626,14 @@ func (s *Service) Handler() http.Handler {
 	// Billing — answers 503 until Stripe is configured. The plan is the active org's; its admins buy and manage it.
 	bill := s.Billing
 	bill.IsAdmin = o.AdminModel().IsAdmin
+	bill.LaunchOfferOn = s.flag("launch-offer")
 	mux.Handle("GET /api/subscription", signedIn(bill.Status))
 	mux.Handle("POST /api/subscription/checkout", signedIn(bill.Checkout))
 	mux.Handle("POST /api/subscription/portal", signedIn(bill.Portal))
-	mux.Handle("POST /api/subscription/plan", signedIn(bill.ChangePlan)) // Pro ↔ Enterprise, prorated (TL-290)
-	mux.Handle("GET /api/plans", public("plans", 60, bill.Plans))        // limits and prices, for the homepage
+	mux.Handle("POST /api/subscription/plan", signedIn(bill.ChangePlan))               // Pro ↔ Enterprise, prorated (TL-290)
+	mux.Handle("GET /api/subscription/launch-offer", signedIn(bill.LaunchOfferStatus)) // a free year of Pro, behind launch-offer (TL-774)
+	mux.Handle("POST /api/subscription/launch-offer", signedIn(bill.ClaimLaunchOffer))
+	mux.Handle("GET /api/plans", public("plans", 60, bill.Plans)) // limits and prices, for the homepage
 	// Stripe authenticates webhooks by signature, not session
 	mux.Handle("POST /api/webhooks/stripe", public("webhook-stripe", 600, s.Billing.Webhook(time.Now)))
 	mux.Handle("POST /webhooks/stripe", public("webhook-stripe", 600, s.Billing.Webhook(time.Now))) // same path as ../bugfixes (stripe listen --forward-to …/webhooks/stripe)

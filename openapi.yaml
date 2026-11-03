@@ -4665,6 +4665,50 @@ paths:
         '503': { description: Billing is not configured or unavailable. }
         '502': { description: Stripe is unavailable. }
 
+  /subscription/launch-offer:
+    get:
+      tags: [Billing]
+      operationId: getLaunchOffer
+      summary: The launch offer (a free year of Pro) for the active organization
+      description: "Behind the launch-offer flag: 404 while it's off. Eligible only when staff have sent the offer to this organization, it hasn't been claimed, and the organization isn't already paying. Members see it too; only admins can claim it (TL-774)."
+      responses:
+        '200':
+          description: The offer as it stands for this organization.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  eligible: { type: boolean }
+                  claimed: { type: boolean, description: 'Claimed once; never offered again.' }
+                  admin: { type: boolean, description: 'The caller can claim it.' }
+                  trial_ends_at: { type: [string, 'null'], format: date-time, description: 'When the free year ends, once claimed.' }
+        '403': { description: Not signed in to an organization. }
+        '404': { description: The launch-offer flag is off. }
+        '503': { description: Billing is unavailable. }
+    post:
+      tags: [Billing]
+      operationId: claimLaunchOffer
+      summary: "Claim the launch offer: Pro free for a year"
+      description: "Org admins only. Starts a Stripe Pro subscription on a 365-day trial with no card: the organization is on Pro at once. With a card added it carries on as paid Pro; without one it ends and the organization moves to Free. Admins are reminded 30 and 7 days before it ends."
+      responses:
+        '200':
+          description: Claimed.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  eligible: { type: boolean }
+                  claimed: { type: boolean }
+                  admin: { type: boolean }
+                  trial_ends_at: { type: string, format: date-time }
+        '403': { description: "Not a signed-in admin of the active organization, or the offer wasn't sent to it (launch_offer_unavailable)." }
+        '404': { description: The launch-offer flag is off. }
+        '409': { description: "Already claimed (launch_offer_claimed) or already paying (already_subscribed)." }
+        '502': { description: Stripe is unavailable; nothing was claimed. }
+        '503': { description: Billing is not configured or unavailable. }
+
   /subscription/plan:
     post:
       tags: [Billing]
@@ -6390,6 +6434,8 @@ components:
         key_name_required: "name is required (e.g. the script using it)"
         key_name_taken: "someone else in this organization already has a key with that name: choose another"
         key_prefix_taken: "another project in this organization already uses that key prefix"
+        launch_offer_claimed: "this organization has already claimed its free year"
+        launch_offer_unavailable: "the free year isn't available to this organization"
         last_admin: "an organization needs at least one admin"
         layout_bad_wip: "WIP limits are from 1 to 999, or none"
         layout_done_last: "the last column (Done) stays last"
