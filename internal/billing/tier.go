@@ -48,7 +48,7 @@ func IsPaid(ctx context.Context, db *pgxpool.Pool, org string) (bool, error) {
 func PlanOf(ctx context.Context, db *pgxpool.Pool, org string) (string, error) {
 	var plan *string
 	var live bool
-	err := db.QueryRow(ctx, `SELECT plan, stripe_status IN ('active', 'trialing') FROM org_billing WHERE org_id = $1`, org).Scan(&plan, &live)
+	err := db.QueryRow(ctx, `SELECT plan, COALESCE(stripe_status IN ('active', 'trialing'), false) FROM org_billing WHERE org_id = $1`, org).Scan(&plan, &live)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Free, nil
 	}

@@ -121,6 +121,7 @@ func TestRecordPreviewApply(t *testing.T) {
 			('org_pro', 'a@x', 'cus_pro', 'sub_pro', 'active', 'pro'),
 			('org_ent', 'b@x', 'cus_ent', 'sub_ent', 'active', NULL),
 			('org_lapsed', 'c@x', 'cus_lapsed', 'sub_lapsed', 'canceled', 'pro'),
+			('org_trial', 'e@x', 'cus_trial', 'sub_trial', 'trialing', 'pro'), -- the launch offer's free year pays nothing, so gets nothing (TL-774)
 			('org_broken', 'd@x', 'cus_broken', 'sub_broken', 'active', 'pro'),
 			('org_declined', 'e@x', 'cus_declined', 'sub_declined', 'active', 'pro');
 		INSERT INTO org_billing (org_id, billing_email) VALUES ('org_free', 'f@x');
@@ -150,7 +151,7 @@ func TestRecordPreviewApply(t *testing.T) {
 		}
 	}
 
-	// an outage across midnight: two days for every paying org, nothing for Free or lapsed ones
+	// an outage across midnight: two days for every paying org, nothing for Free, lapsed or free-trial ones
 	big := record("2026-10-17T23:00:00Z", "2026-10-18T00:30:00Z")
 	if !big.Qualifies || big.Minutes != 90 || len(big.Days) != 2 {
 		t.Fatalf("%+v", big)
