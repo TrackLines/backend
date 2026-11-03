@@ -381,6 +381,13 @@ func (s *Service) Handler() http.Handler {
 	if s.Billing.Stripe.SecretKey != "" {
 		dt.Stripe = s.Billing.Stripe
 	}
+	// the launch offer's free year (TL-778): every org and whether it's been sent and taken, and sending to chosen ones
+	lo := billing.LaunchOfferStaff{DB: s.DB, On: s.flag("launch-offer"), Orgs: organization.NewClient(&clerk.ClientConfig{}), Members: members, IsAdmin: o.AdminModel().IsAdmin}
+	if push.Enabled() {
+		lo.Push = push
+	}
+	mux.Handle("GET /api/staff/launch-offers", staffOnly(http.HandlerFunc(lo.List)))
+	mux.Handle("POST /api/staff/launch-offers", staffOnly(http.HandlerFunc(lo.Send)))
 	mux.Handle("GET /api/staff/outages", staffOnly(http.HandlerFunc(dt.List)))
 	mux.Handle("POST /api/staff/outages", staffOnly(http.HandlerFunc(dt.Create)))
 	mux.Handle("DELETE /api/staff/outages/{id}", staffOnly(http.HandlerFunc(dt.Delete)))
