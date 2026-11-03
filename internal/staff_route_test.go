@@ -20,11 +20,12 @@ func TestStaffRoutesAreHidden(t *testing.T) {
 	srv := httptest.NewServer((&Service{DB: db}).Handler())
 	defer srv.Close()
 	for path, want := range map[string]int{
-		"/api/staff/me":      404,
-		"/api/staff/stats":   404,
-		"/api/staff/help":    404,
-		"/api/staff/outages": 404,
-		"/api/help":          401,
+		"/api/staff/me":            404,
+		"/api/staff/stats":         404,
+		"/api/staff/help":          404,
+		"/api/staff/outages":       404,
+		"/api/staff/launch-offers": 404, // TL-778
+		"/api/help":                401,
 	} {
 		res, err := http.Get(srv.URL + path)
 		if err != nil {

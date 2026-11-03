@@ -4987,6 +4987,63 @@ paths:
       responses:
         '204': { description: Deleted. }
         '404': { description: "Not staff, or no such answer (help_not_found)." }
+  /staff/launch-offers:
+    get:
+      tags: [Staff]
+      operationId: staffListLaunchOffers
+      summary: Every organization and where it is with the launch offer (staff only)
+      description: "ChewedFeed staff only (404 for everyone else). Organizations from Clerk, newest first, with their plan and offer status (TL-778)."
+      responses:
+        '200':
+          description: The organizations, and whether the launch-offer flag is on.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  flag_on: { type: boolean }
+                  organizations:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        org_id: { type: string }
+                        name: { type: string }
+                        created_at: { type: string, format: date-time }
+                        members: { type: integer }
+                        plan: { type: string, enum: [free, pro, enterprise] }
+                        status: { type: string, enum: [not_sent, sent, claimed, converted, ended, paid], description: 'claimed: on the free year; converted: paying since; ended: cancelled, back on Free; paid: already paying, so it cannot be sent.' }
+                        offered_at: { type: [string, 'null'], format: date-time }
+                        claimed_at: { type: [string, 'null'], format: date-time }
+                        claimed_by: { type: [string, 'null'] }
+                        trial_ends_at: { type: [string, 'null'], format: date-time }
+        '404': { description: Not staff. }
+    post:
+      tags: [Staff]
+      operationId: staffSendLaunchOffers
+      summary: Send the launch offer to chosen organizations (staff only)
+      description: "Each organization is sent the offer once; its admins are told they can claim it and its members that an admin can (in-app, linking to the plan card, and push). Organizations already sent or already paying are skipped. Refused while the launch-offer flag is off."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [org_ids], properties: { org_ids: { type: array, items: { type: string }, minItems: 1, maxItems: 500 } } }
+      responses:
+        '200':
+          description: Which were sent, and which skipped and why.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sent: { type: array, items: { type: string } }
+                  skipped:
+                    type: array
+                    items: { type: object, properties: { org_id: { type: string }, reason: { type: string, enum: [already_sent, paid, failed] } } }
+        '400': { description: "No organizations, or more than 500 (bad_org_ids)." }
+        '404': { description: Not staff. }
+        '409': { description: The launch-offer flag is off (launch_offer_off). }
+
   /staff/outages:
     get:
       tags: [Staff]
@@ -6324,6 +6381,7 @@ components:
         bad_number_param: "{name} must be a whole number from 1 to {max}"
         bad_mention_status: status must be open, done or all
         bad_offset: "offset must be a non-negative integer"
+        bad_org_ids: "choose between 1 and 500 organizations"
         bad_origin: "an origin like https://example.com is required"
         bad_page: "page must be 1 or more"
         bad_parent_comment: "parent_comment_id must be a comment on the same ticket"
@@ -6435,6 +6493,7 @@ components:
         key_name_taken: "someone else in this organization already has a key with that name: choose another"
         key_prefix_taken: "another project in this organization already uses that key prefix"
         launch_offer_claimed: "this organization has already claimed its free year"
+        launch_offer_off: "turn on the launch-offer flag before sending the offer"
         launch_offer_unavailable: "the free year isn't available to this organization"
         last_admin: "an organization needs at least one admin"
         layout_bad_wip: "WIP limits are from 1 to 999, or none"
