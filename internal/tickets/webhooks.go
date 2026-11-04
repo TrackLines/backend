@@ -20,6 +20,9 @@ func readTicket(ctx context.Context, q webhooks.Querier, id string) (boards.Tick
 // emitMove: ticket.moved with the columns it went between (to nil: the backlog), then ticket.done
 // when this move finished it.
 func emitMove(ctx context.Context, q webhooks.Querier, org, id string, from, to *string, done bool) error {
+	if err := flagsOnMove(ctx, q, org, id, from, to, done); err != nil { // TL-787
+		return err
+	}
 	err := webhooks.Emit(ctx, q, org, "ticket.moved", func() (any, error) {
 		t, err := readTicket(ctx, q, id)
 		return struct {

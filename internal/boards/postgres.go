@@ -55,6 +55,14 @@ type Ticket struct {
 	PlannedSprintNumber *int    `json:"planned_sprint_number"`
 	PlannedBoardName    *string `json:"planned_board_name"`
 	DueDate             *string `json:"due_date"` // YYYY-MM-DD, or null (TL-631)
+	// a feature flag in flags.gg that follows the ticket across the board (TL-787): its name (the key
+	// lower-cased unless set; null while not needed), an agent override, the last error flags.gg gave,
+	// and when it was made (the name can't change after)
+	NeedsFlag     bool    `json:"needs_flag"`
+	FlagName      *string `json:"flag_name"`
+	FlagAgentID   *string `json:"flag_agent_id"`
+	FlagError     *string `json:"flag_error"`
+	FlagCreatedAt *string `json:"flag_created_at"`
 }
 
 // TicketCols + ScanTicket read a ticket row; shared with the tickets package. The last column
@@ -79,12 +87,24 @@ var TicketCols = `t.id, t.created_by, t.assigned_to, t.project_id, t.column_id, 
 	(SELECT ps.position + COALESCE((SELECT s.number FROM sprints s WHERE s.board_id = ps.board_id AND s.closed_at IS NULL),
 		(SELECT max(s.number) FROM sprints s WHERE s.board_id = ps.board_id), 0) FROM planned_sprints ps WHERE ps.id = t.planned_sprint_id),
 	(SELECT pb.name FROM planned_sprints ps JOIN boards pb ON pb.id = ps.board_id WHERE ps.id = t.planned_sprint_id),
-	to_char(t.due_date, 'YYYY-MM-DD')`
+	to_char(t.due_date, 'YYYY-MM-DD'),
+	t.needs_flag, CASE WHEN t.needs_flag THEN COALESCE(t.flag_name, lower((SELECT kp.key_prefix FROM projects kp WHERE kp.id = t.project_id) || '-' || t.number)) END,
+	t.flag_agent_id, t.flag_error, to_char(t.flag_created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')`
 
 func ScanTicket(row pgx.Row) (Ticket, error) {
 	var t Ticket
 	err := row.Scan(TicketDest(&t)...)
 	return t, err
+}
+
+// FlagActions are what a column can do to an arriving ticket's flag (TL-786).
+var FlagActions = []string{"none", "promote", "promote_to_production", "archive"}
+
+// FlagActionSQL is column c's flag action in effect (board b): the one set, else automatic: the board's
+// dev complete column promotes to production, a Testing or QA column promotes, the rest do nothing.
+func FlagActionSQL(c, b string) string {
+	return `COALESCE(` + c + `.flag_action, CASE WHEN ` + c + `.id = ` + b + `.dev_complete_column_id THEN 'promote_to_production'
+		WHEN ` + c + `.name ~* '\m(test|testing|qa)\M' THEN 'promote' ELSE 'none' END)`
 }
 
 // TicketDoneSQL is true when ticket t sits in its board's last column ("done"), the same rule
@@ -103,7 +123,8 @@ var TicketBlockedSQL = `EXISTS (SELECT 1 FROM ticket_dependencies td JOIN ticket
 
 // TicketDest lists scan targets matching TicketCols, for queries that select extra columns after them.
 func TicketDest(t *Ticket) []any {
-	return []any{&t.ID, &t.CreatedBy, &t.AssignedTo, &t.ProjectID, &t.ColumnID, &t.SprintID, &t.Type, &t.Title, &t.Description, &t.Priority, &t.Estimate, &t.Position, &t.Blocked, &t.Labels, &t.ResolvedAt, &t.CreatedAt, &t.UpdatedAt, &t.DoneAt, &t.StartedAt, &t.PlannedSprintID, &t.Key, &t.ExternalSource, &t.ExternalURL, &t.ReviewRequestedAt, &t.Resolution, &t.DuplicateOfID, &t.DuplicateOfKey, &t.DuplicateOfTitle, &t.EpicID, &t.TimeboxDays, &t.TimeboxHours, &t.PlannedSprintNumber, &t.PlannedBoardName, &t.DueDate}
+	return []any{&t.ID, &t.CreatedBy, &t.AssignedTo, &t.ProjectID, &t.ColumnID, &t.SprintID, &t.Type, &t.Title, &t.Description, &t.Priority, &t.Estimate, &t.Position, &t.Blocked, &t.Labels, &t.ResolvedAt, &t.CreatedAt, &t.UpdatedAt, &t.DoneAt, &t.StartedAt, &t.PlannedSprintID, &t.Key, &t.ExternalSource, &t.ExternalURL, &t.ReviewRequestedAt, &t.Resolution, &t.DuplicateOfID, &t.DuplicateOfKey, &t.DuplicateOfTitle, &t.EpicID, &t.TimeboxDays, &t.TimeboxHours, &t.PlannedSprintNumber, &t.PlannedBoardName, &t.DueDate,
+		&t.NeedsFlag, &t.FlagName, &t.FlagAgentID, &t.FlagError, &t.FlagCreatedAt}
 }
 
 // Sprint is a board's time box; only the open one is shown on the board.
@@ -130,11 +151,14 @@ func ScanSprint(row pgx.Row) (Sprint, error) {
 }
 
 type Column struct {
-	ID       string   `json:"id"`
-	Name     string   `json:"name"`
-	Position int      `json:"position"`
-	WIPLimit *int     `json:"wip_limit"` // advisory work-in-progress limit; null = none
-	Tickets  []Ticket `json:"tickets"`
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Position int    `json:"position"`
+	WIPLimit *int   `json:"wip_limit"` // advisory work-in-progress limit; null = none
+	// what arriving here does to a ticket's flags.gg flag (TL-786): set (null: automatic) and in effect
+	FlagAction    *string  `json:"flag_action"`
+	FlagEffective string   `json:"flag_action_effective"`
+	Tickets       []Ticket `json:"tickets"`
 }
 
 type Board struct {
@@ -393,13 +417,14 @@ func (s Store) Get(ctx context.Context, id, owner string) (*Board, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := s.DB.Query(ctx, `SELECT id, name, position, wip_limit FROM columns WHERE board_id = $1 ORDER BY position`, id)
+	rows, err := s.DB.Query(ctx, `SELECT c.id, c.name, c.position, c.wip_limit, c.flag_action, `+FlagActionSQL("c", "b")+`
+		FROM columns c JOIN boards b ON b.id = c.board_id WHERE c.board_id = $1 ORDER BY c.position`, id)
 	if err != nil {
 		return nil, err
 	}
 	b.Columns, err = pgx.CollectRows(rows, func(row pgx.CollectableRow) (Column, error) {
 		c := Column{Tickets: []Ticket{}}
-		return c, row.Scan(&c.ID, &c.Name, &c.Position, &c.WIPLimit)
+		return c, row.Scan(&c.ID, &c.Name, &c.Position, &c.WIPLimit, &c.FlagAction, &c.FlagEffective)
 	})
 	if err != nil {
 		return nil, err

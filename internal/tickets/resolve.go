@@ -58,6 +58,14 @@ func (s Store) ResolveAsAgent(ctx context.Context, owner, actor, id, resolution,
 			return err
 		}
 		resolved = true
+		// flags.gg (TL-787): won't do archives its flag; a "Remove flag" ticket done archives its ticket's
+		if resolution == ResolutionWontDo {
+			if err := flagGone(ctx, tx, owner, id); err != nil {
+				return err
+			}
+		} else if err := archiveCleanedUp(ctx, tx, owner, id); err != nil {
+			return err
+		}
 		if !first {
 			return nil
 		}
