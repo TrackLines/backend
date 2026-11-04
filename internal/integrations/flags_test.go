@@ -45,7 +45,8 @@ func (f *fakeFlags) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.URL.Path == "/integration/agents" {
 		_ = json.NewEncoder(w).Encode(map[string]any{"agents": []map[string]any{{"project_id": "fp", "project_name": "Web", "agent_id": "agent-web", "agent_name": "web",
-			"environments": []map[string]any{{"environment_id": "dev", "name": "dev", "level": 0}, {"environment_id": "prod", "name": "prod", "level": 1, "production": true}}}}})
+			"environments": []map[string]any{{"environment_id": "dev", "name": "dev", "level": 0}, {"environment_id": "prod", "name": "prod", "level": 1, "production": true}}},
+			{"project_id": "fp", "project_name": "Web", "agent_id": "agent-apps", "agent_name": "apps"}}})
 		return
 	}
 	key := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/integration/tickets/"), "/flag")
@@ -297,6 +298,31 @@ func TestFlagsFollowTickets(t *testing.T) {
 	if err := ts.SetFlag(ctx, org, first.ID, tickets.FlagInput{Name: &bad}); !errors.Is(err, tickets.ErrBadFlagName) {
 		t.Fatalf("bad name: %v", err)
 	}
+
+	// a board's own agent beats the project's (TL-804: frontend agent = Frontend board); "" goes back to it
+	b := map[string]string{"id": bid}
+	if rec := call(fl.SetBoardAgent, session("member"), "PUT", `{"agent_id":"agent-apps"}`, b); rec.Code != 403 {
+		t.Fatalf("member board agent: %d", rec.Code)
+	}
+	if rec := call(fl.SetBoardAgent, session("admin"), "PUT", `{"agent_id":"nope"}`, b); rec.Code != 400 {
+		t.Fatalf("unknown board agent: %d", rec.Code)
+	}
+	if rec := call(fl.SetBoardAgent, session("admin"), "PUT", `{}`, b); rec.Code != 400 {
+		t.Fatalf("no board agent: %d", rec.Code)
+	}
+	if rec := call(fl.SetBoardAgent, session("admin"), "PUT", `{"agent_id":"agent-apps"}`, b); rec.Code != 200 || !strings.Contains(rec.Body.String(), `"agent_id":"agent-apps"`) {
+		t.Fatalf("board agent: %d %s", rec.Code, rec.Body)
+	}
+	apps := needs("Apps only")
+	move(apps.ID, "To do")
+	tick()
+	if g, _ := ts.Get(ctx, org, apps.ID); fake.flags[g.Key] == nil || fake.flags[g.Key].AgentID != "agent-apps" {
+		t.Fatalf("board's agent not used: %+v", fake.flags[g.Key])
+	}
+	if rec := call(fl.SetBoardAgent, session("admin"), "PUT", `{"agent_id":""}`, b); rec.Code != 200 || !strings.Contains(rec.Body.String(), `"agent_id":null`) {
+		t.Fatalf("board agent cleared: %d %s", rec.Code, rec.Body)
+	}
+	fake.took()
 
 	// the panel: read and toggled through us; the token never leaves the server
 	tid := map[string]string{"id": tk.ID}

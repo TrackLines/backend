@@ -174,6 +174,7 @@ type Board struct {
 	ReviewColumn  *string `json:"review_column_id"`       // agent review waits here (TL-592); null: the column before Done
 	ArchivedAt    *string `json:"archived_at"`            // archived: off the project\'s boards, history kept, no new work
 	Deletable     bool    `json:"deletable"`              // never used (no tickets, no sprints): can be deleted outright
+	FlagsAgentID  *string `json:"flags_agent_id"`         // flags.gg agent for its tickets' flags; null: the project's (TL-804)
 	TeamID        *string `json:"team_id"`                // the team whose leaders run this board                 // sprints | kanban
 	// WhenSprintEnds: start_next (the next sprint starts as one ends) or wait (it ends; a manager starts the next) (TL-279)
 	WhenSprintEnds string `json:"when_sprint_ends"`
@@ -215,7 +216,7 @@ type Stats struct {
 type Store struct{ DB *pgxpool.Pool }
 
 const cols = `id, project_id, owner_clerk_id, name, description, estimate_scale, style, team_id, agent_review, dev_complete_column_id, review_column_id,
-	when_sprint_ends, (SELECT max(ls.number) FROM sprints ls WHERE ls.board_id = boards.id AND ls.closed_at IS NOT NULL),
+	flags_agent_id, when_sprint_ends, (SELECT max(ls.number) FROM sprints ls WHERE ls.board_id = boards.id AND ls.closed_at IS NOT NULL),
 	to_char(archived_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
 	NOT EXISTS (SELECT 1 FROM tickets t WHERE t.board_id = boards.id) AND NOT EXISTS (SELECT 1 FROM sprints sp WHERE sp.board_id = boards.id),
 	to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
@@ -224,7 +225,7 @@ const cols = `id, project_id, owner_clerk_id, name, description, estimate_scale,
 func scan(row pgx.Row) (Board, error) {
 	var b Board
 	err := row.Scan(&b.ID, &b.ProjectID, &b.OwnerClerkID, &b.Name, &b.Description, &b.EstimateScale, &b.Style, &b.TeamID, &b.AgentReview, &b.DevComplete, &b.ReviewColumn,
-		&b.WhenSprintEnds, &b.LastSprintNumber, &b.ArchivedAt, &b.Deletable, &b.CreatedAt, &b.UpdatedAt)
+		&b.FlagsAgentID, &b.WhenSprintEnds, &b.LastSprintNumber, &b.ArchivedAt, &b.Deletable, &b.CreatedAt, &b.UpdatedAt)
 	return b, notFound(err)
 }
 

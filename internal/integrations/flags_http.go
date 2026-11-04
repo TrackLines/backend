@@ -168,25 +168,8 @@ func (f FlagsSystem) SetProjectSettings(w http.ResponseWriter, r *http.Request) 
 		httpx.Error(w, r, http.StatusBadRequest, errBadCleanupDays)
 		return
 	}
-	if in.AgentID != nil && *in.AgentID != "" {
-		base, token, err := f.h.store.credentials(r.Context(), org, Flags)
-		if err != nil {
-			flagsErr(w, r, err)
-			return
-		}
-		agents, err := f.api.Agents(r.Context(), base, token)
-		if err != nil {
-			flagsErr(w, r, err)
-			return
-		}
-		known := false
-		for _, a := range agents {
-			known = known || a.AgentID == *in.AgentID
-		}
-		if !known {
-			httpx.Error(w, r, http.StatusBadRequest, errBadFlagsAgent)
-			return
-		}
+	if in.AgentID != nil && !f.knownAgent(w, r, org, *in.AgentID) {
+		return
 	}
 	tag, err := f.h.store.DB.Exec(r.Context(), `UPDATE projects SET
 			flags_agent_id = CASE WHEN $3::text IS NULL THEN flags_agent_id ELSE NULLIF($3, '') END,
@@ -201,6 +184,64 @@ func (f FlagsSystem) SetProjectSettings(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	f.ProjectSettings(w, r)
+}
+
+// knownAgent is true when agent is "" or one org's flags.gg token sees; otherwise the answer is written.
+func (f FlagsSystem) knownAgent(w http.ResponseWriter, r *http.Request, org, agent string) bool {
+	if agent == "" {
+		return true
+	}
+	base, token, err := f.h.store.credentials(r.Context(), org, Flags)
+	if err != nil {
+		flagsErr(w, r, err)
+		return false
+	}
+	agents, err := f.api.Agents(r.Context(), base, token)
+	if err != nil {
+		flagsErr(w, r, err)
+		return false
+	}
+	for _, a := range agents {
+		if a.AgentID == agent {
+			return true
+		}
+	}
+	httpx.Error(w, r, http.StatusBadRequest, errBadFlagsAgent)
+	return false
+}
+
+// SetBoardAgent: PUT /api/boards/{id}/flags {"agent_id"}, the board's managers (TL-804). flags.gg agents
+// are per board in practice (frontend agent = Frontend board); "" falls back to the project's default.
+func (f FlagsSystem) SetBoardAgent(w http.ResponseWriter, r *http.Request) {
+	if !f.h.admins.RequireResourceBoardManager(w, r, "board", r.PathValue("id")) {
+		return
+	}
+	org := auth.OrgID(r.Context())
+	var in struct {
+		AgentID *string `json:"agent_id"`
+	}
+	if !httpx.Decode(w, r, &in) {
+		return
+	}
+	if in.AgentID == nil {
+		httpx.Error(w, r, http.StatusBadRequest, httpx.Code("flags_agent_required", "agent_id is required (\"\" for the project's)"))
+		return
+	}
+	if !f.knownAgent(w, r, org, *in.AgentID) {
+		return
+	}
+	var agent *string
+	err := f.h.store.DB.QueryRow(r.Context(), `UPDATE boards SET flags_agent_id = NULLIF($3, '') WHERE id::text = $1 AND owner_clerk_id = $2
+		RETURNING flags_agent_id`, r.PathValue("id"), org, *in.AgentID).Scan(&agent)
+	if errors.Is(err, pgx.ErrNoRows) {
+		http.NotFound(w, r)
+		return
+	}
+	if err != nil {
+		flagsErr(w, r, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]any{"agent_id": agent})
 }
 
 // ticketCreds: the org, its flags.gg credentials and ticket {id}, or an answer already written.
