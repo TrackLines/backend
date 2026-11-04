@@ -21,6 +21,8 @@ var (
 	labels     = map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Free-form labels; [] clears"}
 	estimate   = str("Estimate on the board's scale (see the board's estimate_scale); \"\" clears")
 	dueDate    = map[string]any{"type": "string", "description": "Due date, YYYY-MM-DD; \"\" clears (TL-631)"}
+	needsFlag  = map[string]any{"type": "boolean", "description": "It needs a flags.gg feature flag (TL-787): the board makes and promotes it as the ticket moves. Gate the new code behind its flag_name; don't make or promote the flag in flags.gg yourself"}
+	flagName   = str("The flag's name (default: the key lower-cased; letters, digits, spaces, . - _). Can't change once flags.gg has it")
 	position   = map[string]any{"type": "integer", "minimum": 0, "description": "0 = top of the column"}
 	goal       = map[string]any{"type": "string", "maxLength": 200, "description": "One line the sprint is for"}
 )
@@ -77,6 +79,18 @@ var tools = []tool{
 			"limit":    map[string]any{"type": "integer", "minimum": 1, "maximum": 50},
 			"page":     map[string]any{"type": "integer", "minimum": 1, "description": "1-based, with limit"}},
 		readOnly: true},
+	{name: "get_ticket_flag", title: "Get ticket's feature flag", description: "For a ticket that needs a flag (needs_flag): its flags.gg flag in each environment " +
+		"(present: it has reached that environment; enabled: on there). The board makes it when the ticket reaches a board and promotes it as columns say, so read it, don't manage it. " +
+		"404 flag_not_created until it's on a board; 409 flags_not_connected when the org hasn't connected flags.gg. A ticket labelled flag-cleanup means: take the checks for its flag out of the code.",
+		method: "GET", path: "/api/tickets/{ticket_id}/flag", props: map[string]any{"ticket_id": id("Ticket")}, required: []string{"ticket_id"}, readOnly: true},
+	{name: "set_ticket_flag", title: "Turn a ticket's flag on or off", description: "Turn the ticket's flags.gg flag on or off in one environment it has reached (environment_id from get_ticket_flag). " +
+		"Only when asked to, or to try the work in a non-production environment; production is a person's call.",
+		method: "PATCH", path: "/api/tickets/{ticket_id}/flag", body: []string{"environment_id", "enabled"},
+		props:    map[string]any{"ticket_id": id("Ticket"), "environment_id": str("From get_ticket_flag's environments"), "enabled": map[string]any{"type": "boolean"}},
+		required: []string{"ticket_id", "environment_id", "enabled"}},
+	{name: "remove_ticket_flag", title: "Remove a ticket's flag", description: "\"Remove flag\": the code no longer checks it, so it's archived in flags.gg in every environment and the ticket stops needing one. " +
+		"Only once the checks are gone from the code (a flag-cleanup ticket's work), or when asked.",
+		method: "DELETE", path: "/api/tickets/{ticket_id}/flag", props: map[string]any{"ticket_id": id("Ticket")}, required: []string{"ticket_id"}},
 	{name: "get_ticket_bugfixes", title: "Get ticket's Bugfixes report", description: "For a ticket Bugfixes created: its crash report's live details " +
 		"(title, occurrences, status, last seen, levels, file:line, link) and whether it regressed (seen again after the ticket was done). " +
 		"404 for tickets that didn't come from Bugfixes; available=false when the org hasn't connected Bugfixes or it's unreachable.",
@@ -166,16 +180,16 @@ var tools = []tool{
 	{name: "create_ticket", title: "Create ticket", description: "Create a ticket in a board column (joins the board's open sprint). " +
 		"On the sprint's last day its scope is locked: the ticket goes to the bottom of the backlog instead (redirected_to_backlog: true, column_id null). " +
 		"On a board with an estimate scale, estimate is required.",
-		method: "POST", path: "/api/columns/{column_id}/tickets", body: []string{"title", "description", "type", "priority", "labels", "estimate", "due_date"},
-		props:    map[string]any{"column_id": id("Column"), "title": str("Title"), "description": str("Details (markdown)"), "type": ticketType, "priority": priority, "labels": labels, "estimate": estimate, "due_date": dueDate},
+		method: "POST", path: "/api/columns/{column_id}/tickets", body: []string{"title", "description", "type", "priority", "labels", "estimate", "due_date", "needs_flag", "flag_name"},
+		props:    map[string]any{"column_id": id("Column"), "title": str("Title"), "description": str("Details (markdown)"), "type": ticketType, "priority": priority, "labels": labels, "estimate": estimate, "due_date": dueDate, "needs_flag": needsFlag, "flag_name": flagName},
 		required: []string{"column_id", "title"}},
 	{name: "create_backlog_ticket", title: "Create backlog ticket", description: "Add a ticket to the bottom of a project's backlog (no estimate until it reaches a board).",
-		method: "POST", path: "/api/projects/{project_id}/backlog", body: []string{"title", "description", "type", "priority", "labels", "due_date"},
-		props:    map[string]any{"project_id": id("Project"), "title": str("Title"), "description": str("Details (markdown)"), "type": ticketType, "priority": priority, "labels": labels, "due_date": dueDate},
+		method: "POST", path: "/api/projects/{project_id}/backlog", body: []string{"title", "description", "type", "priority", "labels", "due_date", "needs_flag", "flag_name"},
+		props:    map[string]any{"project_id": id("Project"), "title": str("Title"), "description": str("Details (markdown)"), "type": ticketType, "priority": priority, "labels": labels, "due_date": dueDate, "needs_flag": needsFlag, "flag_name": flagName},
 		required: []string{"project_id", "title"}},
 	{name: "update_ticket", title: "Update ticket", description: "Change a ticket's title, description, type, priority, labels, estimate or (spikes only) timebox. Omitted fields stay as they are. For a spike's timebox, send timebox_days and timebox_hours together; 0 and 0 clears it.",
-		method: "PATCH", path: "/api/tickets/{ticket_id}", body: []string{"title", "description", "type", "priority", "labels", "estimate", "timebox_days", "timebox_hours", "due_date"},
-		props: map[string]any{"ticket_id": id("Ticket"), "due_date": dueDate, "title": str("New title"), "description": str("New description (markdown)"), "type": ticketType, "priority": priority, "labels": labels, "estimate": estimate,
+		method: "PATCH", path: "/api/tickets/{ticket_id}", body: []string{"title", "description", "type", "priority", "labels", "estimate", "timebox_days", "timebox_hours", "due_date", "needs_flag", "flag_name"},
+		props: map[string]any{"ticket_id": id("Ticket"), "due_date": dueDate, "needs_flag": needsFlag, "flag_name": flagName, "title": str("New title"), "description": str("New description (markdown)"), "type": ticketType, "priority": priority, "labels": labels, "estimate": estimate,
 			"timebox_days":  map[string]any{"type": "integer", "minimum": 0, "maximum": 60, "description": "Spike timebox days (with timebox_hours)"},
 			"timebox_hours": map[string]any{"type": "integer", "minimum": 0, "maximum": 23, "description": "Spike timebox hours (with timebox_days)"}},
 		required: []string{"ticket_id"}, prepare: keepTitleAndDescription},
