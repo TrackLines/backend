@@ -148,7 +148,7 @@ func (s Store) RemoveFlag(ctx context.Context, owner, id string) error {
 type FlagTicket struct {
 	ID, ProjectID, Key, Title string
 	Name                      string  // the flag's name in flags.gg
-	AgentID                   string  // the ticket's agent, else the project's default; "" when neither
+	AgentID                   string  // the ticket's agent, else its board's, else the project's default; "" when neither
 	AssignedTo                *string // who gets its "Remove flag" ticket
 	CleanupDays               int
 	CleanupID                 *string
@@ -159,9 +159,10 @@ type FlagTicket struct {
 func (s Store) FlagTicketOf(ctx context.Context, org, id string) (*FlagTicket, error) {
 	var f FlagTicket
 	err := s.DB.QueryRow(ctx, `SELECT t.id::text, t.project_id::text, p.key_prefix || '-' || t.number, t.title,
-			COALESCE(t.flag_name, lower(p.key_prefix || '-' || t.number)), COALESCE(t.flag_agent_id, p.flags_agent_id, ''),
+			COALESCE(t.flag_name, lower(p.key_prefix || '-' || t.number)), COALESCE(t.flag_agent_id, b.flags_agent_id, p.flags_agent_id, ''),
 			t.assigned_to, p.flag_cleanup_days, t.flag_cleanup_id::text, t.needs_flag
-		FROM tickets_all t JOIN projects p ON p.id = t.project_id AND p.owner_clerk_id = $2 WHERE t.id::text = $1`, id, org).
+		FROM tickets_all t JOIN projects p ON p.id = t.project_id AND p.owner_clerk_id = $2
+		LEFT JOIN boards b ON b.id = t.board_id WHERE t.id::text = $1`, id, org).
 		Scan(&f.ID, &f.ProjectID, &f.Key, &f.Title, &f.Name, &f.AgentID, &f.AssignedTo, &f.CleanupDays, &f.CleanupID, &f.NeedsFlag)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound

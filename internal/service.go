@@ -439,6 +439,7 @@ func (s *Service) Handler() http.Handler {
 	mux.Handle("PUT /api/integrations/flags", signedIn(fl.Connect))    // org admins; checks the token first
 	mux.Handle("GET /api/projects/{id}/flags", signedIn(fl.ProjectSettings))
 	mux.Handle("PUT /api/projects/{id}/flags", signedIn(fl.SetProjectSettings)) // org admins
+	mux.Handle("PUT /api/boards/{id}/flags", signedIn(fl.SetBoardAgent))        // board managers (TL-804)
 	mux.Handle("GET /api/tickets/{id}/flag", signedIn(fl.TicketFlag))
 	mux.Handle("PATCH /api/tickets/{id}/flag", signedIn(fl.SetTicketFlag))
 	mux.Handle("DELETE /api/tickets/{id}/flag", signedIn(fl.RemoveTicketFlag)) // "Remove flag": archived, queued

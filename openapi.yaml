@@ -2559,6 +2559,31 @@ paths:
         '409': { description: flags.gg isn't connected (flags_not_connected). }
         '502': { description: flags.gg didn't answer. }
 
+  /boards/{id}/flags:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    put:
+      tags: [Boards]
+      operationId: setBoardFlagsAgent
+      summary: Set the board's own flags.gg agent, used before the project's (board managers, TL-804)
+      description: flags.gg agents are usually one per board (a frontend agent for the Frontend board). A ticket's own agent still wins; the board's comes next, then the project's. The board's shows as flags_agent_id on the board.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [agent_id]
+              properties:
+                agent_id: { type: string, description: 'One the org''s token sees; "" falls back to the project''s.' }
+      responses:
+        '200': { description: Saved., content: { application/json: { schema: { type: object, properties: { agent_id: { type: [string, 'null'] } } } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { description: Not one of the board's managers. }
+        '404': { description: No such board. }
+        '409': { description: flags.gg isn't connected (flags_not_connected). }
+        '502': { description: flags.gg didn't answer. }
+
   /tickets/{id}/flag:
     parameters:
       - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
@@ -6418,6 +6443,7 @@ components:
         updated_at: { type: string, format: date-time }
         style: { type: string, enum: [sprints, kanban] }
         agent_review: { type: boolean, description: "Agents' moves into Done wait for a person's review." }
+        flags_agent_id: { type: [string, 'null'], description: "The board's flags.gg agent for its tickets' flags; null: the project's (TL-804)." }
         dev_complete_column_id: { type: [string, 'null'], format: uuid, description: "Set: merged GitHub PRs move tickets here and a release finishes them; null: merging finishes them." }
         review_column_id: { type: [string, 'null'], format: uuid, description: "Where agents' finished work waits for review (agent_review); null: the column before Done." }
         archived_at: { type: [string, 'null'], format: date-time, description: Archived boards are off the project page and take no new work. }
@@ -6592,6 +6618,7 @@ components:
         flags_unavailable: "flags.gg didn't answer: try again in a moment"
         bad_flags_token: "flags.gg didn't accept that token: make one in flags.gg under Company → Integrations"
         bad_flags_agent: "that agent isn't one this flags.gg token can see"
+        flags_agent_required: "agent_id is required (\"\" for the project's)"
         bad_flag_cleanup_days: "cleanup_days must be 1–365"
         flag_not_created: "the flag isn't in flags.gg yet: it's made when the ticket goes onto a board"
         flags_refused: "{what flags.gg said}"
