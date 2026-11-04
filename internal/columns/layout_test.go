@@ -166,3 +166,100 @@ func TestLayout(t *testing.T) {
 		t.Fatalf("another org: %d", code)
 	}
 }
+
+// A column says what arriving does to a ticket's flags.gg flag (TL-786): set on the edit page with the
+// layout, kept when a save leaves it out, and automatic until set (Testing/QA promote, the board's dev
+// complete column promotes to production).
+func TestLayoutFlagActions(t *testing.T) {
+	ctx := context.Background()
+	url := os.Getenv("TEST_DATABASE_URL")
+	m, err := migrate.New("file://../migrations", "pgx5"+url[len("postgres"):])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Up(); err != nil && !errors.Is(err, migrate.ErrNoChange) {
+		t.Fatal(err)
+	}
+	db, err := pgxpool.New(ctx, url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	const org = "org_layf"
+	for _, q := range []string{`DELETE FROM boards WHERE owner_clerk_id = $1`, `DELETE FROM projects WHERE owner_clerk_id = $1`, `DELETE FROM org_admins WHERE org_id = $1`,
+		`INSERT INTO org_admins (org_id, user_clerk_id, granted_by) VALUES ($1, 'admin-f', 'test')`} {
+		if _, err := db.Exec(ctx, q, org); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var pid string
+	_ = db.QueryRow(ctx, `INSERT INTO projects (owner_clerk_id, name) VALUES ($1, 'Flags') RETURNING id`, org).Scan(&pid)
+	bs := boards.Store{DB: db}
+	b, err := bs.Create(ctx, org, pid, "Board", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := NewSystem(db, organizations.Admins{DB: db})
+	put := func(cols []LayoutColumn) (int, string) {
+		t.Helper()
+		body, _ := json.Marshal(map[string]any{"columns": cols})
+		c := &clerk.SessionClaims{RegisteredClaims: clerk.RegisteredClaims{Subject: "admin-f"}}
+		c.ActiveOrganizationID = org
+		req := httptest.NewRequest("PUT", "/", strings.NewReader(string(body))).WithContext(clerk.ContextWithSessionClaims(ctx, c))
+		req.SetPathValue("boardID", b.ID)
+		rec := httptest.NewRecorder()
+		h.Layout(rec, req)
+		return rec.Code, rec.Body.String()
+	}
+	got := func() map[string][2]string { // name → set, effective
+		t.Helper()
+		full, err := bs.Get(ctx, b.ID, org)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out := map[string][2]string{}
+		for _, c := range full.Columns {
+			set := ""
+			if c.FlagAction != nil {
+				set = *c.FlagAction
+			}
+			out[c.Name] = [2]string{set, c.FlagEffective}
+		}
+		return out
+	}
+	s := func(v string) *string { return &v }
+	full, _ := bs.Get(ctx, b.ID, org)
+	first, last := full.Columns[0], full.Columns[len(full.Columns)-1]
+	if code, body := put([]LayoutColumn{{ID: first.ID, Name: first.Name}, {Name: "Testing"}, {Name: "Review", FlagAction: s("archive")},
+		{Name: "Ship it", FlagAction: s("bogus")}, {ID: last.ID, Name: last.Name}}); code != 400 || !strings.Contains(body, "flag action") {
+		t.Fatalf("bad action: %d %s", code, body)
+	}
+	if code, body := put([]LayoutColumn{{ID: first.ID, Name: first.Name}, {Name: "Testing"}, {Name: "Review", FlagAction: s("archive")},
+		{Name: "Ready", FlagAction: s("promote_to_production")}, {ID: last.ID, Name: last.Name}}); code != 204 {
+		t.Fatalf("save: %d %s", code, body)
+	}
+	c := got()
+	if c["Testing"] != [2]string{"", "promote"} || c["Review"] != [2]string{"archive", "archive"} || c["Ready"] != [2]string{"promote_to_production", "promote_to_production"} || c[first.Name][1] != "none" {
+		t.Fatalf("after save: %v", c)
+	}
+	// left out keeps it; "" makes it automatic again; the board's dev complete column goes to production
+	full, _ = bs.Get(ctx, b.ID, org)
+	var keep []LayoutColumn
+	for _, col := range full.Columns {
+		lc := LayoutColumn{ID: col.ID, Name: col.Name}
+		if col.Name == "Ready" {
+			lc.FlagAction = s("")
+		}
+		keep = append(keep, lc)
+	}
+	if code, body := put(keep); code != 204 {
+		t.Fatalf("resave: %d %s", code, body)
+	}
+	if c := got(); c["Review"][0] != "archive" || c["Ready"] != [2]string{"", "none"} {
+		t.Fatalf("kept and cleared: %v", c)
+	}
+	_, _ = db.Exec(ctx, `UPDATE boards SET dev_complete_column_id = (SELECT id FROM columns WHERE board_id = $1 AND name = 'Ready') WHERE id = $1`, b.ID)
+	if c := got(); c["Ready"][1] != "promote_to_production" {
+		t.Fatalf("dev complete: %v", c)
+	}
+}

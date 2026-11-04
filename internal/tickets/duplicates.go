@@ -127,6 +127,9 @@ func (s Store) MarkDuplicate(ctx context.Context, owner, actor, id, canonical st
 		if err != nil {
 			return err
 		}
+		if err := flagGone(ctx, tx, owner, id); err != nil { // a duplicate's flag is archived (TL-787)
+			return err
+		}
 		if fromColumn != nil {
 			if err := renumberSource(ctx, tx, id, fromColumn, sprintID); err != nil {
 				return err

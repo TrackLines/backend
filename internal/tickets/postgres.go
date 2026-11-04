@@ -473,6 +473,9 @@ func (s Store) Delete(ctx context.Context, owner, id string) error {
 		if _, err := tx.Exec(ctx, `INSERT INTO deleted_files (file_key) SELECT file_key FROM ticket_attachments WHERE ticket_id = $1 ON CONFLICT DO NOTHING`, id); err != nil {
 			return err
 		}
+		if err := flagGone(ctx, tx, owner, id); err != nil { // TL-787
+			return err
+		}
 		return emit(ctx, tx, owner, "ticket.deleted", id)
 	})
 	if err != nil {

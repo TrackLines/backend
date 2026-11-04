@@ -5,10 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/tracklines/backend/internal/auth"
+	"github.com/tracklines/backend/internal/boards"
 	"github.com/tracklines/backend/internal/httpx"
 )
 
@@ -20,6 +22,8 @@ type LayoutColumn struct {
 	ID       string `json:"id,omitempty"`
 	Name     string `json:"name"`
 	WIPLimit *int   `json:"wip_limit"` // nil or 0: no limit
+	// what arriving does to a ticket's flags.gg flag (TL-786): omitted keeps it, "" makes it automatic
+	FlagAction *string `json:"flag_action,omitempty"`
 }
 
 // ErrBadLayout is a layout that can't be saved; its message says why, for the person editing.
@@ -94,13 +98,19 @@ func (s Store) Layout(ctx context.Context, owner, boardID string, want []LayoutC
 			if limit != nil && *limit == 0 || i == 0 || i == len(want)-1 {
 				limit = nil // no limit, or a pinned end: To do and Done take none (TL-467)
 			}
+			// flag action: nil keeps it, "" is automatic (NULL)
+			action, keep := c.FlagAction, c.FlagAction == nil
+			if action != nil && *action == "" {
+				action = nil
+			}
 			if c.ID == "" {
-				if _, err := tx.Exec(ctx, `INSERT INTO columns (board_id, name, position, wip_limit) VALUES ($1, $2, $3, $4)`, boardID, c.Name, i, limit); err != nil {
+				if _, err := tx.Exec(ctx, `INSERT INTO columns (board_id, name, position, wip_limit, flag_action) VALUES ($1, $2, $3, $4, $5)`, boardID, c.Name, i, limit, action); err != nil {
 					return err
 				}
 				continue
 			}
-			if _, err := tx.Exec(ctx, `UPDATE columns SET name = $2, position = $3, wip_limit = $4 WHERE id = $1 AND board_id = $5`, c.ID, c.Name, i, limit, boardID); err != nil {
+			if _, err := tx.Exec(ctx, `UPDATE columns SET name = $2, position = $3, wip_limit = $4,
+				flag_action = CASE WHEN $6 THEN flag_action ELSE $7 END WHERE id = $1 AND board_id = $5`, c.ID, c.Name, i, limit, boardID, keep, action); err != nil {
 				return err
 			}
 		}
@@ -130,6 +140,9 @@ func checkLayout(want []LayoutColumn, hasColumns bool, haveID func(int) string, 
 		}
 		if c.WIPLimit != nil && (*c.WIPLimit < 0 || *c.WIPLimit > 999) {
 			return ErrBadLayout{httpx.Code("layout_bad_wip", "WIP limits are from 1 to 999, or none")}
+		}
+		if c.FlagAction != nil && *c.FlagAction != "" && !slices.Contains(boards.FlagActions, *c.FlagAction) {
+			return ErrBadLayout{httpx.Code("layout_bad_flag_action", "a column's flag action is none, promote, promote_to_production or archive")}
 		}
 		if c.ID != "" {
 			if !ids[c.ID] || seen[c.ID] {

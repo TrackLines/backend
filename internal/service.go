@@ -167,6 +167,8 @@ func (s *Service) Start() error {
 	// outbound webhooks (TL-635): due deliveries go out every few seconds; a month's history is kept
 	box, _ := secrets.New(config.Get(s.Config).SecretKey) // no key: nothing can be signed, so nothing was queued
 	go webhooks.Worker{DB: s.DB, Box: box, Notify: notify}.Run(ctx, 5*time.Second)
+	// flags.gg (TL-787): calls queued with ticket moves go out in order per ticket, retried while it's down
+	go integrations.FlagWorker{DB: s.DB, Store: integrations.Store{DB: s.DB, Box: box}, Tickets: tickets.Store{DB: s.DB}}.Run(ctx, 5*time.Second)
 	// audit events to the auditor (TL-666), queued in the same transactions; sent while "audit-service" is on
 	go audit.RunExpireKeys(ctx, s.DB, time.Hour) // each API key that expires, in the org log once (TL-700)
 	go audit.Relay{DB: s.DB, URL: config.Get(s.Config).AuditURL, Secret: config.Get(s.Config).AuditSecret, On: s.flag("audit-service"),
@@ -431,8 +433,17 @@ func (s *Service) Handler() http.Handler {
 	mux.Handle("POST /api/integrations/google-calendar/test", signedIn(cal.Test))
 	mux.Handle("POST /api/integrations/google-calendar/sync", signedIn(cal.SyncNow)) // admins; otherwise hourly
 	mux.Handle("DELETE /api/integrations/google-calendar", signedIn(cal.Disconnect))
-	mux.Handle("GET /api/integrations/{provider}", signedIn(in.Connection)) // connected or not; never the secret
-	mux.Handle("PUT /api/integrations/{provider}", signedIn(in.Connect))    // org admins
+	// flags.gg (TL-786, TL-787): a ticket's feature flag follows it across the board. Before {provider}.
+	fl := in.Flags(integrations.FlagsAPI{})
+	mux.Handle("GET /api/integrations/flags", signedIn(fl.Connection)) // and the agents its token sees
+	mux.Handle("PUT /api/integrations/flags", signedIn(fl.Connect))    // org admins; checks the token first
+	mux.Handle("GET /api/projects/{id}/flags", signedIn(fl.ProjectSettings))
+	mux.Handle("PUT /api/projects/{id}/flags", signedIn(fl.SetProjectSettings)) // org admins
+	mux.Handle("GET /api/tickets/{id}/flag", signedIn(fl.TicketFlag))
+	mux.Handle("PATCH /api/tickets/{id}/flag", signedIn(fl.SetTicketFlag))
+	mux.Handle("DELETE /api/tickets/{id}/flag", signedIn(fl.RemoveTicketFlag)) // "Remove flag": archived, queued
+	mux.Handle("GET /api/integrations/{provider}", signedIn(in.Connection))    // connected or not; never the secret
+	mux.Handle("PUT /api/integrations/{provider}", signedIn(in.Connect))       // org admins
 	mux.Handle("DELETE /api/integrations/{provider}", signedIn(in.Disconnect))
 	mux.Handle("GET /api/tickets/{id}/bugfixes", signedIn(in.TicketReport)) // the Bugfixes panel
 	// GitHub (App) and Bitbucket (OAuth): org admins connect, then link repos to projects

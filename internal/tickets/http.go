@@ -104,6 +104,10 @@ type ticketInput struct {
 	TimeboxDays  *int    `json:"timebox_days"`
 	TimeboxHours *int    `json:"timebox_hours"`
 	DueDate      *string `json:"due_date"` // YYYY-MM-DD; omitted = unchanged, "" clears (TL-631)
+	// a flags.gg flag that follows the ticket (TL-787); omitted = unchanged, "" = the default
+	NeedsFlag   *bool   `json:"needs_flag"`
+	FlagName    *string `json:"flag_name"`
+	FlagAgentID *string `json:"flag_agent_id"`
 }
 
 var ErrBadDueDate = httpx.Code("bad_due_date", "due_date must be a date (YYYY-MM-DD), or empty to clear it")
@@ -223,6 +227,22 @@ func (h System) applyDueDate(r *http.Request, user, id string, in ticketInput, t
 	return nil
 }
 
+// applyFlag stores the flag fields sent with a create/update (TL-787); t may be nil.
+func (h System) applyFlag(r *http.Request, user, id string, in ticketInput, t *Ticket) error {
+	if in.NeedsFlag == nil && in.FlagName == nil && in.FlagAgentID == nil {
+		return nil
+	}
+	if err := h.store.SetFlag(r.Context(), user, id, FlagInput{Needs: in.NeedsFlag, Name: in.FlagName, AgentID: in.FlagAgentID}); err != nil {
+		return err
+	}
+	if t != nil {
+		if fresh, err := h.store.Get(r.Context(), user, id); err == nil {
+			*t = fresh.Ticket
+		}
+	}
+	return nil
+}
+
 // applyLabels stores labels sent with a create/update (validated by valid); t may be nil.
 func (h System) applyLabels(r *http.Request, user, id string, in ticketInput, t *Ticket) error {
 	if in.Labels == nil {
@@ -257,7 +277,7 @@ func writeErr(w http.ResponseWriter, r *http.Request, err error) {
 		errors.Is(err, ErrEpicOffBoard):
 		httpx.Error(w, r, http.StatusConflict, err)
 		return
-	case errors.Is(err, ErrAlreadyAssigned):
+	case errors.Is(err, ErrAlreadyAssigned), errors.Is(err, ErrFlagNameLocked):
 		httpx.Error(w, r, http.StatusConflict, err)
 		return
 	case errors.Is(err, ErrNotAssignedToCaller), errors.Is(err, ErrBlocked), errors.Is(err, ErrDoneBlock), errors.Is(err, ErrDoneParent):
@@ -265,7 +285,7 @@ func writeErr(w http.ResponseWriter, r *http.Request, err error) {
 		return
 	case errors.Is(err, ErrSelfBlock), errors.Is(err, ErrUnknownBlocker), errors.Is(err, ErrOtherProject), errors.Is(err, ErrCycle), errors.Is(err, ErrUnknownAssignee), errors.Is(err, ErrBadLabels),
 		errors.Is(err, ErrSelfParent), errors.Is(err, ErrParentLoop), errors.Is(err, boards.ErrBadEstimate),
-		errors.Is(err, ErrEpicInEpic), errors.Is(err, ErrEpicEstimate):
+		errors.Is(err, ErrEpicInEpic), errors.Is(err, ErrEpicEstimate), errors.Is(err, ErrBadFlagName):
 		httpx.Error(w, r, http.StatusBadRequest, err)
 		return
 	}
@@ -295,6 +315,9 @@ func (h System) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	if err == nil {
 		err = h.applyDueDate(r, org, t.ID, in, t)
+	}
+	if err == nil {
+		err = h.applyFlag(r, org, t.ID, in, t)
 	}
 	if err != nil {
 		writeErr(w, r, err)
@@ -329,6 +352,9 @@ func (h System) Update(w http.ResponseWriter, r *http.Request) {
 	}
 	if err == nil {
 		err = h.applyDueDate(r, org, r.PathValue("id"), in, nil)
+	}
+	if err == nil {
+		err = h.applyFlag(r, org, r.PathValue("id"), in, nil)
 	}
 	if err != nil {
 		writeErr(w, r, err)
@@ -476,6 +502,9 @@ func (h System) CreateBacklog(w http.ResponseWriter, r *http.Request) {
 	}
 	if err == nil {
 		err = h.applyDueDate(r, org, t.ID, in, t)
+	}
+	if err == nil {
+		err = h.applyFlag(r, org, t.ID, in, t)
 	}
 	if err != nil {
 		writeErr(w, r, err)
