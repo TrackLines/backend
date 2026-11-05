@@ -19,6 +19,7 @@ var (
 	errBadFlagsToken     = httpx.Code("bad_flags_token", "flags.gg didn't accept that token: make one in flags.gg under Company → Integrations")
 	errBadFlagsAgent     = httpx.Code("bad_flags_agent", "that agent isn't one this flags.gg token can see")
 	errBadCleanupDays    = httpx.Code("bad_flag_cleanup_days", "cleanup_days must be 1–365")
+	errBadFlagChange     = httpx.Code("bad_flag_toggle", "environment_id and one of enabled, rollout (0–100) or rules are required; a rule needs an attribute, an operator (in, not_in, contains, starts_with, ends_with) and 1–1000 values (at most 50 rules)")
 	errFlagNotCreated    = httpx.Code("flag_not_created", "the flag isn't in flags.gg yet: it's made when the ticket goes onto a board")
 )
 
@@ -277,25 +278,25 @@ func (f FlagsSystem) TicketFlag(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusOK, tf)
 }
 
-// SetTicketFlag: PATCH /api/tickets/{id}/flag {"environment_id", "enabled"}: turns it on or off in one
-// environment it has reached.
+// SetTicketFlag: PATCH /api/tickets/{id}/flag {"environment_id", "enabled"?, "rollout"?, "rules"?}: in one
+// environment it has reached, turns it on or off and/or specialises it (a rollout percentage, targeting rules).
 func (f FlagsSystem) SetTicketFlag(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		EnvironmentID string `json:"environment_id"`
-		Enabled       *bool  `json:"enabled"`
+		FlagChange
 	}
 	if !httpx.Decode(w, r, &in) {
 		return
 	}
-	if in.EnvironmentID == "" || in.Enabled == nil {
-		httpx.Error(w, r, http.StatusBadRequest, httpx.Code("bad_flag_toggle", "environment_id and enabled are required"))
+	if in.EnvironmentID == "" || !in.valid() {
+		httpx.Error(w, r, http.StatusBadRequest, errBadFlagChange)
 		return
 	}
 	base, token, t, ok := f.ticketCreds(w, r)
 	if !ok {
 		return
 	}
-	tf, err := f.api.Set(r.Context(), base, token, t.Key, in.EnvironmentID, *in.Enabled)
+	tf, err := f.api.Set(r.Context(), base, token, t.Key, in.EnvironmentID, in.FlagChange)
 	if err != nil {
 		flagsErr(w, r, err)
 		return

@@ -2599,17 +2599,20 @@ paths:
     patch:
       tags: [Tickets]
       operationId: setTicketFlag
-      summary: Turn the ticket's flag on or off in one environment it has reached
+      summary: "In one environment it has reached: turn the ticket's flag on or off, and/or specialise it with a rollout and targeting rules (TL-821)"
+      description: "Send at least one of enabled, rollout and rules; the others stay as they are. rules replaces the environment's rules ([] clears). rollout 100 with no rules is a plain on/off flag. A bad change is 400 bad_flag_toggle."
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required: [environment_id, enabled]
+              required: [environment_id]
               properties:
                 environment_id: { type: string }
                 enabled: { type: boolean }
+                rollout: { type: integer, minimum: 0, maximum: 100, description: Percentage of users who get it when no rule matches. }
+                rules: { type: array, maxItems: 50, items: { $ref: '#/components/schemas/FlagRule' } }
       responses:
         '200': { description: The flag after the change., content: { application/json: { schema: { $ref: '#/components/schemas/TicketFlag' } } } }
         '400': { $ref: '#/components/responses/BadRequest' }
@@ -5853,6 +5856,17 @@ components:
               present: { type: boolean, description: The flag has reached this environment. }
               enabled: { type: boolean }
               production: { type: boolean }
+              rollout: { type: integer, minimum: 0, maximum: 100, description: "Who gets it while it's on, when no rule matches; 100 is everyone." }
+              rules: { type: array, items: { $ref: '#/components/schemas/FlagRule' }, description: Checked in order; the first match serves its value. }
+    FlagRule:
+      type: object
+      description: Targets users by an attribute of what the flags.gg SDK knows about them.
+      required: [attribute, operator, values, serve]
+      properties:
+        attribute: { type: string, maxLength: 100, description: "key (the targeting key) or another context attribute, e.g. plan" }
+        operator: { type: string, enum: [in, not_in, contains, starts_with, ends_with] }
+        values: { type: array, minItems: 1, maxItems: 1000, items: { type: string, minLength: 1, maxLength: 500 }, description: Matched ignoring case. }
+        serve: { type: boolean, description: On or off for users who match. }
     Column:
       type: object
       properties:
@@ -6622,7 +6636,7 @@ components:
         bad_flag_cleanup_days: "cleanup_days must be 1–365"
         flag_not_created: "the flag isn't in flags.gg yet: it's made when the ticket goes onto a board"
         flags_refused: "{what flags.gg said}"
-        bad_flag_toggle: "environment_id and enabled are required"
+        bad_flag_toggle: "environment_id and one of enabled, rollout (0–100) or rules are required; a rule needs an attribute, an operator (in, not_in, contains, starts_with, ends_with) and 1–1000 values (at most 50 rules)"
         layout_bad_flag_action: "a column's flag action is none, promote, promote_to_production or archive"
         bad_sprint_length: "length_days must be between 1 and 365"
         bad_sprint_start: "next_starts_at must be in the future"

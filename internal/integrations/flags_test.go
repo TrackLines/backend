@@ -79,12 +79,20 @@ func (f *fakeFlags) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case r.Method == http.MethodPatch:
 		var in struct {
 			EnvironmentID string `json:"environment_id"`
-			Enabled       bool   `json:"enabled"`
+			FlagChange
 		}
 		_ = json.NewDecoder(r.Body).Decode(&in)
 		for i := range tf.Environments {
 			if e := &tf.Environments[i]; e.EnvironmentID == in.EnvironmentID && e.Present {
-				e.Enabled = in.Enabled
+				if in.Enabled != nil {
+					e.Enabled = *in.Enabled
+				}
+				if in.Rollout != nil {
+					e.Rollout = *in.Rollout
+				}
+				if in.Rules != nil {
+					e.Rules = *in.Rules
+				}
 				answer(200)
 				return
 			}
@@ -331,6 +339,38 @@ func TestFlagsFollowTickets(t *testing.T) {
 	}
 	if rec := call(fl.SetTicketFlag, session("member"), "PATCH", `{"environment_id":"prod","enabled":true}`, tid); rec.Code != 404 {
 		t.Fatalf("toggle where it isn't yet: %d %s", rec.Code, rec.Body)
+	}
+	// specialised (TL-821): rollout and rules go through as sent, only the fields given
+	fake.took()
+	if rec := call(fl.SetTicketFlag, session("member"), "PATCH", `{"environment_id":"dev","rollout":25,"rules":[{"attribute":"key","operator":"in","values":["u_8812"],"serve":true}]}`, tid); rec.Code != 200 ||
+		!strings.Contains(rec.Body.String(), `"rollout":25`) || !strings.Contains(rec.Body.String(), `"values":["u_8812"]`) || !strings.Contains(rec.Body.String(), `"enabled":true`) {
+		t.Fatalf("specialise: %d %s", rec.Code, rec.Body)
+	}
+	if rec := call(fl.SetTicketFlag, session("member"), "PATCH", `{"environment_id":"dev","rollout":100,"rules":[]}`, tid); rec.Code != 200 || !strings.Contains(rec.Body.String(), `"rollout":100,"rules":[]`) {
+		t.Fatalf("make generic: %d %s", rec.Code, rec.Body)
+	}
+	if got := fake.took(); len(got) != 2 {
+		t.Fatalf("specialise calls: %v", got)
+	}
+	for _, body := range []string{
+		`{"environment_id":"dev"}`,
+		`{"rollout":10}`,
+		`{"environment_id":"dev","rollout":101}`,
+		`{"environment_id":"dev","rollout":-1}`,
+		`{"environment_id":"dev","rules":[{"attribute":"key","operator":"regex","values":["x"],"serve":true}]}`,
+		`{"environment_id":"dev","rules":[{"attribute":"","operator":"in","values":["x"],"serve":true}]}`,
+		`{"environment_id":"dev","rules":[{"attribute":"key","operator":"in","values":[],"serve":true}]}`,
+		`{"environment_id":"dev","rules":[{"attribute":"key","operator":"in","values":[""],"serve":true}]}`,
+	} {
+		if rec := call(fl.SetTicketFlag, session("member"), "PATCH", body, tid); rec.Code != 400 || !strings.Contains(rec.Body.String(), "bad_flag_toggle") {
+			t.Fatalf("%s: %d %s", body, rec.Code, rec.Body)
+		}
+	}
+	if got := fake.took(); len(got) != 0 {
+		t.Fatalf("bad changes reached flags.gg: %v", got)
+	}
+	if rec := call(fl.SetTicketFlag, sessionIn("x", "org_other"), "PATCH", `{"environment_id":"dev","rollout":10}`, tid); rec.Code != 404 {
+		t.Fatalf("another org specialises: %d", rec.Code)
 	}
 	if rec := call(fl.TicketFlag, session("member"), "GET", "", tid); rec.Code != 200 || strings.Contains(rec.Body.String(), "flg_good") {
 		t.Fatalf("panel: %d %s", rec.Code, rec.Body)
