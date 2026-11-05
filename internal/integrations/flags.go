@@ -35,6 +35,55 @@ type FlagEnvironment struct {
 	Present       bool   `json:"present"`
 	Enabled       bool   `json:"enabled"`
 	Production    bool   `json:"production"`
+	// Rollout and Rules decide who gets the flag while it's on: the first matching rule serves its value,
+	// else the user's bucket must be under Rollout. 100 with no rules is everyone (a plain on/off flag).
+	Rollout int        `json:"rollout"`
+	Rules   []FlagRule `json:"rules"`
+}
+
+// FlagRule targets users by an attribute of what the SDK knows about them ("key" is the targeting key).
+type FlagRule struct {
+	Attribute string   `json:"attribute"`
+	Operator  string   `json:"operator"`
+	Values    []string `json:"values"`
+	Serve     bool     `json:"serve"`
+}
+
+// FlagChange is what one PATCH changes in one environment; nil fields stay as they are, Rules replaces.
+type FlagChange struct {
+	Enabled *bool       `json:"enabled,omitempty"`
+	Rollout *int        `json:"rollout,omitempty"`
+	Rules   *[]FlagRule `json:"rules,omitempty"`
+}
+
+var flagOperators = map[string]bool{"in": true, "not_in": true, "contains": true, "starts_with": true, "ends_with": true}
+
+// valid: something to change, within flags.gg's bounds (orchestrator flags.ValidateRules), so a bad rule is
+// a 400 here rather than a refusal from flags.gg.
+func (c FlagChange) valid() bool {
+	if c.Enabled == nil && c.Rollout == nil && c.Rules == nil {
+		return false
+	}
+	if c.Rollout != nil && (*c.Rollout < 0 || *c.Rollout > 100) {
+		return false
+	}
+	if c.Rules == nil {
+		return true
+	}
+	if len(*c.Rules) > 50 {
+		return false
+	}
+	for _, r := range *c.Rules {
+		if r.Attribute == "" || len(r.Attribute) > 100 || !flagOperators[r.Operator] || len(r.Values) == 0 || len(r.Values) > 1000 {
+			return false
+		}
+		for _, v := range r.Values {
+			if v == "" || len(v) > 500 {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // TicketFlag is a ticket's flag as flags.gg has it.
@@ -157,9 +206,13 @@ func (a FlagsAPI) Create(ctx context.Context, base, token, key, agent, name stri
 	return &f, a.do(ctx, base, token, http.MethodPut, flagPath(key), map[string]string{"agent_id": agent, "name": name}, &f)
 }
 
-func (a FlagsAPI) Set(ctx context.Context, base, token, key, env string, enabled bool) (*TicketFlag, error) {
+func (a FlagsAPI) Set(ctx context.Context, base, token, key, env string, c FlagChange) (*TicketFlag, error) {
+	body := struct {
+		EnvironmentID string `json:"environment_id"`
+		FlagChange
+	}{env, c}
 	var f TicketFlag
-	return &f, a.do(ctx, base, token, http.MethodPatch, flagPath(key), map[string]any{"environment_id": env, "enabled": enabled}, &f)
+	return &f, a.do(ctx, base, token, http.MethodPatch, flagPath(key), body, &f)
 }
 
 func (a FlagsAPI) Promote(ctx context.Context, base, token, key string, toProduction bool) (*TicketFlag, error) {

@@ -83,11 +83,19 @@ var tools = []tool{
 		"(present: it has reached that environment; enabled: on there). The board makes it when the ticket reaches a board and promotes it as columns say, so read it, don't manage it. " +
 		"404 flag_not_created until it's on a board; 409 flags_not_connected when the org hasn't connected flags.gg. A ticket labelled flag-cleanup means: take the checks for its flag out of the code.",
 		method: "GET", path: "/api/tickets/{ticket_id}/flag", props: map[string]any{"ticket_id": id("Ticket")}, required: []string{"ticket_id"}, readOnly: true},
-	{name: "set_ticket_flag", title: "Turn a ticket's flag on or off", description: "Turn the ticket's flags.gg flag on or off in one environment it has reached (environment_id from get_ticket_flag). " +
-		"Only when asked to, or to try the work in a non-production environment; production is a person's call.",
-		method: "PATCH", path: "/api/tickets/{ticket_id}/flag", body: []string{"environment_id", "enabled"},
-		props:    map[string]any{"ticket_id": id("Ticket"), "environment_id": str("From get_ticket_flag's environments"), "enabled": map[string]any{"type": "boolean"}},
-		required: []string{"ticket_id", "environment_id", "enabled"}},
+	{name: "set_ticket_flag", title: "Change a ticket's flag", description: "In one environment the ticket's flags.gg flag has reached (environment_id from get_ticket_flag): turn it on or off, " +
+		"and/or specialise who gets it: rollout (0–100% of users) and rules (checked in order, the first match serves its value; e.g. {attribute: key, operator: in, values: [user id], serve: true} for one user). " +
+		"rollout 100 with rules [] is a plain on/off flag again. Only when asked to, or to try the work in a non-production environment; production is a person's call.",
+		method: "PATCH", path: "/api/tickets/{ticket_id}/flag", body: []string{"environment_id", "enabled", "rollout", "rules"},
+		props: map[string]any{"ticket_id": id("Ticket"), "environment_id": str("From get_ticket_flag's environments"), "enabled": map[string]any{"type": "boolean"},
+			"rollout": map[string]any{"type": "integer", "minimum": 0, "maximum": 100, "description": "Percentage of users who get it when no rule matches"},
+			"rules": map[string]any{"type": "array", "description": "Targeting rules, replacing the current ones; [] clears", "maxItems": 50, "items": map[string]any{
+				"type": "object", "required": []string{"attribute", "operator", "values", "serve"}, "properties": map[string]any{
+					"attribute": str("What the SDK knows about the user: key (the targeting key) or another context attribute, e.g. plan"),
+					"operator":  map[string]any{"type": "string", "enum": []string{"in", "not_in", "contains", "starts_with", "ends_with"}},
+					"values":    map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "minItems": 1, "description": "Matched ignoring case"},
+					"serve":     map[string]any{"type": "boolean", "description": "On or off for users who match"}}}}},
+		required: []string{"ticket_id", "environment_id"}},
 	{name: "remove_ticket_flag", title: "Remove a ticket's flag", description: "\"Remove flag\": the code no longer checks it, so it's archived in flags.gg in every environment and the ticket stops needing one. " +
 		"Only once the checks are gone from the code (a flag-cleanup ticket's work), or when asked.",
 		method: "DELETE", path: "/api/tickets/{ticket_id}/flag", props: map[string]any{"ticket_id": id("Ticket")}, required: []string{"ticket_id"}},
