@@ -479,14 +479,15 @@ func (h System) PlanTicket(w http.ResponseWriter, r *http.Request) {
 		plan = *in.PlannedSprintID
 	}
 	// planning is refinement: org admins and the board's team leaders only, like the planned sprints
-	// themselves (TL-241). Moving a ticket out of a sprint needs the board it's leaving too.
-	if plan != "" && !h.admins.RequireResourceBoardManager(w, r, "planned_sprint", plan) {
+	// themselves (TL-241). Moving a ticket out of a sprint needs the board it's leaving too. A service key
+	// may plan as the admin who made it (TL-838, retro-board's poker); agent and personal keys may not.
+	if plan != "" && !h.admins.RequireResourceBoardManagerOrService(w, r, "planned_sprint", plan) {
 		return
 	}
 	var current *string
 	_ = h.store.DB.QueryRow(r.Context(), `SELECT t.planned_sprint_id::text FROM tickets t JOIN projects p ON p.id = t.project_id
 		WHERE t.id::text = $1 AND p.owner_clerk_id = $2`, r.PathValue("id"), auth.OrgID(r.Context())).Scan(&current)
-	if current != nil && *current != plan && !h.admins.RequireResourceBoardManager(w, r, "planned_sprint", *current) {
+	if current != nil && *current != plan && !h.admins.RequireResourceBoardManagerOrService(w, r, "planned_sprint", *current) {
 		return
 	}
 	_, _, wasOver := h.approvalState(r.Context(), auth.OrgID(r.Context()), plan)

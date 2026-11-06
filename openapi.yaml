@@ -4364,7 +4364,8 @@ paths:
       description: >-
         The ticket stays in the backlog until the planned sprint starts. Without an estimate it keeps one already on the same scale.
         planned_sprint_id null takes it out of the plan (and clears the estimate). Going over capacity is allowed; the sprint then
-        needs approval before it can start.
+        needs approval before it can start. Org admins and the board's team leaders only; a service key (tl_s_) may too, as the
+        admin who made it, while they still are one (TL-838, e.g. retro-board's poker). Agent and personal keys get 403.
       requestBody:
         required: true
         content:
@@ -4377,6 +4378,7 @@ paths:
       responses:
         '204': { description: Planned. }
         '400': { description: Estimate isn't on the board's scale. }
+        '403': { description: "Not an admin or the board's team leader; or an agent or personal key." }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { description: "The ticket is on a board, not in the backlog." }
 
