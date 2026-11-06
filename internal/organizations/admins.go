@@ -237,7 +237,11 @@ func (a Admins) IsProjectManager(ctx context.Context, org, user, project string)
 // RequireBoardManager allows an org admin or a leader of the team assigned to a board.
 // It scopes leaders to one board and requires a signed-in session for either role.
 func (a Admins) RequireBoardManager(w http.ResponseWriter, r *http.Request, boardID string) bool {
-	org, user, ok := a.session(w, r)
+	return a.requireBoardManager(w, r, boardID, false)
+}
+
+func (a Admins) requireBoardManager(w http.ResponseWriter, r *http.Request, boardID string, service bool) bool {
+	org, user, ok := a.sessionOrService(w, r, service)
 	if !ok {
 		return false
 	}
@@ -271,6 +275,17 @@ func (a Admins) RequireBoardManager(w http.ResponseWriter, r *http.Request, boar
 
 // RequireResourceBoardManager resolves a board-scoped resource before checking its manager.
 func (a Admins) RequireResourceBoardManager(w http.ResponseWriter, r *http.Request, resource string, id string) bool {
+	return a.requireResourceBoardManager(w, r, resource, id, false)
+}
+
+// RequireResourceBoardManagerOrService is RequireResourceBoardManager that also lets a service key (tl_s_)
+// through, as the person who made it, while they're still an admin or the board's team leader (TL-838:
+// retro-board plans its poker results). Agent and personal keys stay out, as everywhere else.
+func (a Admins) RequireResourceBoardManagerOrService(w http.ResponseWriter, r *http.Request, resource string, id string) bool {
+	return a.requireResourceBoardManager(w, r, resource, id, true)
+}
+
+func (a Admins) requireResourceBoardManager(w http.ResponseWriter, r *http.Request, resource string, id string, service bool) bool {
 	var boardID string
 	var err error
 	switch resource {
@@ -294,13 +309,19 @@ func (a Admins) RequireResourceBoardManager(w http.ResponseWriter, r *http.Reque
 		}
 		return false
 	}
-	return a.RequireBoardManager(w, r, boardID)
+	return a.requireBoardManager(w, r, boardID, service)
 }
 
 func (a Admins) session(w http.ResponseWriter, r *http.Request) (string, string, bool) {
+	return a.sessionOrService(w, r, false)
+}
+
+// sessionOrService is the signed-in person, or with service, a service key standing in for its maker.
+func (a Admins) sessionOrService(w http.ResponseWriter, r *http.Request, service bool) (string, string, bool) {
 	org := auth.OrgID(r.Context())
 	user, signedIn := auth.UserID(r.Context())
-	if auth.ViaAPIKey(r.Context()) || !signedIn || org == "" {
+	key := auth.ViaAPIKey(r.Context()) && !(service && auth.APIKeyKind(r.Context()) == "service")
+	if key || !signedIn || org == "" {
 		httpx.Error(w, r, http.StatusForbidden, httpx.ErrSignIn)
 		return "", "", false
 	}
