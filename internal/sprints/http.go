@@ -40,10 +40,11 @@ func writeErr(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, ErrNotFound):
 		http.Error(w, "not found", http.StatusNotFound)
-	case errors.Is(err, ErrAlreadyOpen), errors.Is(err, ErrKanban), errors.Is(err, ErrTooManyPlanned), errors.Is(err, ErrNotBacklog), errors.Is(err, ErrEpicNotPlanned),
+	case errors.Is(err, ErrAlreadyOpen), errors.Is(err, ErrKanban), errors.Is(err, ErrTooManyPlanned), errors.Is(err, ErrNotBacklog), errors.Is(err, ErrEpicNotPlanned), errors.Is(err, ErrEpicEstimate),
 		errors.Is(err, ErrNeedsRefining):
 		httpx.Error(w, r, http.StatusConflict, err)
-	case errors.Is(err, ErrInvalidLength), errors.Is(err, ErrInvalidStart), errors.Is(err, ErrInvalidGoal), errors.Is(err, boards.ErrBadEstimate):
+	case errors.Is(err, ErrInvalidLength), errors.Is(err, ErrInvalidStart), errors.Is(err, ErrInvalidGoal), errors.Is(err, boards.ErrBadEstimate),
+		errors.Is(err, ErrEstimateBoardNeeded), errors.Is(err, ErrNoEstimateScale):
 		httpx.Error(w, r, http.StatusBadRequest, err)
 	default:
 		logs.Errorf("sprints: %v", err)

@@ -553,6 +553,7 @@ func (s *Service) Handler() http.Handler {
 	mux.Handle("GET /api/boards/{id}/import-review", signedIn(sp.Review))
 	mux.Handle("POST /api/boards/{id}/import-review/{ticket}/keep", signedIn(sp.Keep))
 	mux.Handle("PUT /api/tickets/{id}/planned-sprint", signedIn(sp.PlanTicket))
+	mux.Handle("PUT /api/tickets/{id}/estimate", signedIn(sp.SetEstimate)) // without planning it (TL-851)
 
 	// Request intake: a project's unlisted public form (no account) and the team's triage inbox
 	ik := intake.NewSystem(s.DB).WithNotifier(notify).WithAdmins(o.AdminModel()) // a promoted request is announced to the project's spaces (TL-288)

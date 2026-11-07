@@ -3,6 +3,7 @@ package sprints
 import (
 	"cmp"
 	"context"
+	"errors"
 	"math"
 	"net/http"
 	"time"
@@ -27,7 +28,71 @@ var (
 	ErrTooManyPlanned = httpx.Code("too_many_planned", "a board plans at most 2 sprints ahead")
 	ErrNotBacklog     = httpx.Code("not_backlog", "only backlog tickets can be planned into a sprint")
 	ErrEpicNotPlanned = httpx.Code("epic_not_planned", "epics stay in the backlog: plan their sub-tickets instead")
+	// TL-851: which board's scale a backlog estimate is on
+	ErrEstimateBoardNeeded = httpx.Code("estimate_board_needed", "this project's boards use different estimate scales: say which with board_id")
+	ErrNoEstimateScale     = httpx.Code("no_estimate_scale", "none of this project's boards use estimates")
+	ErrEpicEstimate        = httpx.Code("epic_estimate", "epics take no estimate: their size comes from their sub-tickets") // as tickets.ErrEpicEstimate
 )
+
+// EstimateBoard is the board whose scale ticket id's estimate is on (TL-851): its own board, the board
+// it's planned on, else boardID (one of its project's boards) or, without one, the project's only scale.
+func (s Store) EstimateBoard(ctx context.Context, owner, ticketID, boardID string) (board, scale string, err error) {
+	var project string
+	var own *string
+	if err := s.DB.QueryRow(ctx, `SELECT t.project_id::text, COALESCE(t.board_id, (SELECT ps.board_id FROM planned_sprints ps WHERE ps.id = t.planned_sprint_id))::text
+		FROM tickets t JOIN projects p ON p.id = t.project_id AND p.owner_clerk_id = $2 WHERE t.id::text = $1`, ticketID, owner).Scan(&project, &own); err != nil {
+		return "", "", notFound(err)
+	}
+	if own != nil {
+		boardID = *own // on a board, or planned onto one: that board's scale, whatever was asked
+	}
+	if boardID != "" {
+		err := s.DB.QueryRow(ctx, `SELECT id::text, estimate_scale FROM boards WHERE id::text = $1 AND project_id::text = $2 AND archived_at IS NULL`,
+			boardID, project).Scan(&board, &scale)
+		return board, scale, notFound(err)
+	}
+	rows, err := s.DB.Query(ctx, `SELECT DISTINCT ON (estimate_scale) id::text, estimate_scale FROM boards
+		WHERE project_id::text = $1 AND archived_at IS NULL AND estimate_scale <> 'none' ORDER BY estimate_scale, created_at, id`, project)
+	if err != nil {
+		return "", "", err
+	}
+	type pick struct{ board, scale string }
+	picks, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (pick, error) {
+		var p pick
+		return p, r.Scan(&p.board, &p.scale)
+	})
+	switch {
+	case err != nil:
+		return "", "", err
+	case len(picks) == 0:
+		return "", "", ErrNoEstimateScale
+	case len(picks) > 1:
+		return "", "", ErrEstimateBoardNeeded
+	}
+	return picks[0].board, picks[0].scale, nil
+}
+
+// SetTicketEstimate sets ("" clears) ticket id's estimate on board's scale, without planning it (TL-851).
+// A backlog ticket remembers the board, so planning or moving it onto the same scale keeps the estimate.
+func (s Store) SetTicketEstimate(ctx context.Context, owner, ticketID, board, scale, estimate string) error {
+	if !boards.ValidEstimate(scale, estimate) {
+		return boards.ErrBadEstimate
+	}
+	var epic bool
+	err := s.DB.QueryRow(ctx, `UPDATE tickets t SET estimate = NULLIF($3, ''),
+			estimate_board_id = CASE WHEN t.board_id IS NULL AND t.planned_sprint_id IS NULL AND $3 <> '' THEN $4::uuid ELSE NULL END, updated_at = now()
+		FROM projects p WHERE t.id::text = $1 AND p.id = t.project_id AND p.owner_clerk_id = $2 AND (t.type <> 'epic' OR $3 = '')
+		RETURNING false`, ticketID, owner, estimate, board).Scan(&epic)
+	if errors.Is(err, pgx.ErrNoRows) {
+		var isEpic bool
+		if s.DB.QueryRow(ctx, `SELECT t.type = 'epic' FROM tickets t JOIN projects p ON p.id = t.project_id AND p.owner_clerk_id = $2 WHERE t.id::text = $1`,
+			ticketID, owner).Scan(&isEpic) == nil && isEpic {
+			return ErrEpicEstimate
+		}
+		return ErrNotFound
+	}
+	return err
+}
 
 type PlannedSprint struct {
 	ID         string          `json:"id"`
@@ -255,7 +320,8 @@ func (s Store) PlanTicket(ctx context.Context, owner, ticketID string, plannedID
 		var project string
 		var board, oldScale, current *string
 		if err := tx.QueryRow(ctx, `SELECT t.project_id, t.board_id, t.estimate,
-				(SELECT pb.estimate_scale FROM planned_sprints ps JOIN boards pb ON pb.id = ps.board_id WHERE ps.id = t.planned_sprint_id)
+				COALESCE((SELECT pb.estimate_scale FROM planned_sprints ps JOIN boards pb ON pb.id = ps.board_id WHERE ps.id = t.planned_sprint_id),
+					(SELECT eb.estimate_scale FROM boards eb WHERE eb.id = t.estimate_board_id)) -- TL-851: estimated before planning
 			FROM tickets t JOIN projects p ON p.id = t.project_id AND p.owner_clerk_id = $2
 			WHERE t.id = $1 FOR UPDATE OF t`, ticketID, owner).Scan(&project, &board, &current, &oldScale); err != nil {
 			return notFound(err)
@@ -503,6 +569,37 @@ func (h System) PlanTicket(w http.ResponseWriter, r *http.Request) {
 		_ = h.live.PublishRefinement(r.Context(), board, "ticket")
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// SetEstimate: PUT /api/tickets/{id}/estimate {"estimate": "5", "board_id"?}: a ticket's estimate without
+// planning it (TL-851, retro-board's poker). On the scale of its board, or the board it's planned on, else
+// board_id or the project's only scale. Refinement: org admins, the board's team leaders, or a service key.
+func (h System) SetEstimate(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Estimate *string `json:"estimate"`
+		BoardID  string  `json:"board_id"`
+	}
+	if !httpx.Decode(w, r, &in) {
+		return
+	}
+	if in.Estimate == nil {
+		httpx.Error(w, r, http.StatusBadRequest, httpx.Code("estimate_missing", "estimate is required (\"\" clears it)"))
+		return
+	}
+	org := auth.OrgID(r.Context())
+	board, scale, err := h.store.EstimateBoard(r.Context(), org, r.PathValue("id"), in.BoardID)
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	if !h.admins.RequireResourceBoardManagerOrService(w, r, "board", board) {
+		return
+	}
+	if err := h.store.SetTicketEstimate(r.Context(), org, r.PathValue("id"), board, scale, *in.Estimate); err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, map[string]string{"estimate": *in.Estimate, "board_id": board, "estimate_scale": scale})
 }
 
 func (h System) publishPlanned(r *http.Request, id, action string) {
