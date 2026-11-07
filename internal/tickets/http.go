@@ -5,7 +5,6 @@ import (
 	"errors"
 	"github.com/tracklines/backend/internal/notifications"
 	"net/http"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -141,7 +140,7 @@ func (in *ticketInput) valid(w http.ResponseWriter, r *http.Request) bool {
 		httpx.Error(w, r, http.StatusBadRequest, httpx.Code("description_too_long", "description must be "+strconv.Itoa(MaxBody)+" characters or fewer"))
 		return false
 	}
-	if !slices.Contains([]string{"", "low", "medium", "high", "urgent"}, in.Priority) {
+	if in.Priority != "" && !ValidPriorities([]string{in.Priority}) {
 		httpx.Error(w, r, http.StatusBadRequest, ErrBadPriority)
 		return false
 	}

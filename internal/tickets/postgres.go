@@ -19,7 +19,7 @@ import (
 var (
 	ErrNotFound            = errors.New("ticket not found")
 	ErrInvalidType         = httpx.Code("bad_type", "type must be bug, feature or task")
-	ErrBadBacklogSort      = httpx.Code("bad_backlog_sort", "sort must be manual, newest, oldest or due")
+	ErrBadBacklogSort      = httpx.Code("bad_backlog_sort", "sort must be manual, newest, oldest, due or priority")
 	ErrAlreadyAssigned     = httpx.Code("already_assigned", "ticket is already assigned")
 	ErrNotAssignedToCaller = httpx.Code("not_assigned_to_you", "ticket is not assigned to caller")
 	ErrSelfParent          = httpx.Code("self_parent", "a ticket can't be its own parent")
@@ -229,7 +229,7 @@ func (s Store) PageBacklogPlanned(ctx context.Context, owner, projectID, epic, t
 	if sortBy == "" {
 		sortBy = "manual"
 	}
-	if sortBy != "manual" && sortBy != "newest" && sortBy != "oldest" && sortBy != "due" {
+	if sortBy != "manual" && sortBy != "newest" && sortBy != "oldest" && sortBy != "due" && sortBy != "priority" {
 		return nil, ErrBadBacklogSort
 	}
 	if !ValidPriorities(priorities) {
@@ -289,6 +289,8 @@ func (s Store) PageBacklogPlanned(ctx context.Context, owner, projectID, epic, t
 		order = `t.created_at, t.position, t.id`
 	case "due": // soonest due first; undated last, in backlog order (TL-631)
 		order = `t.due_date NULLS LAST, t.position, t.id`
+	case "priority": // urgent first, low last (the enum sorts low < … < urgent); ties in backlog order (TL-846)
+		order = `t.priority DESC, ` + order
 	}
 	rows, err = s.DB.Query(ctx, `SELECT `+boards.TicketCols+` FROM tickets t
 		WHERE `+where+` AND ($5 = '' OR t.type::text = $5)
