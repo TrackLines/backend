@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -29,23 +30,24 @@ type SearchResult struct {
 // a prefix, so it works while typing); a ticket key (TL-123) in Text is found exactly, first.
 // The rest narrow it down; empty means any.
 type SearchQuery struct {
-	Text       string
-	ProjectID  string
-	BoardID    string
-	Types      []string
-	Priorities []string
-	Labels     []string
-	Assignee   string // a user id / agent name; see Unassigned
-	Unassigned bool
-	Creator    string // a user id / agent name of who raised it; empty = any
-	Status     string // open | done | ""
-	Limit      int
-	Page       int    // 1-based; with Limit, for "load more" (stable: rank, then updated, then id)
-	AnyWord    bool   // any word may match, most matches first (similar tickets: one typo mustn't hide them, TL-275)
-	Epic       string // an epic's sub-tickets at any depth (TL-215)
-	Due        string // overdue | soon (due today or tomorrow) | none (no due date) | "" (TL-631); open tickets for overdue and soon
-	Today      string // the caller's local day (YYYY-MM-DD), for Due; defaults to UTC's
-	SortDue    bool   // soonest due first, undated last
+	Text         string
+	ProjectID    string
+	BoardID      string
+	Types        []string
+	Priorities   []string
+	Labels       []string
+	Assignee     string // a user id / agent name; see Unassigned
+	Unassigned   bool
+	Creator      string // a user id / agent name of who raised it; empty = any
+	Status       string // open | done | ""
+	Limit        int
+	Page         int    // 1-based; with Limit, for "load more" (stable: rank, then updated, then id)
+	AnyWord      bool   // any word may match, most matches first (similar tickets: one typo mustn't hide them, TL-275)
+	Epic         string // an epic's sub-tickets at any depth (TL-215)
+	Due          string // overdue | soon (due today or tomorrow) | none (no due date) | "" (TL-631); open tickets for overdue and soon
+	Today        string // the caller's local day (YYYY-MM-DD), for Due; defaults to UTC's
+	SortDue      bool   // soonest due first, undated last
+	SortPriority bool   // most urgent first (TL-846)
 }
 
 var ErrBadDue = httpx.Code("bad_due", "due must be overdue, soon or none")
@@ -134,10 +136,10 @@ func (s Store) SearchTotal(ctx context.Context, owner string, q SearchQuery) ([]
 			AND ($17 = '' OR ($17 = 'none' AND t.due_date IS NULL)
 				OR ($17 = 'overdue' AND t.due_date < $18::date AND NOT `+boards.TicketDoneSQL+`)
 				OR ($17 = 'soon' AND t.due_date BETWEEN $18::date AND $18::date + 1 AND NOT `+boards.TicketDoneSQL+`))
-		ORDER BY CASE WHEN $19 THEN t.due_date END ASC NULLS LAST, t.number = $14 DESC NULLS LAST, CASE WHEN q.query IS NULL THEN 0 ELSE ts_rank(t.search, q.query) END DESC, t.updated_at DESC, t.id
+		ORDER BY CASE WHEN $19 THEN t.due_date END ASC NULLS LAST, CASE WHEN $20 THEN t.priority END DESC NULLS LAST, t.number = $14 DESC NULLS LAST, CASE WHEN q.query IS NULL THEN 0 ELSE ts_rank(t.search, q.query) END DESC, t.updated_at DESC, t.id
 		LIMIT $12 OFFSET $13`,
 		owner, query, keyID, q.ProjectID, q.BoardID, nonNil(q.Types), nonNil(q.Priorities), lower(q.Labels),
-		q.Assignee, q.Unassigned, q.Status, q.Limit, (max(q.Page, 1)-1)*q.Limit, number, q.Epic, q.Creator, q.Due, q.Today, q.SortDue)
+		q.Assignee, q.Unassigned, q.Status, q.Limit, (max(q.Page, 1)-1)*q.Limit, number, q.Epic, q.Creator, q.Due, q.Today, q.SortDue, q.SortPriority)
 	if err != nil {
 		return nil, 0, notFound(err)
 	}
@@ -154,14 +156,29 @@ func (s Store) SearchTotal(ctx context.Context, owner string, q SearchQuery) ([]
 
 var ErrBadPriority = httpx.Code("bad_priority", "priority must be low, medium, high or urgent")
 
+// Priorities are the levels, most urgent first (TL-846): the order Sort by priority uses, served by
+// GET /api/priorities so clients build their pickers from it. They mirror the priority enum, which sorts
+// low < … < urgent; a new level is an ALTER TYPE … ADD VALUE … BEFORE … plus its place here
+// (TestPrioritiesMatchEnum holds the two together).
+var Priorities = []string{"urgent", "high", "medium", "low"}
+
 // ValidPriorities: every entry is a priority.
 func ValidPriorities(ps []string) bool {
 	for _, p := range ps {
-		if p != "low" && p != "medium" && p != "high" && p != "urgent" {
+		if !slices.Contains(Priorities, p) {
 			return false
 		}
 	}
 	return true
+}
+
+// ListPriorities: GET /api/priorities: the levels, most urgent first, with a display name.
+func ListPriorities(w http.ResponseWriter, _ *http.Request) {
+	out := make([]map[string]string, len(Priorities))
+	for i, p := range Priorities {
+		out[i] = map[string]string{"key": p, "name": strings.ToUpper(p[:1]) + p[1:]}
+	}
+	httpx.JSON(w, http.StatusOK, out)
 }
 
 func nonNil(v []string) []string {
@@ -226,8 +243,10 @@ func (h System) Search(w http.ResponseWriter, r *http.Request) {
 	case "":
 	case "due":
 		q.SortDue = true
+	case "priority":
+		q.SortPriority = true
 	default:
-		httpx.Error(w, r, http.StatusBadRequest, httpx.Code("bad_search_sort", "sort must be due, or left out"))
+		httpx.Error(w, r, http.StatusBadRequest, httpx.Code("bad_search_sort", "sort must be due or priority, or left out"))
 		return
 	}
 	if p := v.Get("page"); p != "" {

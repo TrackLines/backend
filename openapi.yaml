@@ -1556,6 +1556,20 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '500': { $ref: '#/components/responses/InternalError' }
 
+  /priorities:
+    get:
+      tags: [Tickets]
+      operationId: listPriorities
+      summary: "The priority levels, most urgent first: the order Sort by priority uses (TL-846)"
+      responses:
+        '200':
+          description: The levels.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { type: object, properties: { key: { type: string, example: urgent }, name: { type: string, example: Urgent } } }
+
   /search:
     get:
       tags: [Tickets]
@@ -1577,7 +1591,7 @@ paths:
         - { name: creator, in: query, schema: { type: string }, description: "me (the caller) or a user id / agent name: tickets they created." }
         - { name: status, in: query, schema: { type: string, enum: [open, done] } }
         - { name: due, in: query, description: "overdue (past its due date, open), soon (due today or tomorrow, open) or none (no due date), by the caller's local day (Tracklines-Timezone).", schema: { type: string, enum: [overdue, soon, none] } }
-        - { name: sort, in: query, description: "due: soonest due first, undated last.", schema: { type: string, enum: [due] } }
+        - { name: sort, in: query, description: "due: soonest due first, undated last. priority: urgent first, low last (TL-846).", schema: { type: string, enum: [due, priority] } }
         - { name: match, in: query, description: 'any: a ticket matching any word (of three letters or more) will do, most matches first, for spotting duplicates despite typos. Default: every word must match.', schema: { type: string, enum: [any] } }
         - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 50, default: 20 } }
         - { name: page, in: query, schema: { type: integer, minimum: 1, default: 1 }, description: '1-based, with limit. "My work" is assignee=me&status=open across every board and project.' }
@@ -2973,7 +2987,7 @@ paths:
         - { name: priority, in: query, schema: { type: array, items: { type: string, enum: [low, medium, high, urgent] } }, style: form, explode: true, description: Any of these priorities; counts follow it. }
         - $ref: '#/components/parameters/ProjectId'
         - { name: type, in: query, schema: { type: string, enum: [bug, feature, task, epic, spike] } }
-        - { name: sort, in: query, description: Order tickets globally before pagination. Defaults to the manual backlog order., schema: { type: string, enum: [manual, newest, oldest, due], default: manual } }
+        - { name: sort, in: query, description: "Order tickets globally before pagination. Defaults to the manual backlog order. priority: urgent first, low last, ties in backlog order (TL-846).", schema: { type: string, enum: [manual, newest, oldest, due, priority], default: manual } }
         - { name: planned, in: query, description: "exclude hides tickets planned into an upcoming sprint; only shows just those. Omitted shows both. Counts follow it.", schema: { type: string, enum: [exclude, only] } }
         - name: label
           in: query
@@ -6534,7 +6548,7 @@ components:
         approve_required: "approve (true or false) is required"
         backlog_estimate: "backlog tickets can't be estimated; estimates follow the board's scale"
         bad_assignee_filter: "assignee must be unassigned or me"
-        bad_backlog_sort: "sort must be manual, newest, oldest or due"
+        bad_backlog_sort: "sort must be manual, newest, oldest, due or priority"
         bad_backlog_status: "status must be open, done, wont_do, duplicate or closed"
         bad_backlog_planned: "planned must be exclude or only"
         bad_blocked_filter: "blocked must be exclude"
@@ -6620,7 +6634,7 @@ components:
         bad_resolution: "resolution must be done or wont_do"
         bad_search_limit: "limit must be 1–50"
         bad_search_status: "status must be open or done"
-        bad_search_sort: "sort must be due, or left out"
+        bad_search_sort: "sort must be due or priority, or left out"
         bulk_tickets: "send 1 to 200 ticket ids"
         bulk_action: "action must be priority, labels, assign, parent, move, resolve or delete"
         bad_view_name: "a view's name must be 1 to 80 characters"
