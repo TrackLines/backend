@@ -34,7 +34,8 @@ type Ticket = boards.Ticket
 // scaleSQL is ticket t's estimate scale: its board's, or for a backlog ticket planned into an
 // upcoming sprint, that sprint's board's. NULL in the plain backlog (no estimates there).
 const scaleSQL = `COALESCE((SELECT estimate_scale FROM boards WHERE id = t.board_id),
-	(SELECT pb.estimate_scale FROM planned_sprints ps JOIN boards pb ON pb.id = ps.board_id WHERE ps.id = t.planned_sprint_id))`
+	(SELECT pb.estimate_scale FROM planned_sprints ps JOIN boards pb ON pb.id = ps.board_id WHERE ps.id = t.planned_sprint_id),
+	(SELECT eb.estimate_scale FROM boards eb WHERE eb.id = t.estimate_board_id))` // TL-851: a backlog ticket's estimate keeps its board's scale
 
 type Store struct{ DB *pgxpool.Pool }
 

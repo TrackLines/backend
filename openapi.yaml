@@ -4382,6 +4382,39 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { description: "The ticket is on a board, not in the backlog." }
 
+  /tickets/{ticketId}/estimate:
+    parameters:
+      - $ref: '#/components/parameters/TicketId'
+    put:
+      tags: [Tickets]
+      operationId: setTicketEstimate
+      summary: "Set a ticket's estimate without planning it (TL-851)"
+      description: >-
+        For integrations such as retro-board's poker. The estimate is on the scale of the ticket's board, or of the board it's
+        planned on; for an unplanned backlog ticket, of board_id, or of the project's only scale when its boards share one.
+        A backlog ticket remembers that board, so planning or moving it onto a board with the same scale keeps the estimate.
+        "" clears it. Org admins, the board's team leaders, or a service key (tl_s_) as the admin who made it.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [estimate]
+              properties:
+                estimate: { type: string, description: 'On the scale, e.g. "5" or "M"; "" clears.' }
+                board_id: { type: string, format: uuid, description: "The board whose scale it's on, for an unplanned backlog ticket in a project with several scales." }
+      responses:
+        '200':
+          description: Set.
+          content:
+            application/json:
+              schema: { type: object, properties: { estimate: { type: string }, board_id: { type: string }, estimate_scale: { type: string } } }
+        '400': { description: "Off the scale (bad_estimate), no estimate given (estimate_missing), board_id needed (estimate_board_needed), or no board uses estimates (no_estimate_scale)." }
+        '403': { description: "Not an admin or the board's team leader; or an agent or personal key." }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Epics take no estimate (epic_estimate). }
+
   /roadmaps:
     get:
       tags: [Roadmaps]
@@ -6588,6 +6621,9 @@ components:
         webhooks_plan: "webhooks need the Pro or Enterprise plan"
         bad_email: "a valid email address is required"
         bad_estimate: "estimate isn't on this board's scale"
+        estimate_board_needed: "this project's boards use different estimate scales: say which with board_id"
+        no_estimate_scale: "none of this project's boards use estimates"
+        estimate_missing: "estimate is required (\"\" clears it)"
         bad_when_sprint_ends: "when_sprint_ends must be start_next or wait"
         bad_estimate_scale: "estimate_scale must be none, fibonacci, tshirt, powers or linear"
         bad_external: "external needs source (bugfixes), project and id; url must be http(s)"
