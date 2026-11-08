@@ -99,8 +99,14 @@ func (s *Service) notifiers() (notifications.Store, *notifications.Push, *integr
 	inbox := notifications.Store{DB: s.DB}
 	pc := config.Get(s.Config)
 	push := notifications.NewPush(s.DB, notifications.PushConfig{PublicKey: pc.VAPIDPublicKey, PrivateKey: pc.VAPIDPrivateKey, Subject: pc.VAPIDSubject})
+	// the phone apps (TL-359): nil, and nothing sent to them, without FCM credentials
+	if fcm, err := integrations.NewFCM(pc.FCMCredentials); err != nil {
+		logs.Errorf("phone pushes are off: %v", err)
+	} else if fcm != nil {
+		push.Devices = fcm
+	}
 	all := notifications.Multi{inbox}
-	if push.Enabled() {
+	if push.Sends() {
 		all = append(all, push)
 	}
 	var chat *integrations.GoogleChat
@@ -343,6 +349,8 @@ func (s *Service) Handler() http.Handler {
 	mux.Handle("POST /api/me/apple/revoke", sessionRequired(http.HandlerFunc(appleRevoker.Handle)))
 	mux.Handle("POST /api/push/subscriptions", signedIn(nf.Subscribe))
 	mux.Handle("DELETE /api/push/subscriptions", signedIn(nf.Unsubscribe))
+	mux.Handle("POST /api/push/devices", signedIn(nf.RegisterDevice))             // the phone apps' push tokens (TL-358)
+	mux.Handle("DELETE /api/push/devices/{token}", signedIn(nf.UnregisterDevice)) // on sign-out
 	mux.Handle("GET /api/notifications", signedIn(nf.List))
 	mux.Handle("GET /api/notifications/unread-count", signedIn(nf.UnreadCount))
 	mux.Handle("POST /api/notifications/read-all", signedIn(nf.ReadAll))

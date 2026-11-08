@@ -2028,6 +2028,34 @@ paths:
             schema: { type: object, required: [endpoint], properties: { endpoint: { type: string } } }
       responses:
         '204': { description: Unsubscribed (your own devices only). }
+  /push/devices:
+    post:
+      tags: [Notifications]
+      operationId: registerPushDevice
+      summary: Register a phone app's push token (signed-in people only)
+      description: >-
+        The Android and iOS apps send their Firebase Cloud Messaging token after sign-in and on each start,
+        which keeps it fresh: tokens not seen for 90 days are dropped. A token someone else had moves to
+        whoever is signed in now. The device then gets every notification from the inbox. Saved even when
+        the server can't send to phones yet.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [token, platform], properties: { token: { type: string, maxLength: 4096 }, platform: { type: string, enum: [android, ios] }, app_version: { type: string, maxLength: 50 } } }
+      responses:
+        '204': { description: Registered. }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { description: API keys can't register devices. }
+  /push/devices/{token}:
+    delete:
+      tags: [Notifications]
+      operationId: unregisterPushDevice
+      summary: Stop pushes to a phone app, on sign-out
+      parameters:
+        - { name: token, in: path, required: true, schema: { type: string } }
+      responses:
+        '204': { description: Removed (your own devices only). }
   /notifications:
     get:
       tags: [Notifications]
@@ -6576,6 +6604,7 @@ components:
         apple_refused: "apple refused the authorization code"
         apple_unconfigured: "Sign in with Apple revocation isn't set up"
         missing_code: "code is required"
+        bad_device: "token and platform (android or ios) are required"
         guide_organization: "refresh after switching organizations"
         onboarding_board: "choose a board in this organization"
         onboarding_incomplete: "finish organization setup before completing the guide"

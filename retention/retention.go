@@ -24,11 +24,12 @@ const Retention = 30 * 24 * time.Hour
 type Result struct {
 	Tickets, Orgs, Warned          int
 	Expired, LinkCodes, JiraTokens int64
+	Devices                        int64
 }
 
 func (r Result) String() string {
-	return fmt.Sprintf("%d ticket(s) from the bin, %d deleted organization(s), %d attachment(s) warned about, %d expired, %d chat link code(s), %d Jira/Linear token(s)",
-		r.Tickets, r.Orgs, r.Warned, r.Expired, r.LinkCodes, r.JiraTokens)
+	return fmt.Sprintf("%d ticket(s) from the bin, %d deleted organization(s), %d attachment(s) warned about, %d expired, %d chat link code(s), %d Jira/Linear token(s), %d stale device(s)",
+		r.Tickets, r.Orgs, r.Warned, r.Expired, r.LinkCodes, r.JiraTokens, r.Devices)
 }
 
 // Purge is the nightly purge: the ticket bin, deleted organizations, old attachments (warning, then
@@ -55,6 +56,9 @@ func Purge(ctx context.Context, db *pgxpool.Pool, send Send, now time.Time) (Res
 	}
 	if r.JiraTokens, err = PurgeJiraTokens(ctx, db, now); err != nil {
 		return r, fmt.Errorf("purge expired jira tokens: %w", err)
+	}
+	if r.Devices, err = PurgeDevices(ctx, db, now); err != nil {
+		return r, fmt.Errorf("purge stale devices: %w", err)
 	}
 	return r, nil
 }
@@ -224,6 +228,15 @@ func PurgeJiraTokens(ctx context.Context, db *pgxpool.Pool, now time.Time) (int6
 		l AS (DELETE FROM linear_connections WHERE expires_at <= $1 RETURNING 1)
 		SELECT (SELECT count(*) FROM j) + (SELECT count(*) FROM l)`, now).Scan(&n)
 	return n, err
+}
+
+// DeviceIdle is how long a phone app can go without starting before its push token is dropped (TL-358).
+const DeviceIdle = 90 * 24 * time.Hour
+
+// PurgeDevices drops push tokens of app installs not seen for DeviceIdle.
+func PurgeDevices(ctx context.Context, db *pgxpool.Pool, now time.Time) (int64, error) {
+	tag, err := db.Exec(ctx, `DELETE FROM device_tokens WHERE last_seen < $1`, now.Add(-DeviceIdle))
+	return tag.RowsAffected(), err
 }
 
 // FileDeleter is UploadThing's delete API (a fake in tests).

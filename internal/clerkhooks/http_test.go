@@ -178,6 +178,7 @@ func TestWebhook(t *testing.T) {
 	for i, u := range []string{"bob", "alice"} {
 		exec(`INSERT INTO notifications (org_id, user_id, kind, text) VALUES ('org_a', $1, 'mention', 'x')`, u)
 		exec(`INSERT INTO push_subscriptions (user_id, endpoint, p256dh, auth) VALUES ($1, 'https://push/' || $1, 'k', 'a')`, u)
+		exec(`INSERT INTO device_tokens (token, user_id, platform) VALUES ('tok-' || $1, $1, 'android') ON CONFLICT (token) DO NOTHING`, u)
 		exec(`INSERT INTO ticket_mentions (org_id, user_id, ticket_id) VALUES ('org_a', $1, $2)`, u, tid)
 		exec(`INSERT INTO ticket_watch_mutes (org_id, user_id, ticket_id) VALUES ('org_a', $1, $2)`, u, tid)
 		exec(`INSERT INTO time_away (org_id, user_id, starts_at, ends_at, source_id) VALUES ('org_a', $1, now(), now() + interval '1 day', $1)`, u)
@@ -191,6 +192,7 @@ func TestWebhook(t *testing.T) {
 			`SELECT count(*) FROM users WHERE clerk_id = $1`,
 			`SELECT count(*) FROM notifications WHERE user_id = $1`,
 			`SELECT count(*) FROM push_subscriptions WHERE user_id = $1`,
+			`SELECT count(*) FROM device_tokens WHERE user_id = $1`,
 			`SELECT count(*) FROM ticket_mentions WHERE user_id = $1`,
 			`SELECT count(*) FROM ticket_watch_mutes WHERE user_id = $1`,
 			`SELECT count(*) FROM time_away WHERE user_id = $1`,
@@ -202,7 +204,7 @@ func TestWebhook(t *testing.T) {
 		}
 		return total
 	}
-	if personal("bob") != 9 || personal("alice") != 9 {
+	if personal("bob") != 10 || personal("alice") != 10 {
 		t.Fatalf("seeded: bob %d, alice %d", personal("bob"), personal("alice"))
 	}
 
@@ -215,7 +217,7 @@ func TestWebhook(t *testing.T) {
 	if n := personal("bob"); n != 0 {
 		t.Fatalf("bob's personal data left: %d rows", n)
 	}
-	if !live(aliceB) || !live(carolC) || personal("alice") != 9 {
+	if !live(aliceB) || !live(carolC) || personal("alice") != 10 {
 		t.Fatal("user deletion touched other users")
 	}
 	// his work stays, under his id (his open ticket is unassigned: TL-608); his revoked key stays on record

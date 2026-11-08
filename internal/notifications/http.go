@@ -249,3 +249,48 @@ func (h System) Unsubscribe(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
+
+// device is a phone app's push registration (TL-358).
+type device struct {
+	Token      string `json:"token"`
+	Platform   string `json:"platform"`
+	AppVersion string `json:"app_version"`
+}
+
+// RegisterDevice: POST /api/push/devices {token, platform: android|ios, app_version}, after sign-in and
+// on each start (it refreshes last_seen). Signed-in people only. Saved even before the server can send,
+// so pushes start once it can. A token another person had moves to whoever's signed in now: only the
+// app on that device can know it, and the phone shouldn't keep getting the previous person's pushes.
+func (h System) RegisterDevice(w http.ResponseWriter, r *http.Request) {
+	user, ok := h.person(w, r)
+	if !ok {
+		return
+	}
+	var in device
+	if !httpx.Decode(w, r, &in) {
+		return
+	}
+	if in.Token == "" || len(in.Token) > 4096 || (in.Platform != "android" && in.Platform != "ios") || len(in.AppVersion) > 50 {
+		httpx.Error(w, r, http.StatusBadRequest, httpx.Code("bad_device", "token and platform (android or ios) are required"))
+		return
+	}
+	if _, err := h.store.DB.Exec(r.Context(), `INSERT INTO device_tokens (token, user_id, platform, app_version) VALUES ($1, $2, $3, $4)
+		ON CONFLICT (token) DO UPDATE SET user_id = $2, platform = $3, app_version = $4, last_seen = now()`, in.Token, user, in.Platform, in.AppVersion); err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// UnregisterDevice: DELETE /api/push/devices/{token}, on sign-out. Only your own.
+func (h System) UnregisterDevice(w http.ResponseWriter, r *http.Request) {
+	user, ok := h.person(w, r)
+	if !ok {
+		return
+	}
+	if _, err := h.store.DB.Exec(r.Context(), `DELETE FROM device_tokens WHERE token = $1 AND user_id = $2`, r.PathValue("token"), user); err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
