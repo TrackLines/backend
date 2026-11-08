@@ -27,6 +27,7 @@ import (
 
 	"github.com/tracklines/backend"
 	"github.com/tracklines/backend/internal/apikeys"
+	"github.com/tracklines/backend/internal/apple"
 	"github.com/tracklines/backend/internal/attachments"
 	"github.com/tracklines/backend/internal/audit"
 	"github.com/tracklines/backend/internal/auth"
@@ -333,6 +334,13 @@ func (s *Service) Handler() http.Handler {
 	mux.Handle("GET /api/me/google-chat/link", sessionRequired(http.HandlerFunc(chatApp.LinkCode)))
 	mux.Handle("POST /api/me/google-chat/link", sessionRequired(http.HandlerFunc(chatApp.Link)))
 	mux.Handle("DELETE /api/me/google-chat", sessionRequired(http.HandlerFunc(chatApp.Unlink)))
+	// before the iOS app deletes an account made with Sign in with Apple (TL-857); 503 without the key
+	ac := config.Get(s.Config).Apple
+	appleRevoker, err := apple.New(ac.TeamID, ac.KeyID, ac.ClientID, ac.PrivateKey)
+	if err != nil {
+		logs.Local().Logf("apple revocation off: %v", err)
+	}
+	mux.Handle("POST /api/me/apple/revoke", sessionRequired(http.HandlerFunc(appleRevoker.Handle)))
 	mux.Handle("POST /api/push/subscriptions", signedIn(nf.Subscribe))
 	mux.Handle("DELETE /api/push/subscriptions", signedIn(nf.Unsubscribe))
 	mux.Handle("GET /api/notifications", signedIn(nf.List))
