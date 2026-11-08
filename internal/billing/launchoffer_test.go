@@ -217,3 +217,17 @@ func TestTrialReminders(t *testing.T) {
 		t.Fatalf("too early: %d", n)
 	}
 }
+
+// TL-825: a caller that leaves before its status is read isn't a billing failure: nothing is answered or logged.
+func TestLaunchOfferStatusCallerGone(t *testing.T) {
+	db := launchDB(t)
+	s := Service{DB: db, LaunchOfferOn: func() bool { return true }, IsAdmin: adminsExcept("")}
+	req := inOrg(httptest.NewRequest(http.MethodGet, "/", nil), "lo_admin", "org_lo_gone")
+	gone, cancel := context.WithCancel(req.Context())
+	cancel()
+	rec := httptest.NewRecorder()
+	s.LaunchOfferStatus(rec, req.WithContext(gone))
+	if rec.Body.Len() != 0 || rec.Code != http.StatusOK { // nothing written: the recorder's default
+		t.Fatalf("answered a caller that left: %d %s", rec.Code, rec.Body)
+	}
+}

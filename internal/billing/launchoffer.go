@@ -67,6 +67,9 @@ func (s Service) LaunchOfferStatus(w http.ResponseWriter, r *http.Request) {
 		o.Admin, err = s.IsAdmin(r.Context(), org, user)
 	}
 	if err != nil {
+		if httpx.Canceled(err) || r.Context().Err() != nil {
+			return // the caller left before it was answered (TL-825): nobody to tell, nothing wrong
+		}
 		logs.Errorf("billing: launch offer %s: %v", org, err)
 		httpx.Error(w, r, http.StatusServiceUnavailable, httpx.Code("billing_unavailable", "billing unavailable"))
 		return
