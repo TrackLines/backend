@@ -131,7 +131,7 @@ func (f *FCM) SendDevice(ctx context.Context, token string, m notifications.Mess
 	msg.Data = map[string]string{"title": m.Title, "body": m.Body, "url": m.URL, "tag": m.Tag, "kind": m.Kind}
 	msg.Android.Priority = "high"
 	msg.APNs.Payload.APS.Alert.Title, msg.APNs.Payload.APS.Alert.Body = m.Title, m.Body
-	msg.APNs.Payload.APS.Sound, msg.APNs.Payload.APS.ThreadID = "default", m.Tag
+	msg.APNs.Payload.APS.Sound, msg.APNs.Payload.APS.ThreadID = "default", m.Kind // grouped by kind, like Android's channels
 	body, _ := json.Marshal(map[string]any{"message": msg})
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, f.API+"/v1/projects/"+url.PathEscape(f.sa.projectID)+"/messages:send", bytes.NewReader(body))
 	if err != nil {

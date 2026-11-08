@@ -85,8 +85,9 @@ func TestFCM(t *testing.T) {
 	if data["url"] != "/tickets/t1" || data["kind"] != "assigned" || data["body"] != m.Body || msg["android"].(map[string]any)["priority"] != "high" {
 		t.Fatalf("message: %v", msg)
 	}
-	if alert := msg["apns"].(map[string]any)["payload"].(map[string]any)["aps"].(map[string]any)["alert"].(map[string]any); alert["body"] != m.Body {
-		t.Fatalf("apns alert: %v", alert)
+	aps := msg["apns"].(map[string]any)["payload"].(map[string]any)["aps"].(map[string]any)
+	if aps["alert"].(map[string]any)["body"] != m.Body || aps["thread-id"] != "assigned" {
+		t.Fatalf("apns: %v", aps)
 	}
 	for tok, wantGone := range map[string]bool{"gone": true, "bad": true} {
 		if gone, err := f.SendDevice(ctx, tok, m); gone != wantGone || err != nil {
