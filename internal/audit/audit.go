@@ -87,7 +87,9 @@ func (r Relay) Run(ctx context.Context, every time.Duration) {
 			for {
 				n, err := r.Tick(ctx)
 				if err != nil && ctx.Err() == nil {
-					logs.Errorf("audit: relay: %v", err)
+					// a dropped send (the auditor restarting, an EOF) is resent after the lease, so it's only a
+					// warning (TL-824); a real outage shows as the oldest event's age below, which is an error
+					logs.Warnf("audit: relay: %v", err)
 				}
 				if err != nil || n < batch {
 					break // a full batch: there may be more waiting
