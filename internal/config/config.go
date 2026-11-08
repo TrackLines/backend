@@ -52,7 +52,16 @@ type Git struct {
 }
 
 // Project is the tracklines-specific config; go-config owns Postgres, Clerk, Bugfixes, Flags, Local.
+// Apple: the Sign in with Apple key, to revoke a deleted account's grant (TL-857).
+type Apple struct {
+	TeamID     string `env:"APPLE_TEAM_ID"`
+	KeyID      string `env:"APPLE_KEY_ID"`
+	ClientID   string `env:"APPLE_CLIENT_ID" envDefault:"es.tracklin.ios"`
+	PrivateKey string `env:"APPLE_PRIVATE_KEY"` // the .p8 file's PEM (newlines as \n are fine)
+}
+
 type Project struct {
+	Apple                  Apple
 	Stripe                 Stripe
 	PortalURL              string   `env:"PORTAL_URL" envDefault:"http://localhost:3000/settings"`
 	ClerkAuthorizedParties string   `env:"CLERK_AUTHORIZED_PARTIES" envDefault:"https://tracklin.es"` // docker-compose adds http://localhost:3000 for local dev
@@ -132,6 +141,10 @@ var secrets = map[string]string{
 	"vapid_backend.credential":     "VAPID_PRIVATE_KEY",
 	"uploadthing_backend.username": "UPLOADTHING_TOKEN",
 	"audit_backend.credential":     "AUDIT_SECRET",
+	"apple_backend.team_id":        "APPLE_TEAM_ID",
+	"apple_backend.key_id":         "APPLE_KEY_ID",
+	"apple_backend.client_id":      "APPLE_CLIENT_ID",
+	"apple_backend.private_key":    "APPLE_PRIVATE_KEY",
 }
 
 // Build reads .env (if there is one; the environment wins), then each part's settings, then sends

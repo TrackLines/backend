@@ -1883,6 +1883,27 @@ paths:
       summary: A project's archived boards, most recently archived first
       responses:
         '200': { description: Boards., content: { application/json: { schema: { type: array, items: { $ref: '#/components/schemas/Board' } } } } }
+  /me/apple/revoke:
+    post:
+      tags: [Users]
+      operationId: revokeAppleSignIn
+      summary: End your Sign in with Apple grant, before deleting your account
+      description: >-
+        The iOS app sends a fresh authorization code from Sign in with Apple; the server swaps it for a token and
+        revokes it (Apple's account deletion rule), then the app deletes the account through Clerk. Signed-in
+        sessions only (not API keys).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [code], properties: { code: { type: string } } }
+      responses:
+        '204': { description: Revoked. }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { description: Not a signed-in session. }
+        '502': { description: Apple couldn't be reached or failed. }
+        '503': { description: Sign in with Apple revocation isn't set up on this server. }
+
   /me/google-chat:
     get:
       tags: [Notifications]
@@ -6552,6 +6573,9 @@ components:
         code: { type: string, description: "Stable error code, for translating the message." }
         error: { type: string, description: "The English message, as the plain-text response would give it." }
       x-error-codes:
+        apple_refused: "apple refused the authorization code"
+        apple_unconfigured: "Sign in with Apple revocation isn't set up"
+        missing_code: "code is required"
         guide_organization: "refresh after switching organizations"
         onboarding_board: "choose a board in this organization"
         onboarding_incomplete: "finish organization setup before completing the guide"
