@@ -183,6 +183,7 @@ func (s System) apply(ctx context.Context, e event) error {
 				AND lower(billing_email) = (SELECT lower(email) FROM users WHERE clerk_id = $1)`,
 			`DELETE FROM notifications WHERE user_id = $1`,
 			`DELETE FROM push_subscriptions WHERE user_id = $1`,
+			`DELETE FROM device_tokens WHERE user_id = $1`,
 			`DELETE FROM ticket_mentions WHERE user_id = $1`,
 			`DELETE FROM ticket_watch_mutes WHERE user_id = $1`,
 			`DELETE FROM time_away WHERE user_id = $1`,

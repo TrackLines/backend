@@ -74,9 +74,24 @@ func TestPurge(t *testing.T) {
 		('org_retp', 'https://a.atlassian.net', 'a@b.c', 'x', 'u', $1), ('org_retp_jira', 'https://a.atlassian.net', 'a@b.c', 'x', 'u', $2)`, now.Add(-time.Minute), now.Add(day))
 	db.Exec(ctx, `INSERT INTO linear_connections (org_id, workspace, token, created_by, expires_at) VALUES ('org_retp', 'Acme', 'x', 'u', $1)`, now.Add(-time.Minute))
 
+	// phone push tokens (TL-358): one app not opened for over 90 days, one recently
+	db.Exec(ctx, `DELETE FROM device_tokens WHERE token LIKE 'retp-%'`)
+	db.Exec(ctx, `INSERT INTO device_tokens (token, user_id, platform, last_seen) VALUES ('retp-old', 'user_retp', 'android', $1), ('retp-new', 'user_retp', 'ios', $2)`,
+		now.Add(-91*day), now.Add(-89*day))
+
 	r, err := Purge(ctx, db, ToInbox(db), now)
 	if err != nil {
 		t.Fatal(err)
+	}
+	var devices []string
+	rows, _ := db.Query(ctx, `SELECT token FROM device_tokens WHERE token LIKE 'retp-%'`)
+	for rows.Next() {
+		var tok string
+		_ = rows.Scan(&tok)
+		devices = append(devices, tok)
+	}
+	if len(devices) != 1 || devices[0] != "retp-new" || r.Devices < 1 {
+		t.Fatalf("devices: %v left, %d purged", devices, r.Devices)
 	}
 	if count := 0; db.QueryRow(ctx, `SELECT count(*) FROM jira_connections WHERE org_id LIKE 'org_retp%'`).Scan(&count) != nil || count != 1 || r.JiraTokens < 2 {
 		t.Fatalf("jira tokens: %d purged, %d left", r.JiraTokens, count)

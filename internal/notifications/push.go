@@ -11,6 +11,7 @@ import (
 
 	webpush "github.com/SherClockHolmes/webpush-go"
 	"github.com/bugfixes/go-bugfixes/logs"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -38,8 +39,14 @@ type PushConfig struct {
 type Message struct {
 	Title string `json:"title"`
 	Body  string `json:"body"`
-	URL   string `json:"url"` // where clicking it goes
-	Tag   string `json:"tag"` // one per notification kind and ticket, so repeats replace each other
+	URL   string `json:"url"`  // where clicking it goes
+	Tag   string `json:"tag"`  // one per notification kind and ticket, so repeats replace each other
+	Kind  string `json:"kind"` // the event's kind: the apps' notification channel (TL-361)
+}
+
+// DeviceSender sends to a phone app's push token (FCM, TL-359). gone: the token is no longer valid.
+type DeviceSender interface {
+	SendDevice(ctx context.Context, token string, m Message) (gone bool, err error)
 }
 
 type subscription struct {
@@ -53,8 +60,10 @@ type Push struct {
 	Config PushConfig
 	// People names actors in the message ("Ava assigned you …"); set after construction (tickets.People).
 	People func(ctx context.Context, org string) ([]Person, error)
-	send   func(ctx context.Context, s subscription, payload []byte) (int, error) // replaced in tests
-	wg     sync.WaitGroup
+	// Devices sends to the phone apps (TL-359); nil without FCM credentials.
+	Devices DeviceSender
+	send    func(ctx context.Context, s subscription, payload []byte) (int, error) // replaced in tests
+	wg      sync.WaitGroup
 }
 
 func NewPush(db *pgxpool.Pool, cfg PushConfig) *Push {
@@ -78,9 +87,12 @@ func (p *Push) webpush(ctx context.Context, s subscription, payload []byte) (int
 	return res.StatusCode, nil
 }
 
+// Sends: browsers (Web Push) or the phone apps can be sent to.
+func (p *Push) Sends() bool { return p.Enabled() || (p != nil && p.Devices != nil) }
+
 // Notify queues the pushes and returns at once (same recipients as the inbox: people, once, never the actor).
 func (p *Push) Notify(ctx context.Context, org string, to []string, e Event) error {
-	if !p.Enabled() {
+	if !p.Sends() {
 		return nil
 	}
 	seen := map[string]bool{e.Actor: true}
@@ -123,7 +135,7 @@ func (p *Push) message(ctx context.Context, org string, e Event) Message {
 			}
 		}
 	}
-	m := Message{Title: "TrackLin.es", Body: actor + " " + e.Text, URL: "/", Tag: e.Kind}
+	m := Message{Title: "TrackLin.es", Body: actor + " " + e.Text, URL: "/", Tag: e.Kind, Kind: e.Kind}
 	if e.TicketID != "" {
 		var key string
 		_ = p.DB.QueryRow(ctx, `SELECT coalesce(pr.key_prefix || '-' || t.number, t.id::text) FROM tickets t JOIN projects pr ON pr.id = t.project_id WHERE t.id::text = $1`, e.TicketID).Scan(&key)
@@ -138,6 +150,40 @@ func (p *Push) message(ctx context.Context, org string, e Event) Message {
 }
 
 func (p *Push) deliver(ctx context.Context, org string, users []string, e Event) error {
+	m := p.message(ctx, org, e)
+	var errs []error
+	if p.Enabled() {
+		errs = append(errs, p.deliverWeb(ctx, users, m))
+	}
+	if p.Devices != nil {
+		errs = append(errs, p.deliverDevices(ctx, users, m))
+	}
+	return errors.Join(errs...)
+}
+
+// deliverDevices sends to every phone app the people have, dropping tokens FCM says are gone.
+func (p *Push) deliverDevices(ctx context.Context, users []string, m Message) error {
+	rows, err := p.DB.Query(ctx, `SELECT token FROM device_tokens WHERE user_id = ANY($1)`, users)
+	if err != nil {
+		return err
+	}
+	tokens, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		return err
+	}
+	var errs []error
+	for _, t := range tokens {
+		gone, err := p.Devices.SendDevice(ctx, t, m)
+		if gone {
+			_, _ = p.DB.Exec(ctx, `DELETE FROM device_tokens WHERE token = $1`, t)
+		} else if err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
+
+func (p *Push) deliverWeb(ctx context.Context, users []string, m Message) error {
 	rows, err := p.DB.Query(ctx, `SELECT endpoint, p256dh, auth FROM push_subscriptions WHERE user_id = ANY($1)`, users)
 	if err != nil {
 		return err
@@ -155,7 +201,7 @@ func (p *Push) deliver(ctx context.Context, org string, users []string, e Event)
 	if len(subs) == 0 {
 		return nil
 	}
-	payload, _ := json.Marshal(p.message(ctx, org, e))
+	payload, _ := json.Marshal(m)
 	var errs []error
 	for _, s := range subs {
 		status, err := p.send(ctx, s, payload)
