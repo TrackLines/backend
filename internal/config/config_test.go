@@ -76,3 +76,14 @@ func equalStrings(a, b []string) bool {
 	}
 	return true
 }
+
+// Optional features' settings are plain env vars: a 1Password entry whose item doesn't exist yet stops
+// the server at boot, which took staging down when the Apple ones were added before their item (TL-862).
+func TestOptionalSettingsAreNotLoadedFrom1Password(t *testing.T) {
+	for _, v := range secrets {
+		switch v {
+		case "APPLE_TEAM_ID", "APPLE_KEY_ID", "APPLE_CLIENT_ID", "APPLE_PRIVATE_KEY", "FCM_CREDENTIALS":
+			t.Errorf("%s is loaded from 1Password: a missing item would stop the server", v)
+		}
+	}
+}
