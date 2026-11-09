@@ -52,7 +52,9 @@ type Git struct {
 }
 
 // Project is the tracklines-specific config; go-config owns Postgres, Clerk, Bugfixes, Flags, Local.
-// Apple: the Sign in with Apple key, to revoke a deleted account's grant (TL-857).
+// Apple: the Sign in with Apple key, to revoke a deleted account's grant (TL-857). Optional, so plain env
+// vars, not 1Password entries: an entry whose item is missing stops the whole server at boot, as it did
+// staging when these were added before the item existed.
 type Apple struct {
 	TeamID     string `env:"APPLE_TEAM_ID"`
 	KeyID      string `env:"APPLE_KEY_ID"`
@@ -142,10 +144,6 @@ var secrets = map[string]string{
 	"vapid_backend.credential":     "VAPID_PRIVATE_KEY",
 	"uploadthing_backend.username": "UPLOADTHING_TOKEN",
 	"audit_backend.credential":     "AUDIT_SECRET",
-	"apple_backend.team_id":        "APPLE_TEAM_ID",
-	"apple_backend.key_id":         "APPLE_KEY_ID",
-	"apple_backend.client_id":      "APPLE_CLIENT_ID",
-	"apple_backend.private_key":    "APPLE_PRIVATE_KEY",
 }
 
 // Build reads .env (if there is one; the environment wins), then each part's settings, then sends
