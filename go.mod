@@ -8,15 +8,15 @@ require (
 	github.com/SherClockHolmes/webpush-go v1.4.0
 	github.com/bugfixes/go-bugfixes v0.19.5
 	github.com/caarlos0/env/v8 v8.0.0
-	github.com/clerk/clerk-sdk-go/v2 v2.7.0
-	github.com/getkin/kin-openapi v0.152.0
+	github.com/clerk/clerk-sdk-go/v2 v2.8.0
+	github.com/getkin/kin-openapi v0.153.0
 	github.com/golang-migrate/migrate/v4 v4.20.1
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.12.0
 	github.com/keloran/go-config/v2 v2.1.1
 	github.com/modelcontextprotocol/go-sdk v1.8.0
-	github.com/testcontainers/testcontainers-go/modules/postgres v0.44.0
-	github.com/testcontainers/testcontainers-go/modules/valkey v0.44.0
+	github.com/testcontainers/testcontainers-go/modules/postgres v0.45.0
+	github.com/testcontainers/testcontainers-go/modules/valkey v0.45.0
 	github.com/valkey-io/valkey-go v1.0.79
 	go.yaml.in/yaml/v3 v3.0.6
 )
@@ -62,8 +62,6 @@ require (
 	github.com/moby/sys/userns v0.2.1 // indirect
 	github.com/moby/term v0.5.2 // indirect
 	github.com/ncruces/go-strftime v1.1.0 // indirect
-	github.com/oasdiff/yaml v0.1.1 // indirect
-	github.com/oasdiff/yaml3 v0.0.14 // indirect
 	github.com/opencontainers/go-digest v1.0.0 // indirect
 	github.com/opencontainers/image-spec v1.1.1 // indirect
 	github.com/power-devops/perfstat v0.0.0-20260916203055-22a1a467d9f0 // indirect
@@ -74,7 +72,7 @@ require (
 	github.com/shirou/gopsutil/v4 v4.26.9 // indirect
 	github.com/sirupsen/logrus v1.10.2 // indirect
 	github.com/stretchr/testify v1.12.1 // indirect
-	github.com/testcontainers/testcontainers-go v0.44.0 // indirect
+	github.com/testcontainers/testcontainers-go v0.45.0 // indirect
 	github.com/tetratelabs/wabin v0.0.0-20230304001439-f6f874872834 // indirect
 	github.com/tetratelabs/wazero v1.11.0 // indirect
 	github.com/tklauser/go-sysconf v0.4.0 // indirect
@@ -88,6 +86,7 @@ require (
 	go.opentelemetry.io/otel/metric v1.47.0 // indirect
 	go.opentelemetry.io/otel/trace v1.47.0 // indirect
 	go.opentelemetry.io/proto/otlp v1.9.0 // indirect
+	go.yaml.in/yaml/v4 v4.0.0 // indirect
 	golang.org/x/oauth2 v0.37.0 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
 	modernc.org/libc v1.79.0 // indirect
@@ -99,8 +98,7 @@ require (
 require (
 	github.com/cenkalti/backoff/v4 v4.3.0 // indirect
 	github.com/flags-gg/go-flags v0.5.3
-	github.com/go-jose/go-jose/v3 v3.0.5 // indirect
-	github.com/go-jose/go-jose/v4 v4.1.7
+	github.com/go-jose/go-jose/v4 v4.1.9
 	github.com/go-logfmt/logfmt v0.6.1 // indirect
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/jackc/pgerrcode v0.0.0-20250907135507-afb5586c32a6 // indirect
