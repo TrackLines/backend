@@ -23,6 +23,7 @@ type Event struct {
 	Actor    string // user id or agent name; never told about their own action
 	TicketID string // optional
 	BoardID  string // optional
+	Link     string // optional: where a push about neither opens, like the launch offer (/settings?offer=1)
 }
 
 // Notifier tells users (Clerk user ids) in org about e.

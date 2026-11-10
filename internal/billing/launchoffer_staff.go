@@ -295,8 +295,8 @@ func (s LaunchOfferStaff) sendOne(ctx context.Context, org, staffUser string) (r
 		return "already_sent", nil
 	}
 	if s.Push != nil { // devices: best effort, the inbox already has it
-		notifications.Send(ctx, s.Push, org, admins, notifications.Event{Kind: "billing", Actor: "TrackLin.es", Text: "is giving your organization a free year of Pro. Claim it in Settings."})
-		notifications.Send(ctx, s.Push, org, others, notifications.Event{Kind: "billing", Actor: "TrackLin.es", Text: "is giving your organization a free year of Pro. An admin can claim it."})
+		notifications.Send(ctx, s.Push, org, admins, notifications.Event{Kind: "billing", Actor: "TrackLin.es", Text: "is giving your organization a free year of Pro. Claim it in Settings.", Link: LaunchOfferLink})
+		notifications.Send(ctx, s.Push, org, others, notifications.Event{Kind: "billing", Actor: "TrackLin.es", Text: "is giving your organization a free year of Pro. An admin can claim it.", Link: LaunchOfferLink})
 	}
 	return "", nil
 }
