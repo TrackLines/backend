@@ -25,7 +25,7 @@ type overCapacity struct {
 func startedOver(ctx context.Context, tx pgx.Tx, next Sprint, approved *float64) (*overCapacity, error) {
 	o := overCapacity{board: next.BoardID, number: next.Number}
 	var scale string
-	if err := tx.QueryRow(ctx, `SELECT b.estimate_scale, b.name, p.owner_clerk_id FROM boards b JOIN projects p ON p.id = b.project_id
+	if err := tx.QueryRow(ctx, `SELECT b.estimate_scale, `+boardLabel+`, p.owner_clerk_id FROM boards b JOIN projects p ON p.id = b.project_id
 		WHERE b.id = $1`, next.BoardID).Scan(&scale, &o.boardName, &o.org); err != nil {
 		return nil, err
 	}
@@ -67,18 +67,23 @@ func (s Store) warnOver(ctx context.Context, o *overCapacity) {
 	})
 }
 
+// boardLabel names a board in notices as "Project / Board": many projects have a board called Android.
+const boardLabel = `p.name || ' / ' || b.name`
+
 // num writes 14 as "14" and 12.1 as "12.1".
 func num(f float64) string { return strconv.FormatFloat(f, 'f', -1, 64) }
 
 // waitingSprint is a sprint that ended on a board set to wait (TL-279): nobody's started the next yet.
+// over is set when it ended this way only because the next would have started over capacity (TL-149).
 type waitingSprint struct {
 	org, board, boardName string
 	number                int
+	over                  *overCapacity
 }
 
 func endedWaiting(ctx context.Context, tx pgx.Tx, sprint string) (*waitingSprint, error) {
 	w := waitingSprint{}
-	err := tx.QueryRow(ctx, `SELECT p.owner_clerk_id, b.id, b.name, s.number FROM sprints s JOIN boards b ON b.id = s.board_id
+	err := tx.QueryRow(ctx, `SELECT p.owner_clerk_id, b.id, `+boardLabel+`, s.number FROM sprints s JOIN boards b ON b.id = s.board_id
 		JOIN projects p ON p.id = b.project_id WHERE s.id = $1`, sprint).Scan(&w.org, &w.board, &w.boardName, &w.number)
 	return &w, err
 }
@@ -92,8 +97,14 @@ func (s Store) tellWaiting(ctx context.Context, w *waitingSprint) {
 	if err != nil || len(to) == 0 {
 		return
 	}
-	notifications.Send(ctx, s.Notify, w.org, to, notifications.Event{
+	e := notifications.Event{
 		Kind: "sprint_waiting", Actor: "TrackLin.es", BoardID: w.board,
 		Text: fmt.Sprintf("ended sprint %d on %s: start sprint %d when the team's ready", w.number, w.boardName, w.number+1),
-	})
+	}
+	if o := w.over; o != nil {
+		e.Kind = "over_capacity"
+		e.Text = fmt.Sprintf("ended sprint %d on %s, but didn't start sprint %d: it would be over capacity (%s %s against a limit of %s, velocity + 10%%). Start it when you're happy with it",
+			w.number, w.boardName, w.number+1, num(o.used), o.unit, num(o.cap))
+	}
+	notifications.Send(ctx, s.Notify, w.org, to, e)
 }

@@ -25,8 +25,9 @@ func (r *recorder) Notify(_ context.Context, _ string, to []string, e notificati
 	return nil
 }
 
-// A sprint that starts over capacity (velocity + 10%) through carry-over tells the board's managers
-// (TL-149), when it closes on its own or by hand; within capacity, or approved for that much, it doesn't.
+// A sprint that would start over capacity (velocity + 10%) through carry-over (TL-149): the clock ends
+// the last one and waits for a manager to start it; started by hand, the board's managers are told.
+// Within capacity, or approved for that much, nothing is said.
 func TestSprintStartsOverCapacity(t *testing.T) {
 	ctx := context.Background()
 	url := os.Getenv("TEST_DATABASE_URL")
@@ -88,16 +89,31 @@ func TestSprintStartsOverCapacity(t *testing.T) {
 		return *b, *sp
 	}
 
-	// finished 5, carries 8 into sprint 2: over 5.5; closing on its own tells the admin
+	// finished 5, carries 8 into sprint 2: over 5.5. The clock ends sprint 1 but doesn't start sprint 2:
+	// that's the admin's call, and they're told why
 	a, aSprint := board("Backend", []string{"5"}, []string{"5", "3"})
 	_, _ = db.Exec(ctx, `UPDATE sprints SET ends_at = now() - interval '1 minute' WHERE id = $1`, aSprint.ID)
 	if closed, err := s.AutoClose(ctx); err != nil || closed != 1 {
 		t.Fatalf("auto-close: %d %v", closed, err)
 	}
-	if len(n.got) != 1 || n.got[0].e.Kind != "over_capacity" || n.got[0].e.BoardID != a.ID || len(n.got[0].to) != 1 || n.got[0].to[0] != "user_admin" ||
-		!strings.Contains(n.got[0].e.Text, "sprint 2 on Backend over capacity: 8 points against a limit of 5.5") {
-		t.Fatalf("over capacity: %+v", n.got)
+	var open, waitingTickets int
+	_ = db.QueryRow(ctx, `SELECT count(*) FROM sprints WHERE board_id = $1 AND closed_at IS NULL`, a.ID).Scan(&open)
+	_ = db.QueryRow(ctx, `SELECT count(*) FROM tickets WHERE board_id = $1 AND sprint_id IS NULL`, a.ID).Scan(&waitingTickets)
+	if open != 0 || waitingTickets != 2 {
+		t.Fatalf("over capacity started on its own: open %d, waiting tickets %d", open, waitingTickets)
 	}
+	if len(n.got) != 1 || n.got[0].e.Kind != "over_capacity" || n.got[0].e.BoardID != a.ID || len(n.got[0].to) != 1 || n.got[0].to[0] != "user_admin" ||
+		!strings.Contains(n.got[0].e.Text, "ended sprint 1 on Cap / Backend, but didn't start sprint 2: it would be over capacity (8 points against a limit of 5.5") {
+		t.Fatalf("held: %+v", n.got)
+	}
+	// the admin starts it anyway: the carried work joins, and the board's managers hear it started over
+	if sp, err := s.Start(ctx, org, a.ID, 14); err != nil || sp.Number != 2 {
+		t.Fatalf("start: %+v %v", sp, err)
+	}
+	if len(n.got) != 2 || !strings.Contains(n.got[1].e.Text, "started sprint 2 on Cap / Backend over capacity: 8 points against a limit of 5.5") {
+		t.Fatalf("started over: %+v", n.got)
+	}
+	n.got = n.got[:1]
 
 	// finished 10, carries 3: within 11, closed by hand: nothing to say
 	_, bSprint := board("Web", []string{"5", "5"}, []string{"3"})

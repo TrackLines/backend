@@ -68,7 +68,11 @@ func TestSprintEndsAndWaits(t *testing.T) {
 		return *b, tk.ID
 	}
 	waits, waitTicket := board("Waits", "wait")
-	rolls, _ := board("Rolls", "")
+	rolls, rollsTicket := board("Rolls", "")
+	// finished, so sprint 2 isn't over capacity (TL-149) and rolls on its own
+	if err := ts.Move(ctx, org, rollsTicket, rolls.Columns[len(rolls.Columns)-1].ID, 0); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := s.AutoClose(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -105,7 +109,7 @@ func TestSprintEndsAndWaits(t *testing.T) {
 		}
 	}
 	if len(waiting) != 1 || waiting[0].e.BoardID != waits.ID || strings.Join(waiting[0].to, ",") != "user_admin" ||
-		!strings.Contains(waiting[0].e.Text, "ended sprint 1 on Waits: start sprint 2") {
+		!strings.Contains(waiting[0].e.Text, "/ Waits: start sprint 2") {
 		t.Fatalf("told: %+v", waiting)
 	}
 

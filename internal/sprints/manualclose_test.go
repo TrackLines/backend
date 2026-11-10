@@ -117,12 +117,13 @@ func TestManualCloseWaitsForStart(t *testing.T) {
 		t.Fatalf("plan still there: %d", len(ps))
 	}
 
-	// running out still rolls straight into the next sprint
+	// running out rolls straight into the next sprint, unless that's over capacity (TL-149): nothing's
+	// been finished, so it is, and it waits
 	_, _ = db.Exec(ctx, `UPDATE sprints SET starts_at = now() - interval '6 days', ends_at = now() - interval '1 minute' WHERE id = $1`, sp2.ID)
 	if n, err := s.AutoClose(ctx); err != nil || n < 1 {
 		t.Fatalf("auto-close: %d %v", n, err)
 	}
-	if n := openSprints(); n != 1 {
-		t.Fatalf("%d sprint(s) open after auto-close", n)
+	if n := openSprints(); n != 0 {
+		t.Fatalf("%d sprint(s) open after auto-close over capacity", n)
 	}
 }
