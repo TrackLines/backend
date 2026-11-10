@@ -132,6 +132,12 @@ func TestPush(t *testing.T) {
 	if got := sent["https://fcm.googleapis.com/fcm/send/ava-phone"].Body; got != "Claude finished PU-1: Fix login, and it needs your review" {
 		t.Fatalf("agent actor: %q", got)
 	}
+	// a notice about neither a ticket nor a board opens its link, like the launch offer's claim
+	_ = push.Notify(ctx, "pu1", []string{"user_ava"}, Event{Kind: "billing", Text: "is giving your organization a free year of Pro.", Actor: "TrackLin.es", Link: "/settings?offer=1"})
+	push.Wait()
+	if got := sent["https://fcm.googleapis.com/fcm/send/ava-phone"]; got.URL != "/settings?offer=1" || got.Tag != "billing" {
+		t.Fatalf("link: %+v", got)
+	}
 	// turning it off on a device (only your own)
 	if rec := call(person("user_bo", "pu1"), h.Unsubscribe, "DELETE", sub("https://fcm.googleapis.com/fcm/send/ava-phone")); rec.Code != 204 {
 		t.Fatalf("other's unsubscribe: %d", rec.Code)

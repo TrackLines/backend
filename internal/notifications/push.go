@@ -145,6 +145,8 @@ func (p *Push) message(ctx context.Context, org string, e Event) Message {
 		}
 	} else if e.BoardID != "" {
 		m.URL, m.Tag = "/boards/"+e.BoardID, e.Kind+":"+e.BoardID
+	} else if e.Link != "" {
+		m.URL = e.Link
 	}
 	return m
 }
