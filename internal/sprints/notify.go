@@ -44,7 +44,7 @@ func (h System) overCapacity(r *http.Request, board string, number int) {
 		return
 	}
 	var name string
-	_ = h.store.DB.QueryRow(r.Context(), `SELECT name FROM boards WHERE id::text = $1`, board).Scan(&name)
+	_ = h.store.DB.QueryRow(r.Context(), `SELECT `+boardLabel+` FROM boards b JOIN projects p ON p.id = b.project_id WHERE b.id::text = $1`, board).Scan(&name)
 	notifications.Send(r.Context(), h.notify, org, to, notifications.Event{
 		Kind: "approval", Text: fmt.Sprintf("planned sprint %d on %s over capacity, and it needs your approval", number, name),
 		Actor: auth.ActorID(r.Context()), BoardID: board,

@@ -116,7 +116,7 @@ func TestApprovalNotification(t *testing.T) {
 	}
 	var text string
 	_ = db.QueryRow(ctx, `SELECT text FROM notifications WHERE org_id = 'an1' AND kind = 'approval'`).Scan(&text)
-	if !strings.Contains(text, "on Web over capacity") {
+	if !strings.Contains(text, "/ Web over capacity") {
 		t.Fatalf("text: %q", text)
 	}
 }

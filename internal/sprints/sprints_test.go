@@ -129,6 +129,13 @@ func TestSprints(t *testing.T) {
 	if n, err := s.AutoClose(ctx); err != nil || n < 1 {
 		t.Fatalf("auto-close: %d %v", n, err)
 	}
+	// it carries 3 against a velocity of 1: over capacity, so it waits for someone to start it (TL-149)
+	if full, _ := view(); full.Sprint != nil {
+		t.Fatalf("over capacity started on its own: sprint %d", full.Sprint.Number)
+	}
+	if _, err := s.Start(ctx, "s1", b.ID, 14); err != nil {
+		t.Fatal(err)
+	}
 	full, cols = view()
 	if full.Sprint.Number != 3 || len(cols["To do"]) != 2 || len(cols["In progress"]) != 1 {
 		t.Fatalf("after auto-close: sprint %d %+v", full.Sprint.Number, cols)

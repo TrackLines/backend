@@ -277,7 +277,6 @@ func (s Store) AutoClose(ctx context.Context) (int, error) {
 	var errs []error
 	for {
 		var id, when string
-		var over *overCapacity
 		var waiting *waitingSprint
 		err := pgx.BeginFunc(ctx, s.DB, func(tx pgx.Tx) error {
 			err := tx.QueryRow(ctx, `SELECT s.id, b.when_sprint_ends FROM sprints s JOIN boards b ON b.id = s.board_id
@@ -286,16 +285,33 @@ func (s Store) AutoClose(ctx context.Context) (int, error) {
 			if err != nil {
 				return err
 			}
-			// ran out: straight into the next, or (the board's choice, TL-279) end it and wait for a manager
-			_, over, err = closeSprint(ctx, tx, id, CloseOptions{StartNext: when != "wait"})
-			if err == nil && when == "wait" {
-				waiting, err = endedWaiting(ctx, tx, id)
+			// ran out: straight into the next, or (the board's choice, TL-279) end it and wait for a manager.
+			// A next sprint that would start over capacity waits too: that's a manager's call, not the clock's
+			// (TL-149), so the start is tried in a savepoint and undone.
+			var over *overCapacity
+			if when != "wait" {
+				err := pgx.BeginFunc(ctx, tx, func(sp pgx.Tx) error {
+					_, o, err := closeSprint(ctx, sp, id, CloseOptions{StartNext: true})
+					if err == nil && o != nil {
+						over = o
+						return errWouldBeOver
+					}
+					return err
+				})
+				if !errors.Is(err, errWouldBeOver) {
+					return err
+				}
+			}
+			if _, _, err := closeSprint(ctx, tx, id, CloseOptions{}); err != nil {
+				return err
+			}
+			if waiting, err = endedWaiting(ctx, tx, id); err == nil {
+				waiting.over = over
 			}
 			return err
 		})
 		if err == nil {
-			s.warnOver(ctx, over) // committed: now tell them
-			s.tellWaiting(ctx, waiting)
+			s.tellWaiting(ctx, waiting) // committed: now tell them
 		}
 		switch {
 		case errors.Is(err, pgx.ErrNoRows):
@@ -310,6 +326,9 @@ func (s Store) AutoClose(ctx context.Context) (int, error) {
 		}
 	}
 }
+
+// errWouldBeOver undoes an automatic start that would be over capacity.
+var errWouldBeOver = errors.New("next sprint would be over capacity")
 
 // RunAutoClose checks for overdue sprints every interval until ctx is cancelled.
 func (s Store) RunAutoClose(ctx context.Context, every time.Duration) {
