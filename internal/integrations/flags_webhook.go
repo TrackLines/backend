@@ -60,13 +60,16 @@ type flagWebhookEvent struct {
 	Type      string    `json:"type"`
 	CreatedAt time.Time `json:"created_at"`
 	Data      struct {
-		FlagID        string `json:"flag_id"`
-		Name          string `json:"name"`
-		Ticket        string `json:"ticket_ref"`
-		AgentID       string `json:"agent_id"`
-		EnvironmentID string `json:"environment_id"`
-		Enabled       bool   `json:"enabled"`
-		Rollout       int    `json:"rollout"`
+		FlagID          string `json:"flag_id"`
+		Name            string `json:"name"`
+		Ticket          string `json:"ticket_ref"`
+		AgentID         string `json:"agent_id"`
+		EnvironmentID   string `json:"environment_id"`
+		ProjectName     string `json:"project_name"`
+		AgentName       string `json:"agent_name"`
+		EnvironmentName string `json:"environment_name"`
+		Enabled         bool   `json:"enabled"`
+		Rollout         int    `json:"rollout"`
 	} `json:"data"`
 }
 
@@ -176,7 +179,9 @@ func (f FlagsSystem) Webhook(w http.ResponseWriter, r *http.Request) {
 			return err
 		}
 		return audit.Record(ctx, tx, audit.Event{Org: org, Action: e.Type, TargetType: "ticket", TargetID: id, ProjectID: project,
-			Data: map[string]any{"provider": "flags", "environment_id": e.Data.EnvironmentID, "agent_id": e.Data.AgentID, "enabled": e.Data.Enabled, "rollout": e.Data.Rollout}})
+			Data: map[string]any{"provider": "flags", "environment_id": e.Data.EnvironmentID, "agent_id": e.Data.AgentID,
+				"project_name": e.Data.ProjectName, "agent_name": e.Data.AgentName, "environment_name": e.Data.EnvironmentName,
+				"enabled": e.Data.Enabled, "rollout": e.Data.Rollout}})
 	})
 	if err != nil {
 		flagsErr(w, r, err)
