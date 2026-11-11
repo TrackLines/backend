@@ -151,37 +151,48 @@ func (s LaunchOfferStaff) list(ctx context.Context) ([]OfferOrg, error) {
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
+	orgs, err := allOrgs(ctx, s.Orgs)
+	if err != nil {
+		return nil, err
+	}
 	out := []OfferOrg{}
-	limit, count := int64(100), true
-	for offset := int64(0); ; offset += limit {
-		page := offset
-		list, err := s.Orgs.List(ctx, &organization.ListParams{IncludeMembersCount: &count, ListParams: clerk.ListParams{Limit: &limit, Offset: &page}})
-		if err != nil {
-			return nil, err
+	for _, org := range orgs {
+		o, b := offers[org.ID], bills[org.ID]
+		row := OfferOrg{OrgID: org.ID, Name: org.Name, CreatedAt: time.UnixMilli(org.CreatedAt).UTC(), Plan: b.planName(), Status: statusOf(o, b)}
+		if org.MembersCount != nil {
+			row.Members = *org.MembersCount
 		}
-		if list == nil {
-			break
+		if o != nil {
+			row.OfferedAt, row.ClaimedAt, row.ClaimedBy, row.TrialEndsAt = o.offeredAt, o.claimedAt, o.claimedBy, o.trialEndsAt
 		}
-		for _, org := range list.Organizations {
-			if org == nil {
-				continue
-			}
-			o, b := offers[org.ID], bills[org.ID]
-			row := OfferOrg{OrgID: org.ID, Name: org.Name, CreatedAt: time.UnixMilli(org.CreatedAt).UTC(), Plan: b.planName(), Status: statusOf(o, b)}
-			if org.MembersCount != nil {
-				row.Members = *org.MembersCount
-			}
-			if o != nil {
-				row.OfferedAt, row.ClaimedAt, row.ClaimedBy, row.TrialEndsAt = o.offeredAt, o.claimedAt, o.claimedBy, o.trialEndsAt
-			}
-			out = append(out, row)
-		}
-		if int64(len(list.Organizations)) < limit || offset+limit >= list.TotalCount {
-			break
-		}
+		out = append(out, row)
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].CreatedAt.After(out[j].CreatedAt) })
 	return out, nil
+}
+
+// allOrgs pages through every Clerk organization, with member counts.
+func allOrgs(ctx context.Context, orgs OrgLister) ([]*clerk.Organization, error) {
+	var out []*clerk.Organization
+	limit, count := int64(100), true
+	for offset := int64(0); ; offset += limit {
+		page := offset
+		list, err := orgs.List(ctx, &organization.ListParams{IncludeMembersCount: &count, ListParams: clerk.ListParams{Limit: &limit, Offset: &page}})
+		if err != nil {
+			return out, err
+		}
+		if list == nil {
+			return out, nil
+		}
+		for _, org := range list.Organizations {
+			if org != nil {
+				out = append(out, org)
+			}
+		}
+		if int64(len(list.Organizations)) < limit || offset+limit >= list.TotalCount {
+			return out, nil
+		}
+	}
 }
 
 // Skipped is an org that wasn't sent the offer, and why.
