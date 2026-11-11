@@ -2658,7 +2658,7 @@ paths:
                     enabled: { type: boolean }
                     rollout: { type: integer, minimum: 0, maximum: 100 }
       responses:
-        '204': { description: Accepted, already handled, stale, or unrelated flag. }
+        '204': { description: 'Accepted, already handled, stale, or unrelated flag.' }
         '400': { description: Invalid payload or event. }
         '401': { description: Invalid signature or timestamp. }
         '404': { description: Organization has no configured flags.gg webhook. }
