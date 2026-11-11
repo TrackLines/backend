@@ -57,15 +57,15 @@ func (s Service) Webhook(now func() time.Time) http.HandlerFunc {
 				http.Error(w, "billing provider unavailable", http.StatusBadGateway)
 				return
 			}
-			customer, err := applySubscription(r.Context(), s, sub)
+			org, err := applySubscription(r.Context(), s, sub)
 			if err != nil {
 				logs.Errorf("billing: webhook apply %s: %v", subID, err)
 				http.Error(w, "billing unavailable", http.StatusServiceUnavailable)
 				return
 			}
 			// ponytail: best effort, the next subscription event re-syncs; add a retry queue if gaps show up in HQ
-			if customer != nil {
-				if err := s.ChewedFeed.Sync(r.Context(), *customer); err != nil {
+			if org != "" {
+				if err := s.ChewedFeed.Push(r.Context(), s.DB, org, "", "", nil); err != nil {
 					logs.Errorf("billing: chewedfeed sync %s: %v", subID, err)
 				}
 			}
@@ -77,10 +77,10 @@ func (s Service) Webhook(now func() time.Time) http.HandlerFunc {
 // applySubscription stores the subscription on the organization owning its customer. A stale
 // non-live subscription can't overwrite a different live one. Unknown customers
 // (not from our checkout) match no row and are acknowledged so Stripe stops retrying.
-// It returns the updated org for ChewedFeed (keyed by org id), or nil when no row changed.
+// It returns the updated org's id for ChewedFeed, or "" when no row changed.
 // The subscription's price says its plan (TL-290); a price that's neither of ours keeps what was recorded.
-func applySubscription(ctx context.Context, s Service, sub Subscription) (*chewedFeedCustomer, error) {
-	c := chewedFeedCustomer{BillingStatus: sub.Status, Plan: plan(sub.Status)}
+func applySubscription(ctx context.Context, s Service, sub Subscription) (string, error) {
+	var org string
 	var tier *string
 	if t := s.planFor(ctx, sub.PriceID); t != "" {
 		tier = &t
@@ -88,16 +88,16 @@ func applySubscription(ctx context.Context, s Service, sub Subscription) (*chewe
 	err := s.DB.QueryRow(ctx, `UPDATE org_billing SET stripe_subscription_id = $2, stripe_status = $3, plan = COALESCE($4, plan), updated_at = now()
 		WHERE stripe_customer_id = $1
 		  AND (stripe_subscription_id IS NULL OR stripe_subscription_id = $2 OR $3 IN ('active', 'trialing'))
-		RETURNING org_id, billing_email, created_at`,
-		sub.CustomerID, sub.ID, sub.Status, tier).Scan(&c.ExternalCustomerID, &c.Email, &c.SignedUpAt)
+		RETURNING org_id`,
+		sub.CustomerID, sub.ID, sub.Status, tier).Scan(&org)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, nil
+		return "", nil
 	}
 	if err != nil {
-		return nil, err
+		return "", err
 	}
-	if err := SyncMemberCap(ctx, s.DB, s.ClerkOrgs, c.ExternalCustomerID); err != nil { // the plan's member cap (TL-418)
-		logs.Warnf("billing: member cap %s: %v", c.ExternalCustomerID, err)
+	if err := SyncMemberCap(ctx, s.DB, s.ClerkOrgs, org); err != nil { // the plan's member cap (TL-418)
+		logs.Warnf("billing: member cap %s: %v", org, err)
 	}
-	return &c, nil
+	return org, nil
 }

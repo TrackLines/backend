@@ -71,6 +71,9 @@ func (s Service) ChangePlan(w http.ResponseWriter, r *http.Request) {
 	if err := SyncMemberCap(r.Context(), s.DB, s.ClerkOrgs, org); err != nil { // Enterprise: unlimited members; Pro: 20 (TL-418)
 		logs.Warnf("billing: member cap %s: %v", org, err)
 	}
+	if err := s.ChewedFeed.Push(r.Context(), s.DB, org, "", "", nil); err != nil { // the webhook re-syncs too
+		logs.Warnf("billing: chewedfeed sync %s: %v", org, err)
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 

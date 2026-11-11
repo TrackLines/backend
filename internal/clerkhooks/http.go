@@ -54,6 +54,8 @@ type System struct {
 	}
 	// Forget drops an org's cached member lists when its membership changes (TL-520); nil: left to the TTL
 	Forget func(ctx context.Context, org string)
+	// ChewedFeed hears about each new organization, as a free customer; zero: off
+	ChewedFeed billing.ChewedFeed
 }
 
 func NewSystem(db *pgxpool.Pool, secret string) System { return System{DB: db, Secret: secret} }
@@ -61,7 +63,10 @@ func NewSystem(db *pgxpool.Pool, secret string) System { return System{DB: db, S
 type event struct {
 	Type string `json:"type"`
 	Data struct {
-		ID           string `json:"id"` // user.deleted, organization.deleted, organizationInvitation.revoked
+		ID           string `json:"id"`         // user.deleted, organization.deleted, organizationInvitation.revoked
+		Name         string `json:"name"`       // organization.created
+		CreatedBy    string `json:"created_by"` // organization.created
+		CreatedAt    int64  `json:"created_at"` // organization.created, ms
 		Organization struct {
 			ID string `json:"id"`
 		} `json:"organization"` // organizationMembership.deleted
@@ -109,6 +114,11 @@ func (s System) Webhook(now func() time.Time) http.HandlerFunc {
 // good. A leaver's open tickets are unassigned; done ones keep their assignee.
 func (s System) apply(ctx context.Context, e event) error {
 	if e.Type == "organization.created" { // a new organization starts on Free: up to 20 members (TL-418)
+		created := time.UnixMilli(e.Data.CreatedAt).UTC()
+		// best effort: billing's hourly RunSync sends it if this fails
+		if err := s.ChewedFeed.Push(ctx, s.DB, e.Data.ID, e.Data.Name, e.Data.CreatedBy, &created); err != nil {
+			logs.Warnf("clerk webhook: chewedfeed sync %s: %v", e.Data.ID, err)
+		}
 		return billing.SyncMemberCap(ctx, s.DB, s.ClerkOrgs, e.Data.ID)
 	}
 	if s.Forget != nil && strings.HasPrefix(e.Type, "organizationMembership.") {

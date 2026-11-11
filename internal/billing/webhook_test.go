@@ -113,7 +113,7 @@ func TestWebhook(t *testing.T) {
 	if paid, _ := IsPaid(ctx, db, "org_w1"); !paid {
 		t.Fatal("not paid after checkout")
 	}
-	if len(synced) != 1 || synced[0].ExternalCustomerID != "org_w1" || synced[0].Email != "w@b.c" || synced[0].Plan != "paid" || synced[0].BillingStatus != "active" {
+	if len(synced) != 1 || synced[0].ExternalCustomerID != "org_w1" || synced[0].Email != "w@b.c" || synced[0].Plan != "enterprise" || synced[0].BillingStatus != "active" {
 		t.Fatalf("chewedfeed purchase sync: %+v", synced)
 	}
 	// late event for an old canceled subscription must not downgrade the live one
