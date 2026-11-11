@@ -90,9 +90,11 @@ An empty secret disables the receiver; disconnecting flags.gg removes it.
 The receiver verifies the HMAC and a five-minute timestamp window. Event IDs,
 per-environment state, and ticket activity are committed together. Duplicate and
 older events are acknowledged without applying them again. Unknown tickets and
-agents outside the connected organization are ignored. Ticket flag panels still
-read flags.gg for environment names and targeting rules, which aren't in its
-webhook payloads. Configure the webhook after deploying the backend migration.
+agents outside the connected organization are ignored. Optional `project_name`,
+`agent_name`, and `environment_name` are saved with the activity; history uses the
+environment name when supplied and falls back to its ID for older events. Ticket
+flag panels still read flags.gg for current environment details and targeting
+rules. Configure the webhook after deploying the backend migration.
 
 ## API docs
 

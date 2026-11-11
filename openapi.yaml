@@ -2401,7 +2401,7 @@ paths:
                         comment.added (comment_id, reply_to), comment.edited and comment.deleted (comment_id);
                         attachment.added (attachment_id, name, size), attachment.removed and attachment.kept (attachment_id, name);
                         pr.linked (provider, repo, number, state), pr.state_changed (provider, repo, number, from, to), pr.unlinked (provider, repo, number).
-                        flag.created, flag.state_changed, flag.archived (provider, agent_id, environment_id, enabled, rollout).
+                        flag.created, flag.state_changed, flag.archived (provider, agent_id, environment_id, project_name, agent_name, environment_name, enabled, rollout).
                     data: { type: object }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
@@ -2655,6 +2655,9 @@ paths:
                     ticket_ref: { type: string, nullable: true }
                     agent_id: { type: string }
                     environment_id: { type: string }
+                    project_name: { type: string, description: Optional project name at the time of the event. }
+                    agent_name: { type: string, description: Optional agent name at the time of the event. }
+                    environment_name: { type: string, description: Optional environment name used in ticket history. }
                     enabled: { type: boolean }
                     rollout: { type: integer, minimum: 0, maximum: 100 }
       responses:
