@@ -452,8 +452,9 @@ func (s *Service) Handler() http.Handler {
 	mux.Handle("DELETE /api/integrations/google-calendar", signedIn(cal.Disconnect))
 	// flags.gg (TL-786, TL-787): a ticket's feature flag follows it across the board. Before {provider}.
 	fl := in.Flags(integrations.FlagsAPI{})
-	mux.Handle("GET /api/integrations/flags", signedIn(fl.Connection)) // and the agents its token sees
-	mux.Handle("PUT /api/integrations/flags", signedIn(fl.Connect))    // org admins; checks the token first
+	mux.Handle("GET /api/integrations/flags", signedIn(fl.Connection))               // and the agents its token sees
+	mux.Handle("PUT /api/integrations/flags", signedIn(fl.Connect))                  // org admins; checks the token first
+	mux.Handle("PUT /api/integrations/flags/webhook", signedIn(fl.ConfigureWebhook)) // org admins; flags.gg's signing secret
 	mux.Handle("GET /api/projects/{id}/flags", signedIn(fl.ProjectSettings))
 	mux.Handle("PUT /api/projects/{id}/flags", signedIn(fl.SetProjectSettings)) // org admins
 	mux.Handle("PUT /api/boards/{id}/flags", signedIn(fl.SetBoardAgent))        // board managers (TL-804)
@@ -473,6 +474,7 @@ func (s *Service) Handler() http.Handler {
 	mux.Handle("POST /api/projects/{id}/repos", signedIn(in.LinkRepo))
 	mux.Handle("DELETE /api/projects/{id}/repos", signedIn(in.UnlinkRepo)) // ?provider=&full_name=
 	// webhooks: generous per-address limits (providers deliver from a few shared addresses)
+	mux.Handle("POST /api/webhooks/flags/{org}", public("webhook-flags", 600, fl.Webhook))
 	mux.Handle("POST /api/webhooks/github", public("webhook-github", 600, in.GitHubWebhook(gc.GitHubWebhookSecret)))
 	mux.Handle("POST /api/webhooks/bitbucket/{link}", public("webhook-bitbucket", 600, in.BitbucketWebhook)) // one hook and secret per linked repo (TL-165)
 	mux.Handle("PATCH /api/tickets/{id}", signedIn(t.Update))

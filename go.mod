@@ -1,8 +1,6 @@
 module github.com/tracklines/backend
 
-go 1.26.1
-
-toolchain go1.27.3
+go 1.27.4
 
 require (
 	github.com/SherClockHolmes/webpush-go v1.4.0

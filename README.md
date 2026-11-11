@@ -77,6 +77,23 @@ The API serves MCP at `/mcp` (Streamable HTTP, stateless). Auth is the same as R
 `Authorization: Bearer tl_…` (an API key) or a Clerk session token. Each tool calls a REST route
 in-process, so permissions, validation and errors match REST exactly (`internal/mcp`).
 
+## Incoming flags.gg webhooks (TL-789)
+
+After connecting flags.gg, create a company webhook there for `flag.created`,
+`flag.state_changed`, and `flag.archived`. Use the API's public base URL plus the
+`webhook_path` returned by `GET /api/integrations/flags` as its destination.
+An organization admin saves the once-shown signing secret with
+`PUT /api/integrations/flags/webhook` and JSON `{"secret":"whsec_…"}`.
+The secret is encrypted, bound to that organization, and never returned.
+An empty secret disables the receiver; disconnecting flags.gg removes it.
+
+The receiver verifies the HMAC and a five-minute timestamp window. Event IDs,
+per-environment state, and ticket activity are committed together. Duplicate and
+older events are acknowledged without applying them again. Unknown tickets and
+agents outside the connected organization are ignored. Ticket flag panels still
+read flags.gg for environment names and targeting rules, which aren't in its
+webhook payloads. Configure the webhook after deploying the backend migration.
+
 ## API docs
 
 The full HTTP API is in [`openapi.yaml`](openapi.yaml).
