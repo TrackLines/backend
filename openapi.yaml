@@ -2401,6 +2401,7 @@ paths:
                         comment.added (comment_id, reply_to), comment.edited and comment.deleted (comment_id);
                         attachment.added (attachment_id, name, size), attachment.removed and attachment.kept (attachment_id, name);
                         pr.linked (provider, repo, number, state), pr.state_changed (provider, repo, number, from, to), pr.unlinked (provider, repo, number).
+                        flag.created, flag.state_changed, flag.archived (provider, agent_id, environment_id, enabled, rollout).
                     data: { type: object }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
@@ -2558,6 +2559,8 @@ paths:
                   updated_at: { type: string, format: date-time }
                   agents: { type: array, items: { $ref: '#/components/schemas/FlagAgent' } }
                   agents_error: { type: string }
+                  webhook_configured: { type: boolean }
+                  webhook_path: { type: string, description: Absolute path on this API to use as the flags.gg webhook destination. }
         '403': { description: Not signed in to an organization. }
     put:
       tags: [Organizations]
@@ -2590,6 +2593,76 @@ paths:
         '403': { description: Not a signed-in org admin. }
         '502': { description: flags.gg didn't answer (flags_unavailable). }
         '503': { description: Integrations aren't configured on this server. }
+
+  /integrations/flags/webhook:
+    put:
+      tags: [Organizations]
+      operationId: configureFlagsWebhook
+      summary: Set the connected organization's flags.gg webhook signing secret (org admins)
+      description: "Create a company webhook in flags.gg for flag.created, flag.state_changed and flag.archived, targeting this API's /api/webhooks/flags/{org}. Store its once-shown secret here. An empty secret disables deliveries. Secrets are encrypted and never returned; disconnecting flags.gg removes the secret."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [secret]
+              properties:
+                secret: { type: string, maxLength: 500 }
+      responses:
+        '200':
+          description: Webhook configured or disabled.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  webhook_configured: { type: boolean }
+                  webhook_path: { type: string }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { description: Not a signed-in org admin. }
+        '409': { description: Connect flags.gg first. }
+
+  /webhooks/flags/{org}:
+    post:
+      tags: [Organizations]
+      operationId: flagsWebhook
+      summary: Receive a signed flags.gg flag event (TL-789)
+      security: []
+      description: "Authenticates HMAC-SHA256 of timestamp + '.' + exact body bytes using the organization's webhook secret. X-Flags-Signature is v1=<hex>, X-Flags-Timestamp is Unix seconds within five minutes, and X-Flags-Event-ID must match the signed JSON id. Stores per-environment state and ticket activity atomically. Unknown flags, duplicate event ids and out-of-order events are acknowledged without changing state. Ticket flag reads remain authoritative live reads, including environment names and targeting rules not included in events."
+      parameters:
+        - { name: org, in: path, required: true, schema: { type: string } }
+        - { name: X-Flags-Signature, in: header, required: true, schema: { type: string } }
+        - { name: X-Flags-Timestamp, in: header, required: true, schema: { type: string } }
+        - { name: X-Flags-Event-ID, in: header, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [id, type, created_at, data]
+              properties:
+                id: { type: string }
+                type: { type: string, enum: [flag.created, flag.state_changed, flag.archived] }
+                created_at: { type: string, format: date-time }
+                company_id: { type: string }
+                data:
+                  type: object
+                  properties:
+                    flag_id: { type: string }
+                    name: { type: string }
+                    ticket_ref: { type: string, nullable: true }
+                    agent_id: { type: string }
+                    environment_id: { type: string }
+                    enabled: { type: boolean }
+                    rollout: { type: integer, minimum: 0, maximum: 100 }
+      responses:
+        '204': { description: Accepted, already handled, stale, or unrelated flag. }
+        '400': { description: Invalid payload or event. }
+        '401': { description: Invalid signature or timestamp. }
+        '404': { description: Organization has no configured flags.gg webhook. }
+        '500': { description: Processing failed; delivery can be retried. }
 
   /projects/{id}/flags:
     parameters:

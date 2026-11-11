@@ -75,6 +75,12 @@ func (f FlagsSystem) Connection(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out := map[string]any{"provider": Flags, "connected": true, "base_url": c.BaseURL, "updated_by": c.UpdatedBy, "updated_at": c.UpdatedAt}
+	var configured bool
+	if err := f.h.store.DB.QueryRow(r.Context(), `SELECT flags_webhook_secret IS NOT NULL FROM org_integrations WHERE org_id = $1 AND provider = 'flags'`, org).Scan(&configured); err != nil {
+		flagsErr(w, r, err)
+		return
+	}
+	out["webhook_configured"], out["webhook_path"] = configured, "/api/webhooks/flags/"+org
 	if base, token, err := f.h.store.credentials(r.Context(), org, Flags); err == nil {
 		if agents, err := f.api.Agents(r.Context(), base, token); err == nil {
 			out["agents"] = agents
@@ -264,7 +270,7 @@ func (f FlagsSystem) ticketCreds(w http.ResponseWriter, r *http.Request) (base, 
 }
 
 // TicketFlag: GET /api/tickets/{id}/flag: the ticket's flag in each environment, read from flags.gg
-// each time (it doesn't tell us about changes made there yet).
+// each time, including environment names and targeting rules absent from webhook payloads.
 func (f FlagsSystem) TicketFlag(w http.ResponseWriter, r *http.Request) {
 	base, token, t, ok := f.ticketCreds(w, r)
 	if !ok {
