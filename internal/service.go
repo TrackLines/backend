@@ -515,7 +515,8 @@ func (s *Service) Handler() http.Handler {
 	at := attachments.NewSystem(s.DB)
 	at.IsAdmin = o.AdminModel().IsAdmin
 	if token := config.Get(s.Config).UploadThingToken; token != "" {
-		at.Files = retention.UploadThing{Token: token}
+		files := retention.UploadThing{Token: token}
+		at = at.WithFiles(files, files.Host())
 	}
 	mux.Handle("GET /api/tickets/{id}/attachments", signedIn(at.List))
 	mux.Handle("POST /api/tickets/{id}/attachments", signedIn(at.Create))

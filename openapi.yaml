@@ -6770,7 +6770,7 @@ components:
         bad_when_sprint_ends: "when_sprint_ends must be start_next or wait"
         bad_estimate_scale: "estimate_scale must be none, fibonacci, tshirt, powers or linear"
         bad_external: "external needs source (bugfixes), project and id; url must be http(s)"
-        bad_file: "file must be an UploadThing upload (https, *.ufs.sh or utfs.io) with a key and name"
+        bad_file: "file must be an upload in this service's file store, with a key and name"
         bad_intake_request: "a title (up to 200 characters) and a type (bug or feature) are required"
         bad_intake_status: "status must be pending, promoted or dismissed"
         bad_invite_email: "email_address must be a valid email address"
