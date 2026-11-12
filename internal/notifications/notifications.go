@@ -24,7 +24,8 @@ type Event struct {
 	TicketID string // optional
 	BoardID  string // optional
 	Link     string // optional: where a push about neither opens, like the launch offer (/settings?offer=1)
-	Urgent   bool   // opens the bell / Notifications for you, once: the launch offer for now (TL-882)
+	Type     string // what policy2 is asked about when it isn't the kind: the launch offer is "offer" (TL-882)
+	Urgent   bool   // opens the bell / Notifications for you, once; set by Urgent from policy2 (TL-882)
 }
 
 // Notifier tells users (Clerk user ids) in org about e.

@@ -79,7 +79,8 @@ func TestLaunchOfferStaff(t *testing.T) {
 	on := false
 	push := &pushed{}
 	s := LaunchOfferStaff{DB: db, On: func() bool { return on }, Orgs: orgs,
-		Members: fakeMembers{"org_stnew": {"user_boss", "user_dev"}}, IsAdmin: adminsExcept("user_dev"), Push: push}
+		Members: fakeMembers{"org_stnew": {"user_boss", "user_dev"}}, IsAdmin: adminsExcept("user_dev"), Push: push,
+		Urgent: func(_ context.Context, typ string) bool { return typ == "offer" }} // policy2's answer today (TL-882)
 
 	list := func() (map[string]OfferOrg, []string, bool) {
 		rec := httptest.NewRecorder()

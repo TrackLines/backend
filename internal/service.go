@@ -86,6 +86,8 @@ type Service struct {
 	ctx          context.Context // cancelled at shutdown; set by Start before the routes are built (nil in tests)
 	calendarOnce sync.Once
 	gcal         *integrations.GoogleCalendar // Google Calendar (TL-404); nil without a service account
+	urgentOnce   sync.Once
+	urgent       *integrations.UrgentPolicy // policy2's which-types-are-urgent (TL-882); nil without a key
 }
 
 func New(cfg *config.Config, db *pgxpool.Pool, vk valkey.Client, fl *goFlags.Client, bill billing.Service, port string) *Service {
@@ -122,7 +124,19 @@ func (s *Service) notifiers() (notifications.Store, *notifications.Push, *integr
 	if app != nil {
 		all = append(all, app)
 	}
-	return inbox, push, chat, app, all
+	return inbox, push, chat, app, notifications.Urgent{Next: all, Check: s.urgency()}
+}
+
+// urgency asks policy2 whether a notification type is urgent (TL-882); one client (and cache) for the server.
+func (s *Service) urgency() notifications.Urgency {
+	s.urgentOnce.Do(func() {
+		pc := config.Get(s.Config)
+		var err error
+		if s.urgent, err = integrations.NewUrgentPolicy(pc.Policy2APIKey, pc.UrgentPolicyID, ""); err != nil {
+			logs.Errorf("urgent notifications are off: %v", err)
+		}
+	})
+	return s.urgent.Urgent
 }
 
 // calendarSync: Google Calendar's sync, with the one client the server has (nil without a service account).
@@ -185,7 +199,7 @@ func (s *Service) Start() error {
 	go tickets.DueReminders{Store: tickets.Store{DB: s.DB}, Notify: notify}.Run(ctx, time.Hour)
 	// every organization's Clerk member cap matches its plan: 20 on Free and Pro, unlimited on Enterprise (TL-418)
 	// the launch offer's free year: admins told 30 and 7 days before it ends (TL-774)
-	go billing.TrialReminders{DB: s.DB}.Run(ctx, time.Hour)
+	go billing.TrialReminders{DB: s.DB, Urgent: s.urgency()}.Run(ctx, time.Hour)
 	// every organization is a customer in ChewedFeed HQ with its plan: backfill, hand grants, missed webhooks
 	go s.Billing.ChewedFeed.RunSync(ctx, s.DB, organization.NewClient(&clerk.ClientConfig{}), time.Hour)
 	go billing.SyncAllMemberCaps(ctx, s.DB, billing.Skip{OrgUpdater: organization.NewClient(&clerk.ClientConfig{}), Orgs: config.Get(s.Config).ClerkUncappedOrgs})
@@ -407,6 +421,7 @@ func (s *Service) Handler() http.Handler {
 	if push.Enabled() {
 		lo.Push = push
 	}
+	lo.Urgent = s.urgency()
 	mux.Handle("GET /api/staff/launch-offers", staffOnly(http.HandlerFunc(lo.List)))
 	mux.Handle("POST /api/staff/launch-offers", staffOnly(http.HandlerFunc(lo.Send)))
 	mux.Handle("GET /api/staff/outages", staffOnly(http.HandlerFunc(dt.List)))

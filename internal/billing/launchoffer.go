@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/tracklines/backend/internal/notifications"
 	"net/http"
 	"time"
 
@@ -169,7 +170,10 @@ func (s Service) startTrial(ctx context.Context, org, email string) (trial, erro
 // TrialReminders keeps the price-increase promise for the launch offer: each org's admins are told
 // 30 days and again 7 days before the free year ends, while it's still a trial (cancelled or already
 // paying: nothing to say). It runs whether or not the offer's flag is on.
-type TrialReminders struct{ DB *pgxpool.Pool }
+type TrialReminders struct {
+	DB     *pgxpool.Pool
+	Urgent notifications.Urgency // policy2: is "billing" urgent (TL-882); nil: no
+}
 
 func (t TrialReminders) Run(ctx context.Context, every time.Duration) {
 	tick := time.NewTicker(every)
@@ -189,6 +193,7 @@ func (t TrialReminders) Run(ctx context.Context, every time.Duration) {
 // Once sends the reminders that are due. A missed 30-day one isn't sent inside the last 7 days:
 // the 7-day one says it.
 func (t TrialReminders) Once(ctx context.Context) error {
+	urgent := t.Urgent != nil && t.Urgent(ctx, "billing")
 	for _, r := range []struct {
 		column string
 		within string
@@ -206,9 +211,9 @@ func (t TrialReminders) Once(ctx context.Context) error {
 				  AND lo.`+r.column+` IS NULL
 				  AND lo.trial_ends_at <= now() + $1::interval AND lo.trial_ends_at > now() + $2::interval
 				RETURNING lo.org_id)
-			INSERT INTO notifications (org_id, user_id, kind, text, link)
-			SELECT due.org_id, a.user_clerk_id, 'billing', $3, $4 FROM due JOIN org_admins a ON a.org_id = due.org_id`,
-			r.within, r.after, r.text, LaunchOfferLink)
+			INSERT INTO notifications (org_id, user_id, kind, text, link, urgent)
+			SELECT due.org_id, a.user_clerk_id, 'billing', $3, $4, $5 FROM due JOIN org_admins a ON a.org_id = due.org_id`,
+			r.within, r.after, r.text, LaunchOfferLink, urgent)
 		if err != nil {
 			return err
 		}
