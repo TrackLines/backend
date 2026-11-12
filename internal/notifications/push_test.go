@@ -133,9 +133,9 @@ func TestPush(t *testing.T) {
 		t.Fatalf("agent actor: %q", got)
 	}
 	// a notice about neither a ticket nor a board opens its link, like the launch offer's claim
-	_ = push.Notify(ctx, "pu1", []string{"user_ava"}, Event{Kind: "billing", Text: "is giving your organization a free year of Pro.", Actor: "TrackLin.es", Link: "/settings?offer=1"})
+	_ = push.Notify(ctx, "pu1", []string{"user_ava"}, Event{Kind: "billing", Text: "is giving your organization a free year of Pro.", Actor: "TrackLin.es", Link: "/settings?offer=1", Urgent: true})
 	push.Wait()
-	if got := sent["https://fcm.googleapis.com/fcm/send/ava-phone"]; got.URL != "/settings?offer=1" || got.Tag != "billing" {
+	if got := sent["https://fcm.googleapis.com/fcm/send/ava-phone"]; got.URL != "/settings?offer=1" || got.Tag != "billing" || !got.Urgent {
 		t.Fatalf("link: %+v", got)
 	}
 	// turning it off on a device (only your own)

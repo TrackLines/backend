@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -112,8 +113,9 @@ type fcmMessage struct {
 					Title string `json:"title"`
 					Body  string `json:"body"`
 				} `json:"alert"`
-				Sound    string `json:"sound"`
-				ThreadID string `json:"thread-id"`
+				Sound             string `json:"sound"`
+				ThreadID          string `json:"thread-id"`
+				InterruptionLevel string `json:"interruption-level,omitempty"` // time-sensitive when urgent (TL-882)
 			} `json:"aps"`
 		} `json:"payload"`
 	} `json:"apns"`
@@ -128,10 +130,13 @@ func (f *FCM) SendDevice(ctx context.Context, token string, m notifications.Mess
 	}
 	var msg fcmMessage
 	msg.Token = token
-	msg.Data = map[string]string{"title": m.Title, "body": m.Body, "url": m.URL, "tag": m.Tag, "kind": m.Kind}
+	msg.Data = map[string]string{"title": m.Title, "body": m.Body, "url": m.URL, "tag": m.Tag, "kind": m.Kind, "urgent": strconv.FormatBool(m.Urgent)}
 	msg.Android.Priority = "high"
 	msg.APNs.Payload.APS.Alert.Title, msg.APNs.Payload.APS.Alert.Body = m.Title, m.Body
 	msg.APNs.Payload.APS.Sound, msg.APNs.Payload.APS.ThreadID = "default", m.Kind // grouped by kind, like Android's channels
+	if m.Urgent {
+		msg.APNs.Payload.APS.InterruptionLevel = "time-sensitive"
+	}
 	body, _ := json.Marshal(map[string]any{"message": msg})
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, f.API+"/v1/projects/"+url.PathEscape(f.sa.projectID)+"/messages:send", bytes.NewReader(body))
 	if err != nil {

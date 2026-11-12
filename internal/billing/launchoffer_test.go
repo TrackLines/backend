@@ -190,7 +190,7 @@ func TestTrialReminders(t *testing.T) {
 	}
 	count := func(org, like string) int {
 		var n int
-		if err := db.QueryRow(ctx, `SELECT count(*) FROM notifications WHERE org_id = $1 AND kind = 'billing' AND text LIKE $2 AND link = $3`, org, like, LaunchOfferLink).Scan(&n); err != nil {
+		if err := db.QueryRow(ctx, `SELECT count(*) FROM notifications WHERE org_id = $1 AND kind = 'billing' AND text LIKE $2 AND link = $3 AND NOT urgent`, org, like, LaunchOfferLink).Scan(&n); err != nil {
 			t.Fatal(err)
 		}
 		return n

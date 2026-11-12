@@ -21,6 +21,7 @@ type Notification struct {
 	TicketKey *string `json:"ticket_key"`
 	BoardID   *string `json:"board_id"`
 	Link      *string `json:"link,omitempty"` // where a notice that isn't about a ticket or board opens (TL-424)
+	Urgent    bool    `json:"urgent"`         // opens the bell / Notifications for you, once (TL-882)
 	CreatedAt string  `json:"created_at"`
 	ReadAt    *string `json:"read_at"`
 }
@@ -55,7 +56,7 @@ func (h System) List(w http.ResponseWriter, r *http.Request) {
 	if v, err := strconv.Atoi(r.URL.Query().Get("per_page")); err == nil && v > 0 && v <= 100 {
 		per = v
 	}
-	rows, err := h.store.DB.Query(r.Context(), `SELECT n.id, n.kind, n.text, n.actor, n.ticket_id, n.link,
+	rows, err := h.store.DB.Query(r.Context(), `SELECT n.id, n.kind, n.text, n.actor, n.ticket_id, n.link, n.urgent,
 			(SELECT p.key_prefix || '-' || t.number FROM tickets t JOIN projects p ON p.id = t.project_id WHERE t.id = n.ticket_id),
 			n.board_id, to_char(n.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
 			to_char(n.read_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')
@@ -67,7 +68,7 @@ func (h System) List(w http.ResponseWriter, r *http.Request) {
 	}
 	out, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (Notification, error) {
 		var n Notification
-		return n, row.Scan(&n.ID, &n.Kind, &n.Text, &n.Actor, &n.TicketID, &n.Link, &n.TicketKey, &n.BoardID, &n.CreatedAt, &n.ReadAt)
+		return n, row.Scan(&n.ID, &n.Kind, &n.Text, &n.Actor, &n.TicketID, &n.Link, &n.Urgent, &n.TicketKey, &n.BoardID, &n.CreatedAt, &n.ReadAt)
 	})
 	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)

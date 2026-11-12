@@ -37,10 +37,14 @@ func (f fakeMembers) List(_ context.Context, p *organizationmembership.ListParam
 	return &clerk.OrganizationMembershipList{OrganizationMemberships: out, TotalCount: int64(len(out))}, nil
 }
 
-type pushed struct{ to [][]string }
+type pushed struct {
+	to     [][]string
+	urgent []bool
+}
 
-func (p *pushed) Notify(_ context.Context, _ string, to []string, _ notifications.Event) error {
+func (p *pushed) Notify(_ context.Context, _ string, to []string, e notifications.Event) error {
 	p.to = append(p.to, to)
+	p.urgent = append(p.urgent, e.Urgent)
 	return nil
 }
 
@@ -138,7 +142,7 @@ func TestLaunchOfferStaff(t *testing.T) {
 		t.Fatalf("offer recorded: %q %v", by, err)
 	}
 	texts := map[string]string{}
-	rows, err := db.Query(ctx, `SELECT user_id, text FROM notifications WHERE org_id = 'org_stnew' AND kind = 'billing' AND link = $1`, LaunchOfferLink)
+	rows, err := db.Query(ctx, `SELECT user_id, text FROM notifications WHERE org_id = 'org_stnew' AND kind = 'billing' AND link = $1 AND urgent`, LaunchOfferLink)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -150,7 +154,7 @@ func TestLaunchOfferStaff(t *testing.T) {
 	if texts["user_boss"] != offerTextAdmin || texts["user_dev"] != offerTextMember {
 		t.Fatalf("notices: %v", texts)
 	}
-	if len(push.to) != 2 || !slices.Equal(push.to[0], []string{"user_boss"}) || !slices.Equal(push.to[1], []string{"user_dev"}) {
+	if len(push.to) != 2 || !slices.Equal(push.to[0], []string{"user_boss"}) || !slices.Equal(push.to[1], []string{"user_dev"}) || !slices.Equal(push.urgent, []bool{true, true}) {
 		t.Fatalf("push: %v", push.to)
 	}
 	// once only: sending again tells nobody twice

@@ -284,7 +284,7 @@ func (s LaunchOfferStaff) sendOne(ctx context.Context, org, staffUser string) (r
 			return err
 		}
 		sentNow = true
-		// the inbox, with the link to the claim; written with the offer so neither is half done
+		// the inbox, with the link to the claim, urgent so it opens the bell (TL-882); written with the offer so neither is half done
 		for _, group := range []struct {
 			to   []string
 			text string
@@ -292,7 +292,7 @@ func (s LaunchOfferStaff) sendOne(ctx context.Context, org, staffUser string) (r
 			if len(group.to) == 0 {
 				continue
 			}
-			if _, err := tx.Exec(ctx, `INSERT INTO notifications (org_id, user_id, kind, text, link) SELECT $1, u, 'billing', $3, $4 FROM unnest($2::text[]) AS u`,
+			if _, err := tx.Exec(ctx, `INSERT INTO notifications (org_id, user_id, kind, text, link, urgent) SELECT $1, u, 'billing', $3, $4, true FROM unnest($2::text[]) AS u`,
 				org, group.to, group.text, LaunchOfferLink); err != nil {
 				return err
 			}
@@ -306,8 +306,8 @@ func (s LaunchOfferStaff) sendOne(ctx context.Context, org, staffUser string) (r
 		return "already_sent", nil
 	}
 	if s.Push != nil { // devices: best effort, the inbox already has it
-		notifications.Send(ctx, s.Push, org, admins, notifications.Event{Kind: "billing", Actor: "TrackLin.es", Text: "is giving your organization a free year of Pro. Claim it in Settings.", Link: LaunchOfferLink})
-		notifications.Send(ctx, s.Push, org, others, notifications.Event{Kind: "billing", Actor: "TrackLin.es", Text: "is giving your organization a free year of Pro. An admin can claim it.", Link: LaunchOfferLink})
+		notifications.Send(ctx, s.Push, org, admins, notifications.Event{Kind: "billing", Actor: "TrackLin.es", Text: "is giving your organization a free year of Pro. Claim it in Settings.", Link: LaunchOfferLink, Urgent: true})
+		notifications.Send(ctx, s.Push, org, others, notifications.Event{Kind: "billing", Actor: "TrackLin.es", Text: "is giving your organization a free year of Pro. An admin can claim it.", Link: LaunchOfferLink, Urgent: true})
 	}
 	return "", nil
 }

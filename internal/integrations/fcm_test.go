@@ -86,8 +86,19 @@ func TestFCM(t *testing.T) {
 		t.Fatalf("message: %v", msg)
 	}
 	aps := msg["apns"].(map[string]any)["payload"].(map[string]any)["aps"].(map[string]any)
-	if aps["alert"].(map[string]any)["body"] != m.Body || aps["thread-id"] != "assigned" {
+	if aps["alert"].(map[string]any)["body"] != m.Body || aps["thread-id"] != "assigned" || data["urgent"] != "false" || aps["interruption-level"] != nil {
 		t.Fatalf("apns: %v", aps)
+	}
+	// urgent (TL-882): the apps are told, and iOS shows it time-sensitive
+	urgent := m
+	urgent.Urgent = true
+	if _, err := f.SendDevice(ctx, "ava-phone", urgent); err != nil {
+		t.Fatal(err)
+	}
+	msg = last["message"].(map[string]any)
+	aps = msg["apns"].(map[string]any)["payload"].(map[string]any)["aps"].(map[string]any)
+	if msg["data"].(map[string]any)["urgent"] != "true" || aps["interruption-level"] != "time-sensitive" {
+		t.Fatalf("urgent: %v", msg)
 	}
 	for tok, wantGone := range map[string]bool{"gone": true, "bad": true} {
 		if gone, err := f.SendDevice(ctx, tok, m); gone != wantGone || err != nil {

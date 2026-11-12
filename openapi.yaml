@@ -6615,6 +6615,8 @@ components:
         ticket_id: { type: [string, 'null'], format: uuid }
         ticket_key: { type: [string, 'null'] }
         board_id: { type: [string, 'null'], format: uuid }
+        link: { type: string, description: 'Where a notice about neither a ticket nor a board opens, e.g. /settings?offer=1. Left out when there is none.' }
+        urgent: { type: boolean, description: 'Clients open the notifications for it, once, while it is unread (TL-882). Only the free Pro offer for now.' }
         created_at: { type: string, format: date-time }
         read_at: { type: [string, 'null'], format: date-time }
     Board:
