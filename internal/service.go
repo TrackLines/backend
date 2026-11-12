@@ -372,6 +372,7 @@ func (s *Service) Handler() http.Handler {
 	mux.Handle("GET /api/notifications/unread-count", signedIn(nf.UnreadCount))
 	mux.Handle("POST /api/notifications/read-all", signedIn(nf.ReadAll))
 	mux.Handle("POST /api/notifications/{id}/read", signedIn(nf.Read))
+	mux.Handle("POST /api/notifications/{id}/shown", signedIn(nf.Shown)) // an urgent one opened the notifications (TL-882)
 	mux.Handle("DELETE /api/notifications/read", signedIn(nf.ClearRead)) // clear everything already read
 	mux.Handle("DELETE /api/notifications/{id}", signedIn(nf.Dismiss))
 	t := tickets.NewSystem(s.DB).CachingMembers(members).WithNotifier(notify).

@@ -2090,6 +2090,17 @@ paths:
       responses:
         '204': { description: Read. }
         '404': { $ref: '#/components/responses/NotFound' }
+  /notifications/{notificationId}/shown:
+    post:
+      tags: [Notifications]
+      operationId: notificationShown
+      summary: Say a client opened the notifications for this urgent one
+      description: Sets shown_at the first time, so the website and apps open the notifications for an urgent notification only once (TL-882).
+      parameters:
+        - { name: notificationId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '204': { description: Recorded. }
+        '404': { $ref: '#/components/responses/NotFound' }
   /notifications/{notificationId}:
     delete:
       tags: [Notifications]
@@ -6616,7 +6627,8 @@ components:
         ticket_key: { type: [string, 'null'] }
         board_id: { type: [string, 'null'], format: uuid }
         link: { type: string, description: 'Where a notice about neither a ticket nor a board opens, e.g. /settings?offer=1. Left out when there is none.' }
-        urgent: { type: boolean, description: 'Clients open the notifications for it, once, while it is unread (TL-882). Only the free Pro offer for now.' }
+        urgent: { type: boolean, description: 'Clients open the notifications for it while it is unread and shown_at is null, then POST /notifications/{id}/shown (TL-882). policy2 decides which types are urgent.' }
+        shown_at: { type: [string, 'null'], format: date-time, description: When a client opened the notifications for this urgent one. }
         created_at: { type: string, format: date-time }
         read_at: { type: [string, 'null'], format: date-time }
     Board:

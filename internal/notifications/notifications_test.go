@@ -82,6 +82,17 @@ func TestInbox(t *testing.T) {
 	if len(list) != 2 || list[0].Kind != "mention" || list[0].ReadAt != nil || !list[0].Urgent || list[1].Urgent { // urgent as sent (TL-882)
 		t.Fatalf("inbox (newest first, this org only): %+v", list)
 	}
+	// an urgent one opened the notifications once (TL-882): only your own, and the first time stays
+	if rec := call(person("user_bo", "nt1"), h.Shown, "POST", "/", list[0].ID); rec.Code != 404 {
+		t.Fatalf("other's shown: %d", rec.Code)
+	}
+	if rec := call(ava, h.Shown, "POST", "/", list[0].ID); rec.Code != 204 {
+		t.Fatalf("shown: %d", rec.Code)
+	}
+	_ = json.Unmarshal(call(ava, h.List, "GET", "/", "").Body.Bytes(), &list)
+	if list[0].ShownAt == nil || list[1].ShownAt != nil {
+		t.Fatalf("shown_at: %+v", list)
+	}
 	// someone else can't read Ava's
 	if rec := call(person("user_bo", "nt1"), h.Read, "POST", "/", list[0].ID); rec.Code != 404 {
 		t.Fatalf("other's read: %d", rec.Code)
