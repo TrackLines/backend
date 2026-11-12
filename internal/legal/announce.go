@@ -15,6 +15,8 @@ import (
 	"github.com/bugfixes/go-bugfixes/logs"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/tracklines/backend/internal/notifications"
 )
 
 // Version is one published version, as the web app lists it.
@@ -31,6 +33,7 @@ type Announcer struct {
 	DB     *pgxpool.Pool
 	Site   string // the web app, e.g. https://tracklin.es
 	Client *http.Client
+	Urgent notifications.Urgency // policy2: is "legal" urgent, opening the bell (TL-882); nil: no
 }
 
 // Run checks every interval until ctx ends.
@@ -59,6 +62,7 @@ func (a Announcer) Check(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	urgent := a.Urgent != nil && a.Urgent(ctx, "legal") // asked before the transaction, not inside it
 	tx, err := a.DB.Begin(ctx)
 	if err != nil {
 		return err
@@ -84,7 +88,7 @@ func (a Announcer) Check(ctx context.Context) error {
 		if tag.RowsAffected() == 0 || first {
 			continue // already announced, or the launch versions
 		}
-		if err := notifyEveryone(ctx, tx, v); err != nil {
+		if err := notifyEveryone(ctx, tx, v, urgent); err != nil {
 			return err
 		}
 	}
@@ -93,13 +97,13 @@ func (a Announcer) Check(ctx context.Context) error {
 
 // notifyEveryone sends each user a notice in no particular organization (org_id ”), so it shows
 // in their bell whichever organization they're in.
-func notifyEveryone(ctx context.Context, tx pgx.Tx, v Version) error {
+func notifyEveryone(ctx context.Context, tx pgx.Tx, v Version, urgent bool) error {
 	text := fmt.Sprintf("We've updated our %s (from %s): %s", names[v.Doc], v.Version, strings.TrimSpace(v.Summary))
 	if r := []rune(text); len(r) > 500 {
 		text = string(r[:499]) + "…"
 	}
-	_, err := tx.Exec(ctx, `INSERT INTO notifications (org_id, user_id, kind, text, link)
-		SELECT '', clerk_id, 'legal', $1, $2 FROM users`, text, "/"+v.Doc+"/"+v.Version)
+	_, err := tx.Exec(ctx, `INSERT INTO notifications (org_id, user_id, kind, text, link, urgent)
+		SELECT '', clerk_id, 'legal', $1, $2, $3 FROM users`, text, "/"+v.Doc+"/"+v.Version, urgent)
 	return err
 }
 
