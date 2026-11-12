@@ -9,6 +9,7 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -32,6 +33,19 @@ func (u UploadThing) apiKey() (string, error) {
 		return "", fmt.Errorf("UPLOADTHING_TOKEN has no apiKey")
 	}
 	return t.APIKey, nil
+}
+
+// Host is where this app's files are served from (<appId>.ufs.sh), "" when the token doesn't name
+// an app. Every other *.ufs.sh host is some other UploadThing customer's storage.
+func (u UploadThing) Host() string {
+	raw, _ := base64.StdEncoding.DecodeString(u.Token)
+	var t struct {
+		AppID string `json:"appId"`
+	}
+	if json.Unmarshal(raw, &t) != nil || t.AppID == "" {
+		return ""
+	}
+	return strings.ToLower(t.AppID) + ".ufs.sh"
 }
 
 // DeleteFiles removes files from UploadThing storage by key.

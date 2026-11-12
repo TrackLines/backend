@@ -15,7 +15,7 @@ import (
 
 var (
 	ErrNotFound = errors.New("not found")
-	ErrBadFile  = httpx.Code("bad_file", "file must be an UploadThing upload (https, *.ufs.sh or utfs.io) with a key and name")
+	ErrBadFile  = httpx.Code("bad_file", "file must be an upload in this service's file store, with a key and name")
 	ErrDone     = httpx.Code("done_ticket_files", "ticket is done — move it out of Done to change its attachments")
 	ErrTooMany  = httpx.Code("too_many_files", "this ticket already has as many files as it can hold: remove one to add another")
 	ErrTooBig   = httpx.Code("file_too_big", "files can be up to 10 MB")
@@ -38,7 +38,12 @@ type Attachment struct {
 	DeleteOn    *string `json:"delete_on,omitempty"` // warned about (TL-259): the day it goes unless kept
 }
 
-type Store struct{ DB *pgxpool.Pool }
+type Store struct {
+	DB *pgxpool.Pool
+	// Host is our own file store (retention.UploadThing.Host); "" accepts any UploadThing host,
+	// for running without UPLOADTHING_TOKEN
+	Host string
+}
 
 const cols = `a.id, a.ticket_id, a.file_key, a.url, a.name, a.size_bytes, a.content_type, a.created_by,
 	to_char(a.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
@@ -58,22 +63,26 @@ func notFound(err error) error {
 	return err
 }
 
-// ValidUploadThingURL accepts only files hosted by UploadThing, so a ticket can't be made to
-// point at arbitrary links.
-func ValidUploadThingURL(raw string) bool {
+// ValidUploadThingURL accepts only files in our own UploadThing storage (host, <appId>.ufs.sh), so a
+// ticket can't be made to point at arbitrary links, or at another UploadThing customer's files:
+// those skip MaxFileBytes and we can't delete them. With no host, any UploadThing address passes.
+func ValidUploadThingURL(raw, host string) bool {
 	u, err := url.Parse(raw)
 	if err != nil || u.Scheme != "https" {
 		return false
 	}
 	h := strings.ToLower(u.Hostname())
+	if host != "" {
+		return h == host
+	}
 	return h == "utfs.io" || strings.HasSuffix(h, ".ufs.sh")
 }
 
 // ValidUploadThingFile ensures the URL identifies the same UploadThing file as the key
 // that will be sent to its delete API. This prevents a caller from attaching a trusted URL
 // while naming a different file key for deletion.
-func ValidUploadThingFile(raw, key string) bool {
-	if key == "" || !ValidUploadThingURL(raw) {
+func ValidUploadThingFile(raw, key, host string) bool {
+	if key == "" || !ValidUploadThingURL(raw, host) {
 		return false
 	}
 	u, err := url.Parse(raw)
@@ -125,7 +134,7 @@ func (s Store) CanAdd(ctx context.Context, owner, ticketID string) error {
 // Create records an uploaded file on the owner's ticket. The ticket is locked while it's counted, so
 // files added at the same moment can't take it past MaxPerTicket.
 func (s Store) Create(ctx context.Context, owner, actor, ticketID string, a Attachment) (*Attachment, error) {
-	if strings.TrimSpace(a.Name) == "" || !ValidUploadThingFile(a.URL, a.Key) {
+	if strings.TrimSpace(a.Name) == "" || !ValidUploadThingFile(a.URL, a.Key, s.Host) {
 		return nil, ErrBadFile
 	}
 	if a.Size > MaxFileBytes {

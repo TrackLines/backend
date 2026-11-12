@@ -25,9 +25,25 @@ func TestValidUploadThingURL(t *testing.T) {
 		"https://evil.com/abc.ufs.sh/key": false,
 		"javascript:alert(1)":             false,
 	} {
-		if got := ValidUploadThingURL(u); got != want {
+		if got := ValidUploadThingURL(u, ""); got != want {
 			t.Errorf("%s: got %v want %v", u, got, want)
 		}
+	}
+	// audit: with our own host known, another UploadThing customer's storage isn't ours
+	host := UploadThing{Token: base64.StdEncoding.EncodeToString([]byte(`{"apiKey":"sk","appId":"Abc123"}`))}.Host()
+	for u, want := range map[string]bool{
+		"https://abc123.ufs.sh/f/key":        true,
+		"https://other.ufs.sh/f/key":         false,
+		"https://utfs.io/f/key":              false, // serves every customer's files
+		"https://abc123.ufs.sh.evil.com/f/k": false,
+		"https://xabc123.ufs.sh/f/key":       false,
+	} {
+		if got := ValidUploadThingURL(u, host); got != want {
+			t.Errorf("%s on %s: got %v want %v", u, host, got, want)
+		}
+	}
+	if h := (UploadThing{Token: "not-base64!"}).Host(); h != "" {
+		t.Errorf("bad token host %q", h)
 	}
 }
 
@@ -44,7 +60,7 @@ func TestValidUploadThingFile(t *testing.T) {
 		{"https://abc123.ufs.sh/f/file%2Fkey", "file/key", true},
 		{"https://abc123.ufs.sh/f/file-key", "", false},
 	} {
-		if got := ValidUploadThingFile(tc.url, tc.key); got != tc.want {
+		if got := ValidUploadThingFile(tc.url, tc.key, ""); got != tc.want {
 			t.Errorf("ValidUploadThingFile(%q, %q) = %v, want %v", tc.url, tc.key, got, tc.want)
 		}
 	}
@@ -111,6 +127,10 @@ func TestStore(t *testing.T) {
 	}
 	if _, err := s.Create(ctx, "a1", "claude", ticket, Attachment{Key: "someone-elses-file", URL: "https://app.ufs.sh/f/our-file", Name: "x"}); !errors.Is(err, ErrBadFile) {
 		t.Fatalf("mismatched file key: %v", err)
+	}
+	// audit: a file in another UploadThing customer's storage isn't ours to attach
+	if _, err := (Store{DB: db, Host: "ours.ufs.sh"}).Create(ctx, "a1", "claude", ticket, good); !errors.Is(err, ErrBadFile) {
+		t.Fatalf("other customer's storage: %v", err)
 	}
 	if _, err := s.Create(ctx, "a2", "x", ticket, good); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("non-owner create: %v", err)

@@ -34,6 +34,12 @@ func NewSystem(db *pgxpool.Pool) System {
 	return System{store: Store{DB: db}}
 }
 
+// WithFiles sets where files are stored, and with it the only host a file's URL may be on.
+func (h System) WithFiles(f Files, host string) System {
+	h.Files, h.store.Host = f, host
+	return h
+}
+
 func writeErr(w http.ResponseWriter, r *http.Request, err error) {
 	if httpx.Canceled(err) {
 		return // the client left: nobody to answer, nothing to report
