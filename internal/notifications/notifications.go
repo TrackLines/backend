@@ -24,6 +24,8 @@ type Event struct {
 	TicketID string // optional
 	BoardID  string // optional
 	Link     string // optional: where a push about neither opens, like the launch offer (/settings?offer=1)
+	Type     string // what policy2 is asked about when it isn't the kind: the launch offer is "offer" (TL-882)
+	Urgent   bool   // opens the bell / Notifications for you, once; set by Urgent from policy2 (TL-882)
 }
 
 // Notifier tells users (Clerk user ids) in org about e.
@@ -57,7 +59,7 @@ type Store struct{ DB *pgxpool.Pool }
 
 // Notify writes one row per recipient: people only (user_… ids), once each, never the actor.
 func (s Store) Notify(ctx context.Context, org string, to []string, e Event) error {
-	return inbox.Add(ctx, s.DB, org, to, inbox.Notice{Kind: e.Kind, Text: e.Text, Actor: e.Actor, TicketID: e.TicketID, BoardID: e.BoardID})
+	return inbox.Add(ctx, s.DB, org, to, inbox.Notice{Kind: e.Kind, Text: e.Text, Actor: e.Actor, TicketID: e.TicketID, BoardID: e.BoardID, Urgent: e.Urgent})
 }
 
 // BoardManagers are who approve and review on a board: the org's admins and the board team's leaders.

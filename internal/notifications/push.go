@@ -37,11 +37,12 @@ type PushConfig struct {
 
 // Message is what a device shows.
 type Message struct {
-	Title string `json:"title"`
-	Body  string `json:"body"`
-	URL   string `json:"url"`  // where clicking it goes
-	Tag   string `json:"tag"`  // one per notification kind and ticket, so repeats replace each other
-	Kind  string `json:"kind"` // the event's kind: the apps' notification channel (TL-361)
+	Title  string `json:"title"`
+	Body   string `json:"body"`
+	URL    string `json:"url"`    // where clicking it goes
+	Tag    string `json:"tag"`    // one per notification kind and ticket, so repeats replace each other
+	Kind   string `json:"kind"`   // the event's kind: the apps' notification channel (TL-361)
+	Urgent bool   `json:"urgent"` // the apps open Notifications for it (TL-882)
 }
 
 // DeviceSender sends to a phone app's push token (FCM, TL-359). gone: the token is no longer valid.
@@ -135,7 +136,7 @@ func (p *Push) message(ctx context.Context, org string, e Event) Message {
 			}
 		}
 	}
-	m := Message{Title: "TrackLin.es", Body: actor + " " + e.Text, URL: "/", Tag: e.Kind, Kind: e.Kind}
+	m := Message{Title: "TrackLin.es", Body: actor + " " + e.Text, URL: "/", Tag: e.Kind, Kind: e.Kind, Urgent: e.Urgent}
 	if e.TicketID != "" {
 		var key string
 		_ = p.DB.QueryRow(ctx, `SELECT coalesce(pr.key_prefix || '-' || t.number, t.id::text) FROM tickets t JOIN projects pr ON pr.id = t.project_id WHERE t.id::text = $1`, e.TicketID).Scan(&key)

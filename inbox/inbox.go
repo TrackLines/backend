@@ -19,6 +19,7 @@ type Execer interface {
 type Notice struct {
 	Kind, Text, Actor string
 	TicketID, BoardID string // either may be ""
+	Urgent            bool   // opens the bell / Notifications for you, once (TL-882)
 }
 
 // Add puts n in the inbox of each person in to: people only (user_…, not API keys or agents), each
@@ -35,8 +36,8 @@ func Add(ctx context.Context, db Execer, org string, to []string, n Notice) erro
 	if len(users) == 0 {
 		return nil
 	}
-	_, err := db.Exec(ctx, `INSERT INTO notifications (org_id, user_id, kind, text, actor, ticket_id, board_id)
-		SELECT $1, u, $3, $4, $5, NULLIF($6, '')::uuid, NULLIF($7, '')::uuid FROM unnest($2::text[]) AS u`,
-		org, users, n.Kind, n.Text, n.Actor, n.TicketID, n.BoardID)
+	_, err := db.Exec(ctx, `INSERT INTO notifications (org_id, user_id, kind, text, actor, ticket_id, board_id, urgent)
+		SELECT $1, u, $3, $4, $5, NULLIF($6, '')::uuid, NULLIF($7, '')::uuid, $8 FROM unnest($2::text[]) AS u`,
+		org, users, n.Kind, n.Text, n.Actor, n.TicketID, n.BoardID, n.Urgent)
 	return err
 }

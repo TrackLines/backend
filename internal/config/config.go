@@ -92,6 +92,10 @@ type Project struct {
 	VAPIDPrivateKey string `env:"VAPID_PRIVATE_KEY"`
 	VAPIDSubject    string `env:"VAPID_SUBJECT" envDefault:"mailto:hello@tracklin.es"`
 	FCMCredentials  string `env:"FCM_CREDENTIALS"` // service account JSON that can send through FCM (TL-359); phones get nothing without it
+	// policy2 decides which notification types are urgent (TL-882); without a key nothing is. Optional,
+	// so plain env, not 1Password (TL-862).
+	Policy2APIKey  string `env:"POLICY2_API_KEY"`
+	UrgentPolicyID string `env:"POLICY2_URGENT_POLICY_ID" envDefault:"7c3ae8d1-8b3d-4318-9c2e-ec9f48308052"`
 	// Google Chat app (TL-289): personal messages in Chat. The app's service account key (the JSON file
 	// Google downloads); off without it. Project number: only if the app is built as a Workspace add-on.
 	GoogleChatCredentials   string `env:"GOOGLE_CHAT_CREDENTIALS"`
