@@ -209,7 +209,7 @@ func (s *Service) Start() error {
 		}
 	}()
 	// a new version of the Terms or Privacy policy on the web app: everyone's told once, in-app (TL-424)
-	go legal.Announcer{DB: s.DB, Site: siteURL(config.Get(s.Config).AuthorizedParties())}.Run(ctx, time.Hour)
+	go legal.Announcer{DB: s.DB, Site: siteURL(config.Get(s.Config).AuthorizedParties()), Urgent: s.urgency()}.Run(ctx, time.Hour)
 	// who's on holiday, from Google Calendar (TL-406): every connected org, hourly
 	go s.calendarSync(clerkcache.Memberships{Next: organizationmembership.NewClient(&clerk.ClientConfig{}), VK: s.Valkey, TTL: time.Minute}).Run(ctx, time.Hour)
 	// the bin and deleted organizations are purged, and deleted files removed, by Railway cron jobs

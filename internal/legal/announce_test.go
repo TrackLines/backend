@@ -49,9 +49,11 @@ func TestAnnounce(t *testing.T) {
 		json.NewEncoder(w).Encode(list)
 	}))
 	defer site.Close()
-	a := Announcer{DB: db, Site: site.URL, Client: site.Client()}
+	var asked []string // policy2 says legal is urgent (TL-882)
+	a := Announcer{DB: db, Site: site.URL, Client: site.Client(),
+		Urgent: func(_ context.Context, typ string) bool { asked = append(asked, typ); return typ == "legal" }}
 	notices := func(user string) []string {
-		rows, _ := db.Query(ctx, `SELECT org_id || '|' || text || '|' || COALESCE(link, '') FROM notifications WHERE kind = 'legal' AND user_id = $1 ORDER BY created_at`, user)
+		rows, _ := db.Query(ctx, `SELECT org_id || '|' || text || '|' || COALESCE(link, '') || '|' || urgent FROM notifications WHERE kind = 'legal' AND user_id = $1 ORDER BY created_at`, user)
 		defer rows.Close()
 		var out []string
 		for rows.Next() {
@@ -78,7 +80,10 @@ func TestAnnounce(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	want := "|We've updated our Terms of service (from 2026-11-20): Downtime credit now counts several short outages.|/terms/2026-11-20"
+	want := "|We've updated our Terms of service (from 2026-11-20): Downtime credit now counts several short outages.|/terms/2026-11-20|true"
+	if len(asked) == 0 || asked[0] != "legal" {
+		t.Errorf("policy2 asked: %v", asked)
+	}
 	for _, u := range []string{"lg_ava", "lg_bo"} {
 		if got := notices(u); len(got) != 1 || got[0] != want {
 			t.Errorf("%s: %v", u, got)
