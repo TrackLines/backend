@@ -5355,6 +5355,7 @@ paths:
                         claimed_at: { type: [string, 'null'], format: date-time }
                         claimed_by: { type: [string, 'null'] }
                         trial_ends_at: { type: [string, 'null'], format: date-time }
+                        last_active: { type: [string, 'null'], format: date-time, description: 'Latest change to any of its projects or tickets; null when it has none.' }
         '404': { description: Not staff. }
     post:
       tags: [Staff]

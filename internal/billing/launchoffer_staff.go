@@ -64,6 +64,7 @@ type OfferOrg struct {
 	ClaimedAt   *time.Time `json:"claimed_at"`
 	ClaimedBy   *string    `json:"claimed_by"`
 	TrialEndsAt *time.Time `json:"trial_ends_at"`
+	LastActive  *time.Time `json:"last_active"` // latest project or ticket change; nil when it has none
 }
 
 type offerRow struct {
@@ -152,6 +153,24 @@ func (s LaunchOfferStaff) list(ctx context.Context) ([]OfferOrg, error) {
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
+	active := map[string]time.Time{}
+	rows, err = s.DB.Query(ctx, `SELECT p.owner_clerk_id, greatest(max(p.updated_at), max(t.updated_at))
+		FROM projects p LEFT JOIN tickets t ON t.project_id = p.id GROUP BY p.owner_clerk_id`)
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var org string
+		var at time.Time
+		if err := rows.Scan(&org, &at); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		active[org] = at.UTC()
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 	orgs, err := allOrgs(ctx, s.Orgs)
 	if err != nil {
 		return nil, err
@@ -162,6 +181,9 @@ func (s LaunchOfferStaff) list(ctx context.Context) ([]OfferOrg, error) {
 		row := OfferOrg{OrgID: org.ID, Name: org.Name, CreatedAt: time.UnixMilli(org.CreatedAt).UTC(), Plan: b.planName(), Status: statusOf(o, b)}
 		if org.MembersCount != nil {
 			row.Members = *org.MembersCount
+		}
+		if at, ok := active[org.ID]; ok {
+			row.LastActive = &at
 		}
 		if o != nil {
 			row.OfferedAt, row.ClaimedAt, row.ClaimedBy, row.TrialEndsAt = o.offeredAt, o.claimedAt, o.claimedBy, o.trialEndsAt
