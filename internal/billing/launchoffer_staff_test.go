@@ -55,6 +55,8 @@ func TestLaunchOfferStaff(t *testing.T) {
 	if _, err := db.Exec(ctx, `DELETE FROM launch_offers WHERE org_id LIKE 'org_st%';
 		DELETE FROM org_billing WHERE org_id LIKE 'org_st%';
 		DELETE FROM notifications WHERE org_id LIKE 'org_st%';
+		DELETE FROM projects WHERE owner_clerk_id LIKE 'org_st%';
+		INSERT INTO projects (owner_clerk_id, name, updated_at) VALUES ('org_stpaid', 'p', '2026-11-10T09:00:00Z');
 		INSERT INTO org_billing (org_id, stripe_subscription_id, stripe_status, plan) VALUES
 			('org_stpaid', 'sub_p', 'active', 'pro'), ('org_stclaimed', 'sub_c', 'trialing', 'pro'),
 			('org_stconv', 'sub_v', 'active', 'pro'), ('org_stended', 'sub_e', 'canceled', 'pro');
@@ -113,6 +115,12 @@ func TestLaunchOfferStaff(t *testing.T) {
 	}
 	if c := got["org_stclaimed"]; c.ClaimedBy == nil || *c.ClaimedBy != "user_c" || c.TrialEndsAt == nil || c.Plan != Pro {
 		t.Errorf("claimed row: %+v", c)
+	}
+	if a := got["org_stpaid"].LastActive; a == nil || !a.Equal(time.Date(2026, 11, 10, 9, 0, 0, 0, time.UTC)) {
+		t.Errorf("last active: %v", a)
+	}
+	if got["org_stnew"].LastActive != nil {
+		t.Error("org with no projects has a last active date")
 	}
 	if n := got["org_stnew"]; n.Name != "New Co" || n.Members != 2 || n.Plan != Free || n.CreatedAt.IsZero() {
 		t.Errorf("new org row: %+v", n)
