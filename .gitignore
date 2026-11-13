@@ -9,3 +9,6 @@ coverage.*
 *.swp
 .DS_Store
 /server
+
+# Railway IaC SDK (TL-485)
+.railway/node_modules
