@@ -4636,7 +4636,7 @@ paths:
       tags: [Roadmaps]
       operationId: getRoadmap
       summary: Get a roadmap
-      description: Public roadmaps are readable without a token; login_only and team roadmaps require a signed-in member of the owning organization. Non-owner readers see progress counts but not linked-ticket IDs or titles.
+      description: Public roadmaps are readable without a token; login_only and team roadmaps require a signed-in member of the owning organization. Signed out, a login_only roadmap answers 401 and a team roadmap 404, so it doesn't say it exists (TL-904). Non-owner readers see progress counts but not linked-ticket IDs or titles.
       security:
         - {}
         - bearerAuth: []
@@ -4684,7 +4684,7 @@ paths:
       tags: [Roadmaps]
       operationId: listRoadmapUpdates
       summary: List dated progress updates
-      description: Uses the roadmap's public, login-only, or team visibility rules. Responses contain only update status, note, and date; linked ticket and organization details are never included.
+      description: Uses the roadmap's public, login-only, or team visibility rules (signed out, a team roadmap answers 404). Responses contain only update status, note, and date; linked ticket and organization details are never included.
       security:
         - {}
         - bearerAuth: []
