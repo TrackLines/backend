@@ -67,9 +67,8 @@ const (
 // is resent after the lease, which the auditor accepts again without storing it twice.
 type Relay struct {
 	DB     *pgxpool.Pool
-	URL    string      // AUDIT_URL: the auditor on the private network
-	Secret string      // AUDIT_SECRET (1Password audit_backend)
-	On     func() bool // the "audit-service" flag: off, events queue and nothing is sent
+	URL    string // AUDIT_URL: the auditor on the private network
+	Secret string // AUDIT_SECRET (1Password audit_backend)
 	Client *http.Client
 }
 
@@ -83,22 +82,20 @@ func (r Relay) Run(ctx context.Context, every time.Duration) {
 	defer t.Stop()
 	var warned time.Time
 	for {
-		if r.On == nil || r.On() {
-			for {
-				n, err := r.Tick(ctx)
-				if err != nil && ctx.Err() == nil {
-					// a dropped send (the auditor restarting, an EOF) is resent after the lease, so it's only a
-					// warning (TL-824); a real outage shows as the oldest event's age below, which is an error
-					logs.Warnf("audit: relay: %v", err)
-				}
-				if err != nil || n < batch {
-					break // a full batch: there may be more waiting
-				}
+		for {
+			n, err := r.Tick(ctx)
+			if err != nil && ctx.Err() == nil {
+				// a dropped send (the auditor restarting, an EOF) is resent after the lease, so it's only a
+				// warning (TL-824); a real outage shows as the oldest event's age below, which is an error
+				logs.Warnf("audit: relay: %v", err)
 			}
-			if age, err := r.oldest(ctx); err == nil && age > stale && time.Since(warned) > stale {
-				logs.Errorf("audit: the oldest unsent event is %s old: is the auditor reachable?", age.Round(time.Minute))
-				warned = time.Now()
+			if err != nil || n < batch {
+				break // a full batch: there may be more waiting
 			}
+		}
+		if age, err := r.oldest(ctx); err == nil && age > stale && time.Since(warned) > stale {
+			logs.Errorf("audit: the oldest unsent event is %s old: is the auditor reachable?", age.Round(time.Minute))
+			warned = time.Now()
 		}
 		select {
 		case <-ctx.Done():

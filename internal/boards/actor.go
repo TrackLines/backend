@@ -10,7 +10,7 @@ import (
 
 // SetActor names who is changing tickets in tx, for their history (TL-75): actor, or else the
 // request's caller (a user id or agent name), and what kind of caller that is, for the auditor
-// (TL-666). The ticket_history triggers read them; with nobody (a webhook, a background job) the
+// (TL-666). The tickets triggers that queue audit events read them; with nobody (a webhook, a background job) the
 // entries have no actor. They last until tx ends.
 func SetActor(ctx context.Context, tx pgx.Tx, actor string) error {
 	if actor == "" {

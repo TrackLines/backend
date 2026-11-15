@@ -530,14 +530,13 @@ func (s Store) beat(ctx context.Context, id string, done int) error {
 	return nil
 }
 
-// fingerprint is a ticket (alias t) with its labels, comments, attachments and history: anything
-// done to it changes it. ponytail: the whole row, so a migration adding a ticket column also reads
+// fingerprint is a ticket (alias t) with its labels, comments and attachments: anything done to it
+// changes it (a move changes the row itself). ponytail: the whole row, so a migration adding a ticket column also reads
 // as a change and blocks scrapping older imports; list the columns if that ever matters.
 const fingerprint = `md5(row_to_json(t)::text
 	|| coalesce((SELECT string_agg(lower(l.label), ',' ORDER BY lower(l.label)) FROM ticket_labels l WHERE l.ticket_id = t.id), '')
 	|| coalesce((SELECT string_agg(c.id::text || md5(c.body), ',' ORDER BY c.id) FROM ticket_comments c WHERE c.ticket_id = t.id), '')
 	|| (SELECT count(*) FROM ticket_attachments a WHERE a.ticket_id = t.id)
-	|| '/' || (SELECT count(*) FROM ticket_history h WHERE h.ticket_id = t.id)
 	|| '/' || (SELECT count(*) FROM import_reviews r WHERE r.ticket_id = t.id))` // kept in review counts as acted on
 
 // Scrap deletes everything a finished import created, as long as nobody has acted on it: every
