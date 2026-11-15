@@ -30,7 +30,7 @@ func TestHistoryRecorded(t *testing.T) {
 	type mark int
 	trail := func(id string, from mark) (string, mark) {
 		t.Helper()
-		h, err := s.History(ctx, "hr1", id)
+		h, err := s.History(ctx, "hr1", id, nil)
 		if err != nil {
 			t.Fatal(err)
 		}

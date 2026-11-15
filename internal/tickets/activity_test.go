@@ -47,22 +47,18 @@ func TestActivity(t *testing.T) {
 		return fmt.Sprint(out)
 	}
 
-	// the flag off: the stages, as events, under the ids the queue gives them
-	local, err := s.Activity(ctx, "act1", tid, nil)
-	if err != nil || actions(local) != "[ticket.stage/person ticket.stage/person]" {
-		t.Fatalf("table: %s %v", actions(local), err)
-	}
-	var queuedID string
-	_ = db.QueryRow(ctx, `SELECT id::text FROM audit_outbox WHERE target_id = $1 AND action = 'ticket.stage' ORDER BY queued LIMIT 1`, tid).Scan(&queuedID)
-	if local[0].ID != queuedID || !strings.Contains(string(local[0].Data), `"stage": "backlog"`) {
-		t.Fatalf("stage event: %+v (queued as %s)", local[0], queuedID)
-	}
-
-	// the flag on, nothing delivered yet: everything from the queue, the assignment included
-	none := func(context.Context, string, string) ([]ActivityEntry, error) { return nil, nil }
-	all, err := s.Activity(ctx, "act1", tid, none)
+	// no auditor: everything is still queued, so the queue is the whole activity, the assignment included
+	all, err := s.Activity(ctx, "act1", tid, nil)
 	if err != nil || actions(all) != "[ticket.stage/person ticket.stage/person ticket.assigned/person]" {
-		t.Fatalf("queued only: %s %v", actions(all), err)
+		t.Fatalf("queue: %s %v", actions(all), err)
+	}
+	if !strings.Contains(string(all[0].Data), `"stage": "backlog"`) {
+		t.Fatalf("stage event: %+v", all[0])
+	}
+	// an auditor with nothing delivered yet: the same
+	none := func(context.Context, string, string) ([]ActivityEntry, error) { return nil, nil }
+	if got, err := s.Activity(ctx, "act1", tid, none); err != nil || actions(got) != actions(all) {
+		t.Fatalf("queued only: %s %v", actions(got), err)
 	}
 	// partly delivered, and one delivered but not yet cleared from the queue: each once, in order
 	delivered := func(_ context.Context, org, ticket string) ([]ActivityEntry, error) {
@@ -96,14 +92,13 @@ func TestActivity(t *testing.T) {
 		h.Activity(rec, req)
 		return rec
 	}
-	off := NewSystem(db).ActivityFromAuditor(down, func() bool { return false })
-	if rec := call(off); rec.Code != http.StatusOK || strings.Contains(rec.Body.String(), "ticket.assigned") {
-		t.Fatalf("flag off: %d %s", rec.Code, rec.Body)
+	if rec := call(NewSystem(db)); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "ticket.assigned") {
+		t.Fatalf("no auditor: %d %s", rec.Code, rec.Body)
 	}
-	if rec := call(NewSystem(db).ActivityFromAuditor(down, func() bool { return true })); rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), `"code":"history_unavailable"`) {
+	if rec := call(NewSystem(db).ActivityFromAuditor(down)); rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), `"code":"history_unavailable"`) {
 		t.Fatalf("down: %d %s", rec.Code, rec.Body)
 	}
-	rec := call(NewSystem(db).ActivityFromAuditor(delivered, func() bool { return true }))
+	rec := call(NewSystem(db).ActivityFromAuditor(delivered))
 	var body []ActivityEntry
 	_ = json.Unmarshal(rec.Body.Bytes(), &body)
 	if rec.Code != http.StatusOK || actions(body) != actions(all) || body[2].Actor == nil || *body[2].Actor != "user_1" {

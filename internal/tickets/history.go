@@ -27,31 +27,6 @@ type HistoryEntry struct {
 	Actor      *string `json:"actor,omitempty"`      // user id or agent name; absent when the system did it
 }
 
-// History is ticket id's lifecycle, oldest first, for owner's organization. Resolved tickets keep
-// theirs; binned ones (deleted, awaiting purge) are not found, like everywhere else.
-func (s Store) History(ctx context.Context, owner, id string) ([]HistoryEntry, error) {
-	var ok bool
-	if err := s.DB.QueryRow(ctx, `SELECT true FROM tickets t JOIN projects p ON p.id = t.project_id AND p.owner_clerk_id = $2
-		WHERE t.id::text = $1`, id, owner).Scan(&ok); err != nil {
-		return nil, notFound(err)
-	}
-	rows, err := s.DB.Query(ctx, `SELECT to_char(at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'), stage, outcome, stage_order,
-			board_id::text, board_name, column_id::text, column_name, done, resolution, actor
-		FROM ticket_history WHERE ticket_id::text = $1 ORDER BY id`, id)
-	if err != nil {
-		return nil, err
-	}
-	out, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (HistoryEntry, error) {
-		var e HistoryEntry
-		err := row.Scan(&e.At, &e.Stage, &e.Outcome, &e.StageOrder, &e.BoardID, &e.BoardName, &e.ColumnID, &e.ColumnName, &e.Done, &e.Resolution, &e.Actor)
-		return e, err
-	})
-	if out == nil {
-		out = []HistoryEntry{}
-	}
-	return out, err
-}
-
 // ErrHistoryUnavailable: the auditor holds the history (TL-667) and can't be reached; the ticket itself
 // still loads.
 var ErrHistoryUnavailable = httpx.Code("history_unavailable", "this ticket's history can't be loaded right now: try again shortly")
@@ -59,23 +34,29 @@ var ErrHistoryUnavailable = httpx.Code("history_unavailable", "this ticket's his
 // HistorySource reads a ticket's history from the auditor.
 type HistorySource func(ctx context.Context, org, ticket string) ([]HistoryEntry, error)
 
-// AuditedHistory is History read from the auditor (TL-667), with the ticket's stages still queued for it
-// in audit_outbox added, so a move shows at once and nothing's missing while older history is delivered.
+// History is ticket id's lifecycle, oldest first, for owner's organization: what the auditor holds
+// (remote, TL-667) plus the ticket's stages still queued for it in audit_outbox, so a move shows at once
+// and nothing's missing while older history is delivered. Without an auditor (remote nil: local
+// development, tests) nothing leaves the queue, so the queue is the whole history. Resolved tickets keep
+// theirs; binned ones (deleted, awaiting purge) are not found, like everywhere else.
 // ponytail: a batch the auditor has just stored but the relay hasn't yet removed from the outbox shows
 // twice for that moment (under a second); the auditor's history has no ids to tell them apart.
-func (s Store) AuditedHistory(ctx context.Context, owner, id string, remote HistorySource) ([]HistoryEntry, error) {
+func (s Store) History(ctx context.Context, owner, id string, remote HistorySource) ([]HistoryEntry, error) {
 	var ok bool
 	if err := s.DB.QueryRow(ctx, `SELECT true FROM tickets t JOIN projects p ON p.id = t.project_id AND p.owner_clerk_id = $2
 		WHERE t.id::text = $1`, id, owner).Scan(&ok); err != nil {
 		return nil, notFound(err)
 	}
-	out, err := remote(ctx, owner, id)
-	if err != nil {
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
+	var out []HistoryEntry
+	if remote != nil {
+		var err error
+		if out, err = remote(ctx, owner, id); err != nil {
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
+			logs.Warnf("tickets: history from the auditor: %v", err)
+			return nil, ErrHistoryUnavailable
 		}
-		logs.Warnf("tickets: history from the auditor: %v", err)
-		return nil, ErrHistoryUnavailable
 	}
 	rows, err := s.DB.Query(ctx, `SELECT to_char(at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'), actor, data FROM audit_outbox
 		WHERE org_id = $1 AND action = 'ticket.stage' AND target_type = 'ticket' AND target_id = $2 ORDER BY at, queued`, owner, id)

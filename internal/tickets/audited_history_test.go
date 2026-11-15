@@ -30,14 +30,14 @@ func TestAuditedHistory(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := Store{DB: db}
-	fromTable, err := s.History(ctx, "ah1", tid)
+	fromTable, err := s.History(ctx, "ah1", tid, nil)
 	if err != nil || len(fromTable) != 3 {
-		t.Fatalf("table: %d %v", len(fromTable), err)
+		t.Fatalf("queue: %d %v", len(fromTable), err)
 	}
 
 	// everything still queued: the auditor has nothing yet, and the history is complete from the outbox
 	empty := func(context.Context, string, string) ([]HistoryEntry, error) { return nil, nil }
-	got, err := s.AuditedHistory(ctx, "ah1", tid, empty)
+	got, err := s.History(ctx, "ah1", tid, empty)
 	if err != nil || fmt.Sprintf("%+v", entries(got)) != fmt.Sprintf("%+v", entries(fromTable)) {
 		t.Fatalf("queued only:\n got %+v\nwant %+v (%v)", entries(got), entries(fromTable), err)
 	}
@@ -51,23 +51,23 @@ func TestAuditedHistory(t *testing.T) {
 		}
 		return fromTable[:2], nil
 	}
-	got, err = s.AuditedHistory(ctx, "ah1", tid, delivered)
+	got, err = s.History(ctx, "ah1", tid, delivered)
 	if err != nil || fmt.Sprintf("%+v", entries(got)) != fmt.Sprintf("%+v", entries(fromTable)) {
 		t.Fatalf("merged:\n got %+v\nwant %+v (%v)", entries(got), entries(fromTable), err)
 	}
 	// not this org's ticket: not found, and the auditor isn't asked
 	asked := false
-	if _, err := s.AuditedHistory(ctx, "someone_else", tid, func(context.Context, string, string) ([]HistoryEntry, error) { asked = true; return nil, nil }); !errors.Is(err, ErrNotFound) || asked {
+	if _, err := s.History(ctx, "someone_else", tid, func(context.Context, string, string) ([]HistoryEntry, error) { asked = true; return nil, nil }); !errors.Is(err, ErrNotFound) || asked {
 		t.Fatalf("other org: %v, asked %v", err, asked)
 	}
 	down := func(context.Context, string, string) ([]HistoryEntry, error) {
 		return nil, errors.New("connection refused")
 	}
-	if _, err := s.AuditedHistory(ctx, "ah1", tid, down); !errors.Is(err, ErrHistoryUnavailable) {
+	if _, err := s.History(ctx, "ah1", tid, down); !errors.Is(err, ErrHistoryUnavailable) {
 		t.Fatalf("down: %v", err)
 	}
 
-	// the route: the table while the flag is off, the auditor while it's on, a coded 503 when it's down
+	// the route: the queue without an auditor, the auditor with one, a coded 503 when it's down
 	call := func(h System) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(http.MethodGet, "/", nil).WithContext(auth.WithAPIKey(ctx, "user_1", "ah1", "", "personal"))
 		req.Header.Set("Accept", "application/json")
@@ -76,15 +76,13 @@ func TestAuditedHistory(t *testing.T) {
 		h.History(rec, req)
 		return rec
 	}
-	off := NewSystem(db).HistoryFromAuditor(down, func() bool { return false })
-	if rec := call(off); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"column_name":"Doing"`) {
-		t.Fatalf("flag off: %d %s", rec.Code, rec.Body)
+	if rec := call(NewSystem(db)); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"column_name":"Doing"`) {
+		t.Fatalf("no auditor: %d %s", rec.Code, rec.Body)
 	}
-	on := NewSystem(db).HistoryFromAuditor(down, func() bool { return true })
-	if rec := call(on); rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), `"code":"history_unavailable"`) {
+	if rec := call(NewSystem(db).HistoryFromAuditor(down)); rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), `"code":"history_unavailable"`) {
 		t.Fatalf("down: %d %s", rec.Code, rec.Body)
 	}
-	if rec := call(NewSystem(db).HistoryFromAuditor(delivered, func() bool { return true })); rec.Code != http.StatusOK || strings.Count(rec.Body.String(), `"stage"`) != 3 {
+	if rec := call(NewSystem(db).HistoryFromAuditor(delivered)); rec.Code != http.StatusOK || strings.Count(rec.Body.String(), `"stage"`) != 3 {
 		t.Fatalf("on: %d %s", rec.Code, rec.Body)
 	}
 }

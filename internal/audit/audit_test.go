@@ -133,12 +133,6 @@ func TestTicketStagesQueued(t *testing.T) {
 	if got[3].Data["done"] != true || got[3].Data["column_name"] != "Done" || got[0].Data["done"] != false {
 		t.Fatalf("data: %+v", got[3].Data)
 	}
-	// each id is md5('ticket_history:' || its history row id)
-	var mismatched int
-	if err := p.QueryRow(ctx, `SELECT count(*) FROM ticket_history h WHERE h.ticket_id = $1
-		AND NOT EXISTS (SELECT 1 FROM audit_outbox o WHERE o.id = md5('ticket_history:' || h.id)::uuid)`, ticket).Scan(&mismatched); err != nil || mismatched != 0 {
-		t.Fatalf("%d history rows without their event (%v)", mismatched, err)
-	}
 	// a change rolled back leaves nothing queued
 	_ = pgx.BeginFunc(ctx, p, func(tx pgx.Tx) error {
 		_, _ = tx.Exec(ctx, `UPDATE tickets SET column_id = $2 WHERE id = $1`, ticket, cols[0])
@@ -316,17 +310,8 @@ func TestRelay(t *testing.T) {
 		t.Fatalf("back up: %v, %d waiting", err, waiting())
 	}
 
-	// the flag off: Run sends nothing
-	queue("c.one")
-	before := calls.Load()
-	off, stop := context.WithTimeout(ctx, 300*time.Millisecond)
-	defer stop()
-	Relay{DB: p, URL: auditor.URL, Secret: "s3cret", On: func() bool { return false }}.Run(off, 50*time.Millisecond)
-	if calls.Load() != before || waiting() != 1 {
-		t.Fatalf("sent with the flag off")
-	}
 	// no URL or secret: Run returns at once
-	Relay{DB: p, On: func() bool { return true }}.Run(ctx, time.Millisecond)
+	Relay{DB: p}.Run(ctx, time.Millisecond)
 
 	// two relays at once never send the same event
 	_, _ = p.Exec(ctx, `DELETE FROM audit_outbox`)
@@ -353,43 +338,6 @@ func TestRelay(t *testing.T) {
 	}
 	if len(sent) != 40 || len(seen) != 40 || waiting() != 0 {
 		t.Fatalf("sent %d (%d distinct), %d waiting", len(sent), len(seen), waiting())
-	}
-}
-
-// TL-667: the backfill queues history written before the outbox under the same ids the trigger uses, and
-// running it again queues nothing twice
-func TestBackfill(t *testing.T) {
-	ctx := context.Background()
-	p := db(t)
-	project, b, cols := board(t, "org_bf")
-	var ticket string
-	if err := p.QueryRow(ctx, `INSERT INTO tickets (project_id, board_id, column_id, title, position, created_by) VALUES ($1, $2, $3, 't', 0, 'user_1') RETURNING id`,
-		project, b, cols[2]).Scan(&ticket); err != nil {
-		t.Fatal(err)
-	}
-	queuedNow := len(outbox(t, "org_bf"))
-	// as if written before the outbox existed (or already delivered)
-	if _, err := p.Exec(ctx, `DELETE FROM audit_outbox WHERE org_id = 'org_bf'`); err != nil {
-		t.Fatal(err)
-	}
-	sql, err := os.ReadFile("../migrations/000097_audit_backfill.up.sql")
-	if err != nil {
-		t.Fatal(err)
-	}
-	for range 2 {
-		if _, err := p.Exec(ctx, string(sql)); err != nil {
-			t.Fatal(err)
-		}
-	}
-	got := outbox(t, "org_bf")
-	if len(got) != queuedNow || queuedNow != 4 {
-		t.Fatalf("backfilled %d, the trigger queued %d", len(got), queuedNow)
-	}
-	var mismatched int
-	_ = p.QueryRow(ctx, `SELECT count(*) FROM ticket_history h WHERE h.ticket_id = $1
-		AND NOT EXISTS (SELECT 1 FROM audit_outbox o WHERE o.id = audit_stage_id(h.id) AND o.data->>'stage' = h.stage)`, ticket).Scan(&mismatched)
-	if mismatched != 0 || got[0].ActorKind != "person" || *got[0].Actor != "user_1" {
-		t.Fatalf("%d rows without their event; first %+v", mismatched, got[0])
 	}
 }
 

@@ -192,9 +192,9 @@ func (s *Service) Start() error {
 	go webhooks.Worker{DB: s.DB, Box: box, Notify: notify}.Run(ctx, 5*time.Second)
 	// flags.gg (TL-787): calls queued with ticket moves go out in order per ticket, retried while it's down
 	go integrations.FlagWorker{DB: s.DB, Store: integrations.Store{DB: s.DB, Box: box}, Tickets: tickets.Store{DB: s.DB}}.Run(ctx, 5*time.Second)
-	// audit events to the auditor (TL-666), queued in the same transactions; sent while "audit-service" is on
+	// audit events to the auditor (TL-666), queued in the same transactions
 	go audit.RunExpireKeys(ctx, s.DB, time.Hour) // each API key that expires, in the org log once (TL-700)
-	go audit.Relay{DB: s.DB, URL: config.Get(s.Config).AuditURL, Secret: config.Get(s.Config).AuditSecret, On: s.flag("audit-service"),
+	go audit.Relay{DB: s.DB, URL: config.Get(s.Config).AuditURL, Secret: config.Get(s.Config).AuditSecret,
 		Client: &http.Client{Timeout: 30 * time.Second}}.Run(ctx, 5*time.Second)
 	// due dates: the day before and on the day, assignees and watchers are reminded (TL-631)
 	go tickets.DueReminders{Store: tickets.Store{DB: s.DB}, Notify: notify}.Run(ctx, time.Hour)
@@ -380,12 +380,12 @@ func (s *Service) Handler() http.Handler {
 		CachingUsers(clerkcache.Users{Next: user.NewClient(&clerk.ClientConfig{}), VK: s.Valkey, TTL: time.Minute})
 	pc := config.Get(s.Config)
 	auditor := audit.Client{URL: pc.AuditURL, Secret: pc.AuditSecret, HTTP: &http.Client{Timeout: 5 * time.Second}}
-	auditOn := func() bool { return pc.AuditURL != "" && pc.AuditSecret != "" && s.flag("audit-service")() }
-	if pc.AuditURL != "" && pc.AuditSecret != "" { // ticket history from the auditor (TL-667)
-		t = t.HistoryFromAuditor(auditor.History, s.flag("audit-service")).ActivityFromAuditor(auditor.Activity, s.flag("audit-service"))
+	audited := pc.AuditURL != "" && pc.AuditSecret != "" // without an auditor (local development) history is what's queued for it
+	if audited {                                         // ticket history from the auditor (TL-667)
+		t = t.HistoryFromAuditor(auditor.History).ActivityFromAuditor(auditor.Activity)
 	}
 	// the org's audit log (TL-670): admins, signed in, on Pro or Enterprise
-	auditLog := audit.OrgLog{DB: s.DB, Read: auditor.Log, On: auditOn, IsAdmin: o.AdminModel().IsAdmin}
+	auditLog := audit.OrgLog{DB: s.DB, Read: auditor.Log, On: func() bool { return audited }, IsAdmin: o.AdminModel().IsAdmin}
 	mux.Handle("GET /api/org/audit", signedIn(auditLog.List))
 	mux.Handle("GET /api/org/audit/export.csv", signedIn(auditLog.Export))
 	push.People = t.People // pushes name who did it

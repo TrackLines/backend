@@ -60,7 +60,7 @@ func (c Client) Log(ctx context.Context, org string, q url.Values) (LogPage, err
 type OrgLog struct {
 	DB      *pgxpool.Pool
 	Read    func(ctx context.Context, org string, q url.Values) (LogPage, error)
-	On      func() bool // the "audit-service" flag: off, the log isn't readable yet
+	On      func() bool // the auditor is configured (AUDIT_URL and AUDIT_SECRET); if not, the log is unavailable
 	IsAdmin func(ctx context.Context, org, user string) (bool, error)
 	Now     func() time.Time
 }
