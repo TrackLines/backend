@@ -484,6 +484,52 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { description: "Doesn't manage this project (code managers_working_week)." }
 
+  /org/mcp-instructions:
+    get:
+      tags: [Organizations]
+      operationId: getOrgMCPInstructions
+      summary: The organization's additional instructions for agents
+      description: >-
+        Org admins, signed in (not an API key). An organization can add its own instructions to what the MCP server
+        tells agents: they follow the global pre-prompt, under a heading, in sessions authenticated as this
+        organization only (an API key's organization, or a session's active one). Empty by default, when agents get
+        exactly the global pre-prompt. They never appear in the public /mcp/prompts endpoints, and don't change what
+        an agent is permitted to do. MCP clients read instructions when they connect, so a client may need to
+        reconnect to get a change. Changes are in the audit log as mcp_instructions.changed (their length, not the text).
+      responses:
+        '200':
+          description: The saved instructions and what agents are told.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OrgMCPInstructions' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: "Not an org admin, or an API key (code admins_mcp_instructions)." }
+    put:
+      tags: [Organizations]
+      operationId: setOrgMCPInstructions
+      summary: Replace or clear the organization's additional instructions for agents
+      description: >-
+        Org admins, signed in (not an API key). Surrounding whitespace is trimmed; empty or whitespace-only text
+        clears them. Up to 4,000 characters. New MCP sessions get the change straight away.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [instructions]
+              properties:
+                instructions: { type: string, maxLength: 4000 }
+      responses:
+        '200':
+          description: Saved.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OrgMCPInstructions' }
+        '400': { description: "Longer than 4,000 characters (code mcp_instructions_too_long)." }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: "Not an org admin, or an API key (code admins_mcp_instructions)." }
+
   /org/audit:
     get:
       tags: [Audit log]
@@ -6663,6 +6709,15 @@ components:
     Error:
       type: string
       description: Plain-text error message.
+    OrgMCPInstructions:
+      type: object
+      properties:
+        instructions: { type: string, description: "The organization's saved additional instructions; empty when it has none." }
+        max_length: { type: integer, example: 4000 }
+        global: { type: string, description: The global pre-prompt every organization's agents get. }
+        global_version: { type: integer, description: "The global pre-prompt's version. Omitted when the built-in text is served." }
+        heading: { type: string, description: The line that introduces the organization's section. }
+        effective: { type: string, description: "What this organization's agents are told on connecting: global, then (when instructions isn't empty) heading and instructions." }
     MCPPromptVersion:
       type: object
       description: One published version of the MCP pre-prompt (TL-674).
@@ -6701,6 +6756,8 @@ components:
         onboarding_incomplete: "finish organization setup before completing the guide"
         guide_version: "refresh to load the current guide"
         admins_working_week: "only organization admins, signed in, can change the working week"
+        admins_mcp_instructions: "only organization admins, signed in, can see or change the additional agent instructions"
+        mcp_instructions_too_long: "additional instructions can be up to 4000 characters"
         bad_working_week: "a working week needs at least one working day, a first day of the week, and hours of at least one hour within the day"
         managers_working_week: "only someone who manages this project, signed in, can change its working week"
         accept_clerk_first: "accept the organization invitation through Clerk before completing this invitation"

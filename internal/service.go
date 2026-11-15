@@ -399,6 +399,10 @@ func (s *Service) Handler() http.Handler {
 	// Admin panel (TL-570): ChewedFeed staff only, 404 for everyone else
 	staffOnly := staff.Guard{Org: config.Get(s.Config).StaffOrgID, Member: staff.Member(keyMember), On: s.flag("admin-panel")}.Only
 	prompts := mcp.NewPromptStore(s.DB) // the versioned MCP pre-prompt (TL-674): sessions, docs and the staff panel
+	// an organization's own additions to it (TL-899): its admins, signed in; only its own sessions get them
+	prompts.IsAdmin = o.AdminModel().IsAdmin
+	mux.Handle("GET /api/org/mcp-instructions", signedIn(prompts.OrgGet))
+	mux.Handle("PUT /api/org/mcp-instructions", signedIn(prompts.OrgPut))
 	mux.Handle("GET /api/staff/me", staffOnly(http.HandlerFunc(staff.Me)))
 	mux.Handle("GET /api/staff/stats", staffOnly(http.HandlerFunc(staff.Stats{DB: s.DB, VK: s.Valkey}.Get))) // counts only (TL-574)
 	// the help panel's answers (TL-575): read by everyone signed in, the .po for the TUI's build, edited by staff

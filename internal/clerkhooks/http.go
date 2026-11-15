@@ -208,6 +208,7 @@ func (s System) apply(ctx context.Context, e event) error {
 		args = []any{e.Data.ID}
 		stmts = []string{
 			`DELETE FROM org_admins WHERE org_id = $1`,
+			`DELETE FROM org_mcp_instructions WHERE org_id = $1`,
 			`DELETE FROM teams WHERE org_id = $1`, // cascades team_members, project_teams; boards.team_id → NULL
 			`UPDATE api_keys SET revoked_at = now() WHERE org_id = $1 AND revoked_at IS NULL`,
 			`INSERT INTO deleted_orgs (org_id) VALUES ($1) ON CONFLICT DO NOTHING`, // purged after 30 days

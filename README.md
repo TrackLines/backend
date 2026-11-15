@@ -77,6 +77,16 @@ The API serves MCP at `/mcp` (Streamable HTTP, stateless). Auth is the same as R
 `Authorization: Bearer tl_…` (an API key) or a Clerk session token. Each tool calls a REST route
 in-process, so permissions, validation and errors match REST exactly (`internal/mcp`).
 
+On connecting, a client is told the global pre-prompt (staff publish versions; `GET /api/mcp/prompts`), then,
+under a heading, the additional instructions of the organization it authenticated as, if its admins saved any
+(`GET`/`PUT /api/org/mcp-instructions`: signed-in admins, never API keys, up to 4,000 characters; TL-899, TL-900).
+The organization is always the key's or the session's active one, never one the client names. An organization
+with none gets exactly the global pre-prompt, as does a session whose additions can't be read. They add to
+the workflow only: permissions and validation are still the REST handlers'. They are read on each connection
+and not cached, so a save or clear applies to the next one; a client that keeps the instructions from its
+first `initialize` needs to reconnect to pick up a change. `/mcp` is the only MCP server: there is no
+stdio one in this repository.
+
 ## Incoming flags.gg webhooks (TL-789)
 
 After connecting flags.gg, create a company webhook there for `flag.created`,

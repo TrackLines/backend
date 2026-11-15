@@ -39,6 +39,8 @@ type PromptVersion struct {
 type PromptStore struct {
 	DB  *pgxpool.Pool
 	TTL time.Duration // how long a session's pre-prompt is reused before the latest is read again; 0: a minute
+	// IsAdmin says who can see and change their organization's additional instructions (TL-899)
+	IsAdmin func(ctx context.Context, org, user string) (bool, error)
 
 	mu     *sync.Mutex
 	cached *PromptVersion
