@@ -39,6 +39,7 @@ import (
 	"github.com/tracklines/backend/internal/comments"
 	"github.com/tracklines/backend/internal/config"
 	"github.com/tracklines/backend/internal/downtime"
+	"github.com/tracklines/backend/internal/email"
 	"github.com/tracklines/backend/internal/embed"
 	"github.com/tracklines/backend/internal/enquiries"
 	"github.com/tracklines/backend/internal/help"
@@ -637,7 +638,9 @@ func (s *Service) Handler() http.Handler {
 	mux.Handle("POST /api/projects/{id}/views", signedIn(vw.Create))
 	mux.Handle("PATCH /api/views/{id}", signedIn(vw.Update))
 	mux.Handle("DELETE /api/views/{id}", signedIn(vw.Delete))
-	r := roadmaps.NewSystem(s.DB).WithManagers(o.AdminModel()).WithPeople(t.People)
+	r := roadmaps.NewSystem(s.DB).WithManagers(o.AdminModel()).WithPeople(t.People).WithSubscriptions(roadmaps.Subscriptions{
+		Mail: email.Sender{Key: pc.ResendKey, From: pc.EmailFrom}, On: s.flag("roadmap-subscriptions"),
+		Site: siteURL(pc.AuthorizedParties()), API: pc.Git.PublicAPIURL})
 	mux.Handle("GET /api/roadmaps/{id}", public("roadmap", 120, r.Get))
 	mux.Handle("GET /api/roadmaps", signedIn(r.List))
 	mux.Handle("POST /api/projects/{id}/roadmaps", signedIn(r.Create))
@@ -647,7 +650,11 @@ func (s *Service) Handler() http.Handler {
 	mux.Handle("PUT /api/roadmaps/{id}/items/{item}/tickets", signedIn(r.SetItemTickets))       // item progress = linked tickets done
 	mux.Handle("GET /api/roadmaps/{id}/updates", public("roadmap-updates", 120, r.ListUpdates)) // public according to roadmap visibility
 	mux.Handle("POST /api/roadmaps/{id}/updates", signedIn(r.PublishUpdate))
-	mux.Handle("GET /api/roadmaps/{id}/report", signedIn(r.Report)) // burn-up JSON, or ?format=md the Markdown report (TL-616)
+	// email subscriptions to a public roadmap's updates (TL-902), behind the flags.gg "roadmap-subscriptions" flag
+	mux.Handle("POST /api/roadmaps/{id}/subscriptions", public("roadmap-subscribe", 5, r.Subscribe)) // sends a confirmation email
+	mux.Handle("POST /api/roadmap-subscriptions/confirm", public("roadmap-subscription-confirm", 30, r.ConfirmSubscription))
+	mux.Handle("POST /api/roadmap-subscriptions/unsubscribe", public("roadmap-unsubscribe", 30, r.Unsubscribe)) // also mail clients' one-click unsubscribe
+	mux.Handle("GET /api/roadmaps/{id}/report", signedIn(r.Report))                                             // burn-up JSON, or ?format=md the Markdown report (TL-616)
 
 	// Embedding (TL-494): an org's admins list the origins its public roadmap/request-form widgets may
 	// be loaded on; those origins get dynamic CORS on the public routes above (wired at the bottom).

@@ -29,6 +29,7 @@ type System struct {
 	store    Store
 	managers Managers
 	people   func(ctx context.Context, org string) ([]notifications.Person, error) // names updates' authors
+	subs     Subscriptions                                                         // email subscriptions (TL-902); off when zero
 }
 
 func (h System) WithManagers(m Managers) System { h.managers = m; return h }
@@ -144,6 +145,7 @@ func (h System) Get(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, http.StatusText(status), status)
 		return
 	}
+	rm.CanSubscribe = rm.Visibility == Public && h.subscribable()
 	if !ok || rm.OwnerClerkID != org {
 		redactTickets(rm) // public/login-only readers see progress counts, never ticket titles or ids
 	} else if user, _ := auth.UserID(r.Context()); user != "" {

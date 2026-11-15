@@ -55,6 +55,9 @@ func (h System) PublishUpdate(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, r, err)
 		return
 	}
+	if rm, err := h.store.Get(r.Context(), r.PathValue("id")); err == nil {
+		h.notifyInBackground(r.Context(), rm, update) // its email subscribers (TL-902)
+	}
 	httpx.JSON(w, http.StatusCreated, update)
 }
 
