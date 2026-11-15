@@ -122,10 +122,13 @@ func (h System) canManage(ctx context.Context, org, user, project string) (bool,
 
 // canRead: public → anyone; login_only and team → signed-in members of the owning org (org). Other
 // organizations never read a login_only roadmap (TL-432). Returns 0 when allowed, else the status to send.
+// A team roadmap is not found to anyone signed out: "sign in to view" would say it exists (TL-904).
 func canRead(r *Roadmap, org string, signedIn bool) int {
 	switch {
 	case r.Visibility == Public, org != "" && r.OwnerClerkID == org && signedIn:
 		return 0
+	case !signedIn && r.Visibility == Team:
+		return http.StatusNotFound
 	case !signedIn:
 		return http.StatusUnauthorized
 	default:

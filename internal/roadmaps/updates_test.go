@@ -162,7 +162,7 @@ func TestRoadmapUpdatesPermissionsHistoryAndPrivacy(t *testing.T) {
 		{loginOnly.ID, "", http.StatusUnauthorized},
 		{loginOnly.ID, "ru2", http.StatusForbidden}, // signed in, but another organization (TL-432)
 		{loginOnly.ID, "ru1", http.StatusOK},
-		{team.ID, "", http.StatusUnauthorized},
+		{team.ID, "", http.StatusNotFound}, // signed out: a team roadmap doesn't say it exists (TL-904)
 		{team.ID, "ru2", http.StatusForbidden},
 		{team.ID, "ru1", http.StatusOK},
 	} {

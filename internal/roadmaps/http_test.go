@@ -15,10 +15,10 @@ func TestCanRead(t *testing.T) {
 		{LoginOnly, "o", "", false, http.StatusUnauthorized},
 		{LoginOnly, "o", "x", true, http.StatusForbidden}, // another organization (TL-432)
 		{LoginOnly, "o", "o", true, 0},
-		{Team, "o", "", false, http.StatusUnauthorized},
+		{Team, "o", "", false, http.StatusNotFound}, // signed out: as if it didn't exist (TL-904)
 		{Team, "o", "x", true, http.StatusForbidden},
 		{Team, "o", "o", true, 0},
-		{Team, "", "", false, http.StatusUnauthorized}, // empty owner must not match anon
+		{Team, "", "", false, http.StatusNotFound}, // empty owner must not match anon
 	}
 	for _, c := range cases {
 		if got := canRead(&Roadmap{Visibility: c.vis, OwnerClerkID: c.owner}, c.user, c.signedIn); got != c.want {
