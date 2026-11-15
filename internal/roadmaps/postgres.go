@@ -66,6 +66,8 @@ type Roadmap struct {
 	Progress     Progress `json:"progress"`
 	Items        []Item   `json:"items,omitempty"`
 	CanManage    bool     `json:"can_manage"` // the caller can change it: an org admin or one of its project's team leaders (TL-413)
+	// readers can ask for its updates by email: it's public and email subscriptions are on (TL-902)
+	CanSubscribe bool `json:"can_subscribe"`
 }
 
 type Store struct{ DB *pgxpool.Pool }

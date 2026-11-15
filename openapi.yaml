@@ -4721,6 +4721,84 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /roadmaps/{roadmapId}/subscriptions:
+    parameters:
+      - name: roadmapId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      tags: [Roadmaps]
+      operationId: subscribeToRoadmap
+      summary: Ask for a public roadmap's updates by email (TL-902)
+      description: >-
+        Public roadmaps only, while email subscriptions are on (the roadmap's `can_subscribe`). Sends the
+        address a confirmation link; nothing else is sent until it's confirmed. The answer is the same
+        whether or not the address is already subscribed, and a repeat request for an address sends no
+        second email within 10 minutes. Limited to 5 requests a minute per client address. No endpoint
+        returns subscribers' addresses.
+      security:
+        - {}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email: { type: string, format: email, maxLength: 254 }
+      responses:
+        '202': { description: "Accepted. A confirmation email was sent unless the address is already subscribed or was sent one recently." }
+        '400': { description: Not one email address (invalid_email). }
+        '404': { description: "No such roadmap, it isn't public, or email subscriptions are off." }
+        '429': { description: Too many requests. }
+        '502': { description: The confirmation email could not be sent. }
+
+  /roadmap-subscriptions/confirm:
+    post:
+      tags: [Roadmaps]
+      operationId: confirmRoadmapSubscription
+      summary: Confirm an email subscription with the token from the confirmation email
+      security:
+        - {}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RoadmapSubscriptionToken' }
+      responses:
+        '200':
+          description: Confirmed (also when it already was).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  roadmap_id: { type: string, format: uuid }
+        '400': { description: No token (token_required). }
+        '404': { description: Unknown or replaced token. }
+
+  /roadmap-subscriptions/unsubscribe:
+    post:
+      tags: [Roadmaps]
+      operationId: unsubscribeFromRoadmap
+      summary: Remove an email subscription with the token from any of its emails
+      description: >-
+        The token goes in the JSON body or the `token` query parameter; the query form is what mail
+        clients call for one-click unsubscribe (RFC 8058). Works while email subscriptions are off.
+      security:
+        - {}
+      parameters:
+        - { name: token, in: query, schema: { type: string } }
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RoadmapSubscriptionToken' }
+      responses:
+        '204': { description: "Unsubscribed, or there was no such subscription." }
+        '400': { description: No token (token_required). }
+
   /roadmaps/{roadmapId}/report:
     parameters:
       - { name: roadmapId, in: path, required: true, schema: { type: string, format: uuid } }
@@ -6579,9 +6657,17 @@ components:
         can_manage:
           type: boolean
           description: The caller can change this roadmap (an org admin, or a leader of a team with a board in its project). Always false for readers outside its organization.
+        can_subscribe:
+          type: boolean
+          description: Readers can ask for this roadmap's updates by email (POST /roadmaps/{roadmapId}/subscriptions). True for a public roadmap while email subscriptions are on (TL-902).
         items:
           type: array
           items: { $ref: '#/components/schemas/RoadmapItem' }
+    RoadmapSubscriptionToken:
+      type: object
+      required: [token]
+      properties:
+        token: { type: string, description: The secret from an email's confirm or unsubscribe link. }
     RoadmapItem:
       allOf:
         - $ref: '#/components/schemas/RoadmapItemInput'
@@ -6749,6 +6835,7 @@ components:
       x-error-codes:
         apple_refused: "apple refused the authorization code"
         apple_unconfigured: "Sign in with Apple revocation isn't set up"
+        invalid_email: "enter one email address"
         missing_code: "code is required"
         bad_device: "token and platform (android or ios) are required"
         guide_organization: "refresh after switching organizations"
@@ -6808,6 +6895,7 @@ components:
         help_page: "unknown page kind"
         help_slug: "the slug is lower-case letters, digits and dashes"
         help_slug_taken: "another answer has that slug"
+        token_required: "token is required"
         import_problems: fix the problems in the preview before running the import
         import_not_previewing: only an import that's still a preview can be run
         import_not_running: only a preview or a running import can be cancelled
