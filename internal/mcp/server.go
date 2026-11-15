@@ -68,11 +68,12 @@ const Instructions = "TrackLin.es boards, backlog and tickets. Work is organised
 	"in the board's review column instead (get_board: review_column_id; the column before Done when that's null; the response says needs_review) and a person approves it; otherwise it's Done. Never leave finished work in To do or In progress.\n" +
 	"If you stop before finishing, say why in a comment and release_ticket so someone else can pick it up."
 
-// prompts gives each session the latest published pre-prompt (TL-674); nil: the built-in Instructions.
+// prompts gives each session the latest published pre-prompt (TL-674), then the additions of the organization
+// it authenticated as (TL-900); nil: the built-in Instructions.
 func Handler(api http.Handler, version string, prompts *PromptStore) http.Handler {
 	return sdk.NewStreamableHTTPHandler(func(r *http.Request) *sdk.Server {
 		s := sdk.NewServer(&sdk.Implementation{Name: "tracklines", Title: "TrackLin.es", Version: version}, &sdk.ServerOptions{
-			Instructions: prompts.Instructions(r.Context()),
+			Instructions: prompts.SessionInstructions(r.Context()),
 		})
 		call := requester(api, r.Header)
 		for _, t := range tools {
