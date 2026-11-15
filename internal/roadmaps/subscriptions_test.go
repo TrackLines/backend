@@ -143,7 +143,7 @@ func TestRoadmapEmailSubscriptions(t *testing.T) {
 	}
 
 	// subscribing sends one confirmation; the address gets nothing else until it confirms
-	if rec := subscribe(public.ID, "Reader@Example.test"); rec.Code != http.StatusAccepted || rec.Body.Len() != 0 {
+	if rec := subscribe(public.ID, "Reader@Example.test"); rec.Code != http.StatusNoContent || rec.Body.Len() != 0 {
 		t.Fatalf("subscribe: %d %s", rec.Code, rec.Body)
 	}
 	if len(mail.sent) != 1 || mail.sent[0].To != "reader@example.test" || !strings.Contains(mail.sent[0].Text, "https://tracklin.test/r/"+public.ID+"/subscription?confirm=") {
@@ -152,7 +152,7 @@ func TestRoadmapEmailSubscriptions(t *testing.T) {
 	if !strings.Contains(mail.sent[0].HTML, "Launch &lt;plan&gt;") {
 		t.Errorf("the title should be escaped in HTML: %s", mail.sent[0].HTML)
 	}
-	if rec := subscribe(public.ID, "reader@example.test"); rec.Code != http.StatusAccepted || len(mail.sent) != 1 {
+	if rec := subscribe(public.ID, "reader@example.test"); rec.Code != http.StatusNoContent || len(mail.sent) != 1 {
 		t.Fatalf("a repeat within 10 minutes should send nothing more: %d, %d sent", rec.Code, len(mail.sent))
 	}
 	if err := h.notifySubscribers(ctx, public, &Update{Health: HealthOnTrack, Note: "early"}); err != nil || len(mail.sent) != 1 {
@@ -164,7 +164,7 @@ func TestRoadmapEmailSubscriptions(t *testing.T) {
 	if _, err := db.Exec(ctx, `UPDATE roadmap_subscriptions SET sent_at = now() - interval '11 minutes' WHERE roadmap_id = $1`, public.ID); err != nil {
 		t.Fatal(err)
 	}
-	if rec := subscribe(public.ID, "reader@example.test"); rec.Code != http.StatusAccepted || len(mail.sent) != 2 {
+	if rec := subscribe(public.ID, "reader@example.test"); rec.Code != http.StatusNoContent || len(mail.sent) != 2 {
 		t.Fatalf("resend: %d, %d sent", rec.Code, len(mail.sent))
 	}
 	confirm := func(token string) *httptest.ResponseRecorder {
@@ -190,7 +190,7 @@ func TestRoadmapEmailSubscriptions(t *testing.T) {
 	if _, err := db.Exec(ctx, `UPDATE roadmap_subscriptions SET sent_at = now() - interval '1 day' WHERE roadmap_id = $1`, public.ID); err != nil {
 		t.Fatal(err)
 	}
-	if rec := subscribe(public.ID, "reader@example.test"); rec.Code != http.StatusAccepted || len(mail.sent) != 2 {
+	if rec := subscribe(public.ID, "reader@example.test"); rec.Code != http.StatusNoContent || len(mail.sent) != 2 {
 		t.Fatalf("duplicate of a confirmed address: %d, %d sent", rec.Code, len(mail.sent))
 	}
 	if total, verified := subscribers(public.ID); total != 1 || verified != 1 {

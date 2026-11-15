@@ -139,7 +139,7 @@ func (h System) Subscribe(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	w.WriteHeader(http.StatusAccepted)
+	w.WriteHeader(http.StatusNoContent) // empty answers are 204 everywhere: the web app reads any other success as JSON
 }
 
 // ConfirmSubscription: the link in the confirmation email (through the website). Not behind the flag

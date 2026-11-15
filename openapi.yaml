@@ -4749,7 +4749,7 @@ paths:
               properties:
                 email: { type: string, format: email, maxLength: 254 }
       responses:
-        '202': { description: "Accepted. A confirmation email was sent unless the address is already subscribed or was sent one recently." }
+        '204': { description: "Accepted. A confirmation email was sent unless the address is already subscribed or was sent one recently." }
         '400': { description: Not one email address (invalid_email). }
         '404': { description: "No such roadmap, it isn't public, or email subscriptions are off." }
         '429': { description: Too many requests. }
