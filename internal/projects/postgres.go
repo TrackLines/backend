@@ -26,6 +26,8 @@ type Project struct {
 	KeyPrefix   string             `json:"key_prefix"` // tickets are <prefix>-<number>, e.g. TL-123
 	CreatedAt   string             `json:"created_at"`
 	UpdatedAt   string             `json:"updated_at"`
+	ArchivedAt  *string            `json:"archived_at"` // archived: off the project lists, history kept (TL-907)
+	Deletable   bool               `json:"deletable"`   // never used (no tickets, no sprints): can be deleted instead of archived
 	Boards      []boards.Board     `json:"boards,omitempty"`
 	Roadmaps    []roadmaps.Roadmap `json:"roadmaps,omitempty"`
 	Stats       *Stats             `json:"stats,omitempty"` // List only
@@ -47,11 +49,16 @@ type Store struct{ DB *pgxpool.Pool }
 
 const cols = `id, name, description, key_prefix,
 	to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
-	to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')`
+	to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
+	to_char(archived_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'), ` + unusedSQL
+
+// unusedSQL: a project nobody has worked in yet. Only those can be deleted; used ones are archived.
+const unusedSQL = `NOT EXISTS (SELECT 1 FROM tickets t WHERE t.project_id = projects.id)
+	AND NOT EXISTS (SELECT 1 FROM sprints s JOIN boards b ON b.id = s.board_id WHERE b.project_id = projects.id)`
 
 func scan(row pgx.Row) (Project, error) {
 	var p Project
-	err := row.Scan(&p.ID, &p.Name, &p.Description, &p.KeyPrefix, &p.CreatedAt, &p.UpdatedAt)
+	err := row.Scan(&p.ID, &p.Name, &p.Description, &p.KeyPrefix, &p.CreatedAt, &p.UpdatedAt, &p.ArchivedAt, &p.Deletable)
 	return p, notFound(err)
 }
 
@@ -93,7 +100,8 @@ func (s Store) Create(ctx context.Context, owner, name, desc string, limit int) 
 	return &p, nil
 }
 
-func (s Store) List(ctx context.Context, owner string) ([]Project, error) {
+// List returns the owner's active projects, or only the archived ones.
+func (s Store) List(ctx context.Context, owner string, archived bool) ([]Project, error) {
 	rows, err := s.DB.Query(ctx, `SELECT `+cols+`,
 		(SELECT count(*) FROM boards b WHERE b.project_id = projects.id AND b.archived_at IS NULL),
 		(SELECT count(*) FROM roadmaps r WHERE r.project_id = projects.id),
@@ -105,13 +113,13 @@ func (s Store) List(ctx context.Context, owner string) ([]Project, error) {
 		FROM projects
 		LEFT JOIN LATERAL (SELECT t.id AS tid, t.board_id, t.priority, t.updated_at AS changed, `+boards.TicketDoneSQL+` AS done
 			FROM tickets t WHERE t.project_id = projects.id) t ON true
-		WHERE owner_clerk_id = $1 GROUP BY projects.id ORDER BY created_at`, owner)
+		WHERE owner_clerk_id = $1 AND (archived_at IS NOT NULL) = $2 GROUP BY projects.id ORDER BY created_at`, owner, archived)
 	if err != nil {
 		return nil, err
 	}
 	out, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (Project, error) {
 		p, st := Project{}, Stats{}
-		err := row.Scan(&p.ID, &p.Name, &p.Description, &p.KeyPrefix, &p.CreatedAt, &p.UpdatedAt,
+		err := row.Scan(&p.ID, &p.Name, &p.Description, &p.KeyPrefix, &p.CreatedAt, &p.UpdatedAt, &p.ArchivedAt, &p.Deletable,
 			&st.Boards, &st.Roadmaps, &st.Open, &st.Done, &st.Backlog, &st.Urgent, &st.Active)
 		p.Stats = &st
 		return p, err
@@ -163,9 +171,48 @@ func (s Store) SetKeyPrefix(ctx context.Context, id, owner, prefix string) error
 
 var keyPrefix = regexp.MustCompile(`^[A-Z][A-Z0-9]{1,5}$`) // same as projects_key_prefix_format
 
-// Delete removes the project and (cascade) its boards, tickets and roadmaps.
+var ErrProjectUsed = httpx.Code("project_used", "this project has been used; archive it instead, so its history is kept")
+
+// Delete removes a never-used project (and, by cascade, its empty boards and roadmaps); ErrProjectUsed otherwise.
 func (s Store) Delete(ctx context.Context, id, owner string) error {
-	return exec(s.DB.Exec(ctx, `DELETE FROM projects WHERE id = $1 AND owner_clerk_id = $2`, id, owner))
+	tag, err := s.DB.Exec(ctx, `DELETE FROM projects WHERE id = $1 AND owner_clerk_id = $2 AND `+unusedSQL, id, owner)
+	if err != nil {
+		return notFound(err)
+	}
+	if tag.RowsAffected() > 0 {
+		return nil
+	}
+	if _, err := s.Get(ctx, id, owner); err != nil {
+		return err
+	}
+	return ErrProjectUsed
+}
+
+// Archive takes a project off the project lists, history kept. Its boards' open sprints close with no
+// successor and their planned sprints go (tickets back to the backlog unplanned), as when a board is archived.
+func (s Store) Archive(ctx context.Context, id, owner string) error {
+	return pgx.BeginFunc(ctx, s.DB, func(tx pgx.Tx) error {
+		tag, err := tx.Exec(ctx, `UPDATE projects SET archived_at = coalesce(archived_at, now()) WHERE id = $1 AND owner_clerk_id = $2`, id, owner)
+		if err := exec(tag, err); err != nil {
+			return err
+		}
+		for _, q := range []string{
+			`UPDATE sprints SET closed_at = now() WHERE closed_at IS NULL AND board_id IN (SELECT id FROM boards WHERE project_id = $1)`,
+			`UPDATE tickets SET planned_sprint_id = NULL, estimate = NULL, updated_at = now()
+				WHERE planned_sprint_id IN (SELECT ps.id FROM planned_sprints ps JOIN boards b ON b.id = ps.board_id WHERE b.project_id = $1)`,
+			`DELETE FROM planned_sprints WHERE board_id IN (SELECT id FROM boards WHERE project_id = $1)`,
+		} {
+			if _, err := tx.Exec(ctx, q, id); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+// Restore puts an archived project back on the lists. Sprints start again by hand.
+func (s Store) Restore(ctx context.Context, id, owner string) error {
+	return exec(s.DB.Exec(ctx, `UPDATE projects SET archived_at = NULL WHERE id = $1 AND owner_clerk_id = $2`, id, owner))
 }
 
 func exec(tag pgconn.CommandTag, err error) error {

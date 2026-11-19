@@ -35,7 +35,7 @@ var tools = []tool{
 	// reading
 	{name: "whoami", title: "Who am I", description: "The caller's user id, active organization, whether they're an org admin, and the teams they lead.",
 		method: "GET", path: "/api/organizations/me", readOnly: true},
-	{name: "list_projects", title: "List projects", description: "Projects in the caller's organization, with board counts, open/done tickets and urgent counts.",
+	{name: "list_projects", title: "List projects", description: "Active (not archived) projects in the caller's organization, with board counts, open/done tickets and urgent counts.",
 		method: "GET", path: "/api/projects", readOnly: true},
 	{name: "get_project", title: "Get project", description: "A project with its boards (and per-board progress) and roadmaps.",
 		method: "GET", path: "/api/projects/{project_id}", props: map[string]any{"project_id": id("Project")}, required: []string{"project_id"}, readOnly: true},

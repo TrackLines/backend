@@ -65,7 +65,7 @@ func TestStore(t *testing.T) {
 	if _, err := s.Create(ctx, "pr1", "second", "", -1); err != nil {
 		t.Fatalf("paid unlimited: %v", err)
 	}
-	list, _ := s.List(ctx, "pr1")
+	list, _ := s.List(ctx, "pr1", false)
 	if len(list) != 2 {
 		t.Fatalf("list: %+v", list)
 	}
@@ -94,7 +94,7 @@ func TestStore(t *testing.T) {
 	if _, err := db.Exec(ctx, `INSERT INTO tickets (project_id, title, position, resolved_at) VALUES ($1, 'later', 0, NULL), ($1, 'resolved', 1, now())`, p.ID); err != nil {
 		t.Fatal(err)
 	}
-	list, _ = s.List(ctx, "pr1")
+	list, _ = s.List(ctx, "pr1", false)
 	if st := list[0].Stats; st == nil || st.Active == "" || *st != (Stats{Boards: 3, Roadmaps: 1, Open: 1, Done: 2, Backlog: 1, Urgent: 1, Active: st.Active}) {
 		t.Fatalf("stats: %+v", st)
 	}
@@ -113,7 +113,50 @@ func TestStore(t *testing.T) {
 	if _, err := s.Get(ctx, "not-a-uuid", "pr1"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("bad uuid: %v", err)
 	}
-	if err := s.Delete(ctx, p.ID, "pr1"); err != nil {
+	// TL-907: a used project can't be deleted; it's archived instead, then restored
+	if err := s.Delete(ctx, p.ID, "pr1"); !errors.Is(err, ErrProjectUsed) {
+		t.Fatalf("delete used project: %v", err)
+	}
+	if err := s.Delete(ctx, p.ID, "pr2"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("non-owner delete: %v", err)
+	}
+	if err := s.Archive(ctx, p.ID, "pr2"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("non-owner archive: %v", err)
+	}
+	if _, err := db.Exec(ctx, `INSERT INTO sprints (board_id, number, length_days, ends_at) SELECT id, 99, 7, now() + interval '7 days' FROM boards WHERE project_id = $1 LIMIT 1`, p.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Archive(ctx, p.ID, "pr1"); err != nil {
+		t.Fatal(err)
+	}
+	var openSprints int
+	_ = db.QueryRow(ctx, `SELECT count(*) FROM sprints s JOIN boards b ON b.id = s.board_id WHERE b.project_id = $1 AND s.closed_at IS NULL`, p.ID).Scan(&openSprints)
+	if openSprints != 0 {
+		t.Fatalf("archive left %d sprints open", openSprints)
+	}
+	active, _ := s.List(ctx, "pr1", false)
+	archived, _ := s.List(ctx, "pr1", true)
+	if len(active) != 1 || active[0].ID == p.ID || len(archived) != 1 || archived[0].ID != p.ID || archived[0].ArchivedAt == nil || archived[0].Deletable {
+		t.Fatalf("after archive: active %+v archived %+v", active, archived)
+	}
+	if got, _ := s.Get(ctx, p.ID, "pr1"); got == nil || got.ArchivedAt == nil {
+		t.Fatalf("archived project should still open: %+v", got)
+	}
+	if err := s.Restore(ctx, p.ID, "pr1"); err != nil {
+		t.Fatal(err)
+	}
+	if active, _ = s.List(ctx, "pr1", false); len(active) != 2 {
+		t.Fatalf("restore: %d active", len(active))
+	}
+	// the empty project was never used: it deletes
+	if !active[1].Deletable {
+		t.Fatalf("empty project should be deletable: %+v", active[1])
+	}
+	if err := s.Delete(ctx, active[1].ID, "pr1"); err != nil {
+		t.Fatal(err)
+	}
+	// a used one still goes when its tickets do (cascade), checked straight in SQL
+	if _, err := db.Exec(ctx, `DELETE FROM projects WHERE id = $1`, p.ID); err != nil {
 		t.Fatal(err)
 	}
 	var left int
