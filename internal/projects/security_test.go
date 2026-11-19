@@ -67,6 +67,18 @@ func TestProjectSecurity(t *testing.T) {
 		if got := call(as, http.MethodDelete, "", h.Delete).Code; got != http.StatusForbidden {
 			t.Errorf("%s can delete project: got %d, want 403", name, got)
 		}
+		if got := call(as, http.MethodPost, "", h.Archive).Code; got != http.StatusForbidden {
+			t.Errorf("%s can archive project: got %d, want 403", name, got)
+		}
+		if got := call(as, http.MethodPost, "", h.Restore).Code; got != http.StatusForbidden {
+			t.Errorf("%s can restore project: got %d, want 403", name, got)
+		}
+		r := httptest.NewRequest(http.MethodGet, "/?archived=true", nil).WithContext(as)
+		w := httptest.NewRecorder()
+		h.List(w, r)
+		if w.Code != http.StatusForbidden {
+			t.Errorf("%s can list archived projects: got %d, want 403", name, w.Code)
+		}
 	}
 	// TL-735: only admins create projects
 	for name, as := range map[string]context.Context{"member": member, "API key": apiKey} {
@@ -104,6 +116,21 @@ func TestProjectSecurity(t *testing.T) {
 	}
 	if got := call(admin, http.MethodPatch, `{"name":"Protected","description":"","key_prefix":"NEW"}`, h.Update).Code; got != http.StatusNoContent {
 		t.Fatalf("admin key-prefix change: got %d, want 204", got)
+	}
+	// TL-907: a used project answers 409 to delete; archive and restore work for admins
+	if _, err := db.Exec(ctx, `INSERT INTO tickets (project_id, title, position) VALUES ($1, 'work', 0)`, project.ID); err != nil {
+		t.Fatal(err)
+	}
+	if got := call(admin, http.MethodDelete, "", h.Delete).Code; got != http.StatusConflict {
+		t.Fatalf("admin delete used project: got %d, want 409", got)
+	}
+	for _, fn := range []func(http.ResponseWriter, *http.Request){h.Archive, h.Restore} {
+		if got := call(admin, http.MethodPost, "", fn).Code; got != http.StatusNoContent {
+			t.Fatalf("admin archive/restore: got %d, want 204", got)
+		}
+	}
+	if _, err := db.Exec(ctx, `DELETE FROM tickets WHERE project_id = $1`, project.ID); err != nil {
+		t.Fatal(err)
 	}
 	if got := call(admin, http.MethodDelete, "", h.Delete).Code; got != http.StatusNoContent {
 		t.Fatalf("admin delete: got %d, want 204", got)

@@ -288,7 +288,9 @@ func (s *Service) Handler() http.Handler {
 	mux.Handle("POST /api/projects", signedIn(p.Create))
 	mux.Handle("GET /api/projects/{id}", signedIn(p.Get))
 	mux.Handle("PATCH /api/projects/{id}", signedIn(p.Update))
-	mux.Handle("DELETE /api/projects/{id}", signedIn(p.Delete))
+	mux.Handle("DELETE /api/projects/{id}", signedIn(p.Delete))        // never-used projects only (TL-907)
+	mux.Handle("POST /api/projects/{id}/archive", signedIn(p.Archive)) // org admins
+	mux.Handle("POST /api/projects/{id}/restore", signedIn(p.Restore)) // org admins
 
 	// Boards
 	b := boards.NewSystem(s.DB, o.AdminModel())

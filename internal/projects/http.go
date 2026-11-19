@@ -1,6 +1,7 @@
 package projects
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strings"
@@ -34,7 +35,7 @@ func writeErr(w http.ResponseWriter, r *http.Request, err error) {
 		http.Error(w, "not found", http.StatusNotFound)
 	case errors.Is(err, ErrBadKeyPrefix):
 		httpx.Error(w, r, http.StatusBadRequest, err)
-	case errors.Is(err, ErrKeyPrefixTaken):
+	case errors.Is(err, ErrKeyPrefixTaken), errors.Is(err, ErrProjectUsed):
 		httpx.Error(w, r, http.StatusConflict, err)
 	case errors.Is(err, ErrLimit):
 		httpx.Error(w, r, http.StatusPaymentRequired, httpx.Code("project_limit", "your plan's project limit is reached — upgrade for more"))
@@ -58,9 +59,16 @@ func (in *projectInput) valid(w http.ResponseWriter, r *http.Request) bool {
 	return true
 }
 
+// List: GET /api/projects, active projects; ?archived=true lists the archived ones instead (org admins).
 func (h System) List(w http.ResponseWriter, r *http.Request) {
 	org := auth.OrgID(r.Context())
-	out, err := h.store.List(r.Context(), org)
+	archived := r.URL.Query().Get("archived") == "true"
+	if archived {
+		if _, _, ok := h.admins.RequireAdmin(w, r); !ok {
+			return
+		}
+	}
+	out, err := h.store.List(r.Context(), org, archived)
 	if err != nil {
 		writeErr(w, r, err)
 		return
@@ -130,12 +138,21 @@ func (h System) Update(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (h System) Delete(w http.ResponseWriter, r *http.Request) {
+// Delete: DELETE /api/projects/{id} (org admins), only a never-used project (409 otherwise: archive it).
+func (h System) Delete(w http.ResponseWriter, r *http.Request) { h.adminDo(w, r, h.store.Delete) }
+
+// Archive: POST /api/projects/{id}/archive (org admins).
+func (h System) Archive(w http.ResponseWriter, r *http.Request) { h.adminDo(w, r, h.store.Archive) }
+
+// Restore: POST /api/projects/{id}/restore (org admins).
+func (h System) Restore(w http.ResponseWriter, r *http.Request) { h.adminDo(w, r, h.store.Restore) }
+
+func (h System) adminDo(w http.ResponseWriter, r *http.Request, fn func(ctx context.Context, id, owner string) error) {
 	org, _, ok := h.admins.RequireAdmin(w, r)
 	if !ok {
 		return
 	}
-	if err := h.store.Delete(r.Context(), r.PathValue("id"), org); err != nil {
+	if err := fn(r.Context(), r.PathValue("id"), org); err != nil {
 		writeErr(w, r, err)
 		return
 	}

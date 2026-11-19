@@ -574,7 +574,7 @@ paths:
                           description: >-
                             member.invited and member.invitation_revoked (scope, target); member.joined and member.removed (target: the user);
                             admin.granted and admin.revoked (target: the user); api_key.created and api_key.revoked (kind, name, owner, read_only, expires_at);
-                            project.created and project.deleted (name), project.renamed (from, to); board.created, board.archived, board.restored and
+                            project.created, project.archived, project.restored and project.deleted (name), project.renamed (from, to); board.created, board.archived, board.restored and
                             board.deleted (name), board.renamed (from, to); team.created and team.deleted (name), team.members_changed (name, user,
                             change added/removed/made_leader/no_longer_leader, leader); sprint.started (board, board_name, number, length_days),
                             sprint.closed (board, board_name, number); integration.connected and integration.disconnected (provider, and account,
@@ -1219,7 +1219,9 @@ paths:
       tags: [Projects]
       operationId: listProjects
       summary: List projects accessible to this agent
-      description: Use a project's ID when creating a ticket directly in its backlog.
+      description: Use a project's ID when creating a ticket directly in its backlog. Archived projects are left out; archived=true lists only them (organization admins, 403 otherwise).
+      parameters:
+        - { name: archived, in: query, required: false, schema: { type: boolean } }
       responses:
         '200':
           description: Projects owned by the API key's owner.
@@ -1288,16 +1290,43 @@ paths:
     delete:
       tags: [Projects]
       operationId: deleteProject
-      summary: Permanently delete a project and its boards, tickets, roadmaps, repos, and intake
-      description: This action cannot be undone and permanently deletes all work under the project. Organization admin session required.
+      summary: Permanently delete a never-used project
+      description: Only a project with no tickets and no sprints (deletable true); its empty boards, roadmaps, repos and intake go with it. A used project answers 409; archive it instead. Cannot be undone. Organization admin session required.
       security:
         - bearerAuth: []
       responses:
         '204': { description: Project deleted. }
         '403': { description: Organization admin session required. }
+        '409': { description: The project has been used; archive it instead. }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /projects/{projectId}/archive:
+    parameters:
+      - $ref: '#/components/parameters/ProjectId'
+    post:
+      tags: [Projects]
+      operationId: archiveProject
+      summary: Archive a project (organization admins)
+      description: >-
+        Takes it off the project list; its boards, tickets and history stay, and it still opens by id. Its boards'
+        open sprints close with no next sprint, and their planned sprints are dropped (tickets back to the backlog unplanned).
+        It still counts towards the plan's project limit.
+      responses:
+        '204': { description: Archived. }
+        '403': { description: Organization admin session required. }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /projects/{projectId}/restore:
+    parameters:
+      - $ref: '#/components/parameters/ProjectId'
+    post:
+      tags: [Projects]
+      operationId: restoreProject
+      summary: Put an archived project back on the project list (organization admins)
+      responses:
+        '204': { description: Restored. }
+        '403': { description: Organization admin session required. }
+        '404': { $ref: '#/components/responses/NotFound' }
   /projects/{projectId}/boards:
     parameters:
       - $ref: '#/components/parameters/ProjectId'
@@ -6028,6 +6057,8 @@ components:
         key_prefix: { type: string, example: TL, description: "Ticket keys are <key_prefix>-<number>. Worked out from the name on create (its capitals, e.g. TrackLin.es → TL), unique in the org." }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+        archived_at: { type: [string, 'null'], format: date-time, description: "Set when archived: off the project list, history kept." }
+        deletable: { type: boolean, description: "Never used (no tickets, no sprints), so it can be deleted rather than archived." }
         boards:
           type: array
           items: { $ref: '#/components/schemas/BoardSummary' }
@@ -6995,6 +7026,7 @@ components:
         board_archived: "this board is archived; restore it first"
         board_update_empty: "name, estimate_scale, style, agent_review, dev_complete_column_id, review_column_id or when_sprint_ends is required"
         board_used: "this board has been used; archive it instead, so its history is kept"
+        project_used: "this project has been used; archive it instead, so its history is kept"
         builtin_template: "built-in templates can't be deleted"
         calendar_admin_email: "the admin email must be an address at {domain}"
         calendar_domain_required: "enter your Google Workspace domain, e.g. example.com"
