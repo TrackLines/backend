@@ -1,5 +1,5 @@
 // Package intake is a project's shareable request form: anyone with its unlisted link can send a bug
-// report or feature request, without an account. Submissions wait for the team to triage them: promoted
+// report, feature request or account deletion request (GDPR), without an account. Submissions wait for the team to triage them: promoted
 // into an unassigned backlog ticket, or dismissed. Nothing about the project is shown to the sender.
 package intake
 
@@ -24,11 +24,15 @@ const (
 	MaxContact    = 200
 	PerSenderHour = 5   // one sender's submissions per hour, per form
 	PerProjectDay = 200 // all submissions per project per day
+
+	// AccountDeletion asks the team to erase the sender's account (GDPR Art. 17). It needs a contact so the
+	// team can find the account and confirm; promoted, it becomes a task (tickets have no such type).
+	AccountDeletion = "account_deletion"
 )
 
 var (
 	ErrClosed   = httpx.Code("form_closed", "this form isn't taking requests")
-	ErrInvalid  = httpx.Code("bad_intake_request", "a title (up to 200 characters) and a type (bug or feature) are required")
+	ErrInvalid  = httpx.Code("bad_intake_request", "a title (up to 200 characters) and a type (bug, feature or account_deletion) are required; account_deletion also needs a contact")
 	ErrTooMany  = httpx.Code("intake_rate_limited", "too many requests from you; please try again later")
 	ErrNotFound = errors.New("not found")
 	ErrDecided  = httpx.Code("already_triaged", "this request has already been triaged")
@@ -99,7 +103,7 @@ func (s Store) Open(ctx context.Context, token string) bool {
 // Submit records a request sent through form token by sender (their address; only its hash is kept).
 func (s Store) Submit(ctx context.Context, token, sender, typ, title, details, contact string) error {
 	typ, title, details, contact = strings.TrimSpace(typ), strings.TrimSpace(title), strings.TrimSpace(details), strings.TrimSpace(contact)
-	if (typ != "bug" && typ != "feature") || title == "" || len([]rune(title)) > MaxTitle || len([]rune(details)) > MaxDetails || len([]rune(contact)) > MaxContact {
+	if (typ != "bug" && typ != "feature" && typ != AccountDeletion) || (typ == AccountDeletion && contact == "") || title == "" || len([]rune(title)) > MaxTitle || len([]rune(details)) > MaxDetails || len([]rune(contact)) > MaxContact {
 		return ErrInvalid
 	}
 	sum := sha256.Sum256([]byte(token + "|" + sender))
@@ -192,7 +196,12 @@ func (s Store) Promote(ctx context.Context, owner, actor, id string) (Submission
 		// ponytail: the ticket is made outside this tx (tickets.Store has no tx variant); the row lock still
 		// stops a double promote, and a failure after it leaves a normal backlog ticket, not a lost request
 		// made as the promoter, so its history starts with them (TL-75), not the organization
-		t, err := tickets.Store{DB: s.DB}.CreateBacklogAs(ctx, owner, actor, x.ProjectID, x.Type, x.Title, desc+note)
+		typ := x.Type
+		if typ == AccountDeletion {
+			typ = "task"
+			note = "_Account deletion request._ " + note
+		}
+		t, err := tickets.Store{DB: s.DB}.CreateBacklogAs(ctx, owner, actor, x.ProjectID, typ, x.Title, desc+note)
 		if err != nil {
 			return err
 		}
