@@ -204,6 +204,44 @@ func TestIntake(t *testing.T) {
 	}
 }
 
+// GDPR: an account deletion request needs a contact, and is promoted as a task.
+func TestIntakeAccountDeletion(t *testing.T) {
+	ctx := context.Background()
+	db, err := pgxpool.New(ctx, os.Getenv("TEST_DATABASE_URL"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(ctx, `DELETE FROM projects WHERE owner_clerk_id = 'ik4'`); err != nil {
+		t.Fatal(err)
+	}
+	var pid string
+	_ = db.QueryRow(ctx, `INSERT INTO projects (owner_clerk_id, name, key_prefix) VALUES ('ik4', 'Erase', 'ER') RETURNING id`).Scan(&pid)
+	s := Store{DB: db}
+	token, err := s.SetOpen(ctx, "ik4", pid, true, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Submit(ctx, *token, "198.51.100.1", AccountDeletion, "Delete my account", "", ""); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("no contact: %v", err)
+	}
+	if err := s.Submit(ctx, *token, "198.51.100.1", AccountDeletion, "Delete my account", "", "sam@example.com"); err != nil {
+		t.Fatal(err)
+	}
+	list, err := s.List(ctx, "ik4", pid, "pending", 10)
+	if err != nil || len(list) != 1 || list[0].Type != AccountDeletion {
+		t.Fatalf("list: %+v %v", list, err)
+	}
+	x, err := s.Promote(ctx, "ik4", "user_ava", list[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tk, err := tickets.Store{DB: db}.Get(ctx, "ik4", *x.TicketID)
+	if err != nil || tk.Type != "task" || !strings.Contains(tk.Description, "Account deletion request") || !strings.Contains(tk.Description, "sam@example.com") {
+		t.Fatalf("ticket: %+v %v", tk, err)
+	}
+}
+
 // TL-162: a burst of simultaneous requests from one sender can't get past the cap.
 func TestIntakeBurst(t *testing.T) {
 	ctx := context.Background()

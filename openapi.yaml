@@ -1759,7 +1759,7 @@ paths:
               type: object
               required: [type, title]
               properties:
-                type: { type: string, enum: [bug, feature] }
+                type: { type: string, enum: [bug, feature, account_deletion], description: "account_deletion (GDPR erasure) needs a contact; promoted it becomes a task." }
                 title: { type: string, maxLength: 200 }
                 details: { type: string, maxLength: 5000 }
                 contact: { type: string, maxLength: 200, description: "Optional, e.g. an email; seen by the team only." }
@@ -6770,7 +6770,7 @@ components:
       properties:
         id: { type: string, format: uuid }
         project_id: { type: string, format: uuid }
-        type: { type: string, enum: [bug, feature] }
+        type: { type: string, enum: [bug, feature, account_deletion], description: "account_deletion (GDPR erasure) needs a contact; promoted it becomes a task." }
         title: { type: string }
         details: { type: string }
         contact: { type: string }
@@ -6962,7 +6962,7 @@ components:
         bad_estimate_scale: "estimate_scale must be none, fibonacci, tshirt, powers or linear"
         bad_external: "external needs source (bugfixes), project and id; url must be http(s)"
         bad_file: "file must be an upload in this service's file store, with a key and name"
-        bad_intake_request: "a title (up to 200 characters) and a type (bug or feature) are required"
+        bad_intake_request: "a title (up to 200 characters) and a type (bug, feature or account_deletion) are required; account_deletion also needs a contact"
         bad_intake_status: "status must be pending, promoted or dismissed"
         bad_invite_email: "email_address must be a valid email address"
         bad_invite_scope: "scope must be organization, team, or project"
