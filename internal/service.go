@@ -356,6 +356,9 @@ func (s *Service) Handler() http.Handler {
 	// the app's language for the signed-in person (TL-551); null follows the browser
 	mux.Handle("GET /api/me/language", sessionRequired(http.HandlerFunc(users.Store{DB: s.DB}.GetLanguage)))
 	mux.Handle("PUT /api/me/language", sessionRequired(http.HandlerFunc(users.Store{DB: s.DB}.PutLanguage)))
+	// the home Mentions card's "Latest tickets" tab: how many, and how many per project
+	mux.Handle("GET /api/me/latest-tickets", sessionRequired(http.HandlerFunc(users.Store{DB: s.DB}.GetLatestTickets)))
+	mux.Handle("PUT /api/me/latest-tickets", sessionRequired(http.HandlerFunc(users.Store{DB: s.DB}.PutLatestTickets)))
 	mux.Handle("GET /api/me/google-chat", sessionRequired(http.HandlerFunc(chatApp.Status)))
 	mux.Handle("GET /api/me/google-chat/link", sessionRequired(http.HandlerFunc(chatApp.LinkCode)))
 	mux.Handle("POST /api/me/google-chat/link", sessionRequired(http.HandlerFunc(chatApp.Link)))
@@ -446,6 +449,7 @@ func (s *Service) Handler() http.Handler {
 	mux.Handle("GET /api/projects/{id}/epics", signedIn(t.Epics))                         // epics with progress and size (TL-213)
 	mux.Handle("GET /api/tickets/{id}/group", signedIn(t.GroupPreview))                   // open sub-tickets that would move with it (TL-218)
 	mux.Handle("GET /api/priorities", signedIn(http.HandlerFunc(tickets.ListPriorities))) // the levels, most urgent first (TL-846)
+	mux.Handle("GET /api/tickets/latest", signedIn(t.Latest))                             // newest across projects, capped per project (home card)
 	mux.Handle("GET /api/search", signedIn(t.Search))                                     // full-text over titles, descriptions, comments; exact keys first
 	mux.Handle("GET /api/ticket-keys/{key}", signedIn(t.GetByKey))
 	mux.Handle("PUT /api/tickets/{id}/external", signedIn(t.SetExternal)) // integrations link what they made (API keys only)

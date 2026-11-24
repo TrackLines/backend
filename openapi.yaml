@@ -1645,6 +1645,23 @@ paths:
                 type: array
                 items: { type: object, properties: { key: { type: string, example: urgent }, name: { type: string, example: Urgent } } }
 
+  /tickets/latest:
+    get:
+      tags: [Tickets]
+      operationId: latestTickets
+      summary: The newest tickets across every project, capped per project
+      description: Newest created first, from projects that aren't archived; at most per_project from any one project. The home Mentions card's "Latest tickets" tab (the caller's own limits are at /me/latest-tickets).
+      parameters:
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 20, default: 5 } }
+        - { name: per_project, in: query, schema: { type: integer, minimum: 1, maximum: 20, default: 3 } }
+      responses:
+        '200':
+          description: The tickets, newest first, shaped like /search results.
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/Ticket' } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+
   /search:
     get:
       tags: [Tickets]
@@ -2050,6 +2067,26 @@ paths:
         content:
           application/json:
             schema: { type: object, properties: { language: { type: string, nullable: true, enum: [en, nl, de, es, pt, fr, tlh, null] } } }
+      responses:
+        '204': { description: Saved. }
+        '400': { $ref: '#/components/responses/BadRequest' }
+
+  /me/latest-tickets:
+    get:
+      tags: [Users]
+      operationId: getMyLatestTickets
+      summary: Your "Latest tickets" settings for the home Mentions card
+      responses:
+        '200': { description: limit 0 is off., content: { application/json: { schema: { $ref: '#/components/schemas/LatestTicketsSettings' } } } }
+    put:
+      tags: [Users]
+      operationId: setMyLatestTickets
+      summary: Set how many latest tickets the home Mentions card shows (0 hides the tab), and how many per project
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LatestTicketsSettings' }
       responses:
         '204': { description: Saved. }
         '400': { $ref: '#/components/responses/BadRequest' }
@@ -5673,6 +5710,12 @@ components:
         type: string
         format: uuid
   schemas:
+    LatestTicketsSettings:
+      type: object
+      required: [limit, per_project]
+      properties:
+        limit: { type: integer, minimum: 0, maximum: 20, description: "How many to show, five a page; 0 is off." }
+        per_project: { type: integer, minimum: 1, maximum: 20, description: At most this many from any one project. }
     OnboardingState:
       type: object
       required: [admin, chapters, step, project_id, board_id, completed_at, guide]
@@ -6973,6 +7016,8 @@ components:
         bad_key_kind: "kind must be ai, service or personal"
         bad_key_prefix: "key prefix must be 2–6 capital letters or digits, starting with a letter"
         bad_labels: "invalid labels"
+        bad_latest: "limit and per_project must be 1–20"
+        bad_latest_tickets: "limit must be 0–20 and per_project 1–20"
         bad_language: "language must be one of en, nl, de, es, pt, fr, tlh, or null"
         bad_link_code: "this link has expired or was already used: message the TrackLin.es app in Google Chat for a new one"
         bad_member_limit: "limit must be between 1 and 500"
