@@ -4,9 +4,9 @@ go 1.27.4
 
 require (
 	github.com/SherClockHolmes/webpush-go v1.4.0
-	github.com/bugfixes/go-bugfixes v0.19.5
+	github.com/bugfixes/go-bugfixes v0.19.6
 	github.com/caarlos0/env/v8 v8.0.0
-	github.com/clerk/clerk-sdk-go/v2 v2.8.0
+	github.com/clerk/clerk-sdk-go/v2 v2.9.0
 	github.com/flags-gg/go-flags v0.5.3
 	github.com/getkin/kin-openapi v0.153.0
 	github.com/go-jose/go-jose/v4 v4.1.9
@@ -20,7 +20,7 @@ require (
 	github.com/policies2/go-sdk v0.2.0
 	github.com/testcontainers/testcontainers-go/modules/postgres v0.45.0
 	github.com/testcontainers/testcontainers-go/modules/valkey v0.45.0
-	github.com/valkey-io/valkey-go v1.0.79
+	github.com/valkey-io/valkey-go v1.0.80
 	go.yaml.in/yaml/v3 v3.0.6
 )
 
@@ -98,11 +98,11 @@ require (
 	go.opentelemetry.io/proto/otlp v1.9.0 // indirect
 	go.yaml.in/yaml/v4 v4.0.0 // indirect
 	golang.org/x/crypto v0.58.0 // indirect
-	golang.org/x/net v0.61.0 // indirect
+	golang.org/x/net v0.62.0 // indirect
 	golang.org/x/oauth2 v0.37.0 // indirect
-	golang.org/x/sync v0.24.0 // indirect
-	golang.org/x/sys v0.49.0 // indirect
-	golang.org/x/text v0.43.0 // indirect
+	golang.org/x/sync v0.25.0 // indirect
+	golang.org/x/sys v0.50.0 // indirect
+	golang.org/x/text v0.44.0 // indirect
 	golang.org/x/time v0.16.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260630182238-925bb5da69e7 // indirect
 	google.golang.org/grpc v1.83.1 // indirect
