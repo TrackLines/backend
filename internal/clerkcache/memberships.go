@@ -76,7 +76,8 @@ type userLister interface {
 	List(ctx context.Context, params *user.ListParams) (*clerk.UserList, error)
 }
 
-// Users is a user lister that answers from Valkey when it can, like Memberships.
+// Users is a user lister that answers from Valkey when it can, like Memberships, and tries a dropped
+// connection once more too (TL-909).
 type Users struct {
 	Next userLister
 	VK   valkey.Client
@@ -84,7 +85,7 @@ type Users struct {
 }
 
 func (u Users) List(ctx context.Context, params *user.ListParams) (*clerk.UserList, error) {
-	return cached(ctx, u.VK, u.TTL, "clerk:users:", params, u.Next.List)
+	return cached(ctx, u.VK, u.TTL, "clerk:users:", params, retried(u.Next.List))
 }
 
 // cached answers fetch(params) from Valkey under prefix + a hash of params, filling it on a miss.
