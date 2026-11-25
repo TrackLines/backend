@@ -11,6 +11,7 @@ import (
 
 	"github.com/clerk/clerk-sdk-go/v2"
 	"github.com/clerk/clerk-sdk-go/v2/organizationmembership"
+	"github.com/clerk/clerk-sdk-go/v2/user"
 	tcvalkey "github.com/testcontainers/testcontainers-go/modules/valkey"
 	"github.com/valkey-io/valkey-go"
 )
@@ -117,5 +118,33 @@ func TestMembershipsRetryDroppedConnection(t *testing.T) {
 	cancel()
 	if _, err := (Memberships{Next: flaky{&calls, 1, reset}}).List(gone, params); err == nil || calls != 1 {
 		t.Fatalf("caller gone: %v after %d calls, want no retry", err, calls)
+	}
+}
+
+type flakyUsers struct {
+	calls *int
+	fails int
+	err   error
+}
+
+func (f flakyUsers) List(context.Context, *user.ListParams) (*clerk.UserList, error) {
+	if *f.calls++; *f.calls <= f.fails {
+		return nil, f.err
+	}
+	return &clerk.UserList{}, nil
+}
+
+// TL-909: the user list (usernames on the assignee picker) retries a dropped connection like memberships.
+func TestUsersRetryDroppedConnection(t *testing.T) {
+	ctx := context.Background()
+	reset := &url.Error{Op: "Get", URL: "https://api.clerk.com", Err: &net.OpError{Op: "read", Net: "tcp", Err: syscall.ECONNRESET}}
+	params := &user.ListParams{UserIDs: []string{"user_a"}}
+	calls := 0
+	if _, err := (Users{Next: flakyUsers{&calls, 1, reset}}).List(ctx, params); err != nil || calls != 2 {
+		t.Fatalf("reset once: %v after %d calls, want an answer after 2", err, calls)
+	}
+	calls = 0
+	if _, err := (Users{Next: flakyUsers{&calls, 1, errors.New("forbidden")}}).List(ctx, params); err == nil || calls != 1 {
+		t.Fatalf("clerk error: %v after %d calls, want no retry", err, calls)
 	}
 }
